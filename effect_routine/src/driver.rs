@@ -1,4 +1,4 @@
-//! Step a routine one host turn at a time, with no runtime.
+//! Resume a routine one wait at a time, with no runtime.
 //!
 //! In Rust you hand a routine to an executor and it polls. A Java or Python
 //! host cannot poll a Rust future, so a [`Driver`] turns a routine into a
@@ -497,17 +497,17 @@ mod tests {
 
     struct Echo {
         outbox: Outbox<Effect>,
-        turns: u32,
+        steps: u32,
     }
 
     impl Run for Echo {
-        async fn turn(&mut self) -> ControlFlow<()> {
+        async fn step(&mut self) -> ControlFlow<()> {
             self.outbox.tell(Effect::Say(String::from("?")));
             let answer = self.outbox.ask(Effect::Ask).await;
             self.outbox.tell(Effect::Say(answer));
-            self.turns += 1;
+            self.steps += 1;
 
-            if self.turns == 2 {
+            if self.steps == 2 {
                 ControlFlow::Break(())
             } else {
                 ControlFlow::Continue(())
@@ -516,7 +516,7 @@ mod tests {
     }
 
     fn echo() -> Driver<Effect> {
-        Driver::new(|outbox| Echo { outbox, turns: 0 }.run())
+        Driver::new(|outbox| Echo { outbox, steps: 0 }.run())
     }
 
     /// What was said, and the handles in the batch.
@@ -602,7 +602,7 @@ mod tests {
     struct Impatient(Outbox<Effect>);
 
     impl Run for Impatient {
-        async fn turn(&mut self) -> ControlFlow<()> {
+        async fn step(&mut self) -> ControlFlow<()> {
             let never = self.0.ask(Effect::Ask);
             drop(never);
 
@@ -646,13 +646,13 @@ mod tests {
         assert!(driver.is_finished());
     }
 
-    /// Two requests polled in one turn record two effects in one batch; the
+    /// Two requests polled in one step record two effects in one batch; the
     /// host replies in the *other* order, and each reply yields only what the
     /// routine did on it. This is what the ids are for.
     struct FanOut(Outbox<Effect>);
 
     impl Run for FanOut {
-        async fn turn(&mut self) -> ControlFlow<()> {
+        async fn step(&mut self) -> ControlFlow<()> {
             let (a, b) = crate::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
             self.0.tell(Effect::Say(alloc::format!("{a}+{b}")));
             ControlFlow::Break(())

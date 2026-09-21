@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 [![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/effect_routine)
 
-An _effect routine_ is a coroutine written in direct style as an ordinary `async fn`, whose every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you, and the same routine is driven — unchanged — by a Rust host, by Python over a C ABI, or by anything that can hold a byte buffer.
+An _effect routine_ is a coroutine written in direct style as an ordinary `async fn`, whose every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you — and because the routine asks for _traits_ rather than effects, the very same code is also a plain `async fn` that tokio runs at native speed with no driver at all.
 
 This is the library. The research that motivates it, with the alternatives built out and measured, lives in [`effect-routines-exploration`][exploration]:
 
@@ -23,12 +23,78 @@ This is the library. The research that motivates it, with the alternatives built
 [compare]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/compare
 [bench]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/hosts/bench
 
-## How it works
+## Three layers
+
+```text
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ routine      Greeter<C: Clock + Directory + Input + Output>: Run     │  no_std
+  │              owns the logic; asks for traits; knows nothing of        │
+  │              effects, handles, drivers, or hosts                      │
+  ├──────────────────────────────────────────────────────────────────────┤
+  │ context      impl Clock for TokioCtx    │  impl Clock for Ctx<E, O>   │
+  │              each call is a real future │  each call records an       │
+  │                                         │  effect and suspends        │
+  ├─────────────────────────────────────────┼────────────────────────────┤
+  │ host         tokio polls the task       │  a Driver polls; a host     │
+  │              directly — no driver       │  performs and replies by id │
+  │                                         │  Python · JS · a test · …   │
+  └─────────────────────────────────────────┴────────────────────────────┘
+```
+
+The routine is the foundation and depends on nothing above it. The left column is why you write it this way: it is also an ordinary library function. The right column is what this crate provides.
+
+## The routine
+
+```rust
+pub trait Clock     { async fn sleep(&self, d: Duration); }
+pub trait Directory { async fn lookup(&self, name: String) -> String; }
+pub trait Input     { async fn read_line(&self) -> String; }
+pub trait Output    { fn write(&self, line: String); }
+
+impl<C: Clock + Directory + Input + Output> Run for Greeter<C> {
+    async fn step(&mut self) -> ControlFlow<()> {
+        self.ctx.write("Who are you?".into());
+        let name = self.ctx.read_line().await;
+        let greeting = self.ctx.lookup(name.clone()).await;
+        self.ctx.sleep(PAUSE).await;
+        self.ctx.write(format!("{greeting}, {name}!"));
+        ControlFlow::Continue(())
+    }
+}
+```
+
+## Two contexts, one routine
+
+Natively, on tokio — no driver, no effects, tokio polls the task:
+
+```rust
+impl Clock for TokioCtx {
+    async fn sleep(&self, d: Duration) { tokio::time::sleep(d).await }
+}
+// …
+tokio::spawn(Greeter::new(TokioCtx::new(stdin)).run());
+```
+
+Behind a host — each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
+
+```rust
+impl<E: From<Asked<Sleep>>, O: Post<E>> Clock for Ctx<E, O> {
+    async fn sleep(&self, d: Duration) { self.outbox.request(Sleep(d)).await }
+}
+// …
+Driver::<Full>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());   // ok
+Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());  // E0277: Ctx<Quiet, _>: Directory
+Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ticker needs only Clock + Output
+```
+
+`demo/` has all of this in full — the greeter, the ticker, both contexts, a C-ABI skin with a Python host, a wasm-bindgen skin with a JS host — and `nix develop` then `demo` runs the routine natively and behind both foreign hosts and checks the transcripts are byte-identical.
+
+## How the wire works
 
 ```text
   host                                    routine
     │                                        │
-    │  step()                                │
+    │  start()                               │
     │───────────────────────────────────────▶│  runs until it needs input:
     │                                        │  tells Write, asks ReadLine·1
     │  [Write, ReadLine·1]   AWAITING        │
@@ -46,67 +112,23 @@ This is the library. The research that motivates it, with the alternatives built
     │                                        ┴
 ```
 
-- _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `step`, never by calling the host. Replies arrive as the argument to the next `step`. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
-- _Typed effects._ Every wait is a value in a closed `Effect` type the routine owns, carrying a `ReplyHandle<T>`: the typed, single-use capability to answer it. The enum doubles as the wire.
-- _Many waits outstanding._ Requests carry ids, so a routine may fan out and a host may reply in any order.
-- _`no_std` core._ Builds for `wasm32` and, with `critical-section`, for `thumbv6m`.
-
-## A routine
-
-```rust
-enum Effect {
-    ReadLine(ReplyHandle<String>),
-    Write(String),
-}
-
-impl<O: Post<Effect>> Run for Greeter<O> {
-    async fn turn(&mut self) -> ControlFlow<()> {
-        self.outbox.tell(Effect::Write("Who are you?".into()));
-        let name = self.outbox.ask(Effect::ReadLine).await;
-        self.outbox.tell(Effect::Write(format!("Hello, {name}!")));
-        ControlFlow::Break(())
-    }
-}
-```
-
-And a host, in Rust, in full:
-
-```rust
-let mut driver = Driver::new(|outbox| Greeter { outbox }.run());
-let mut queue: VecDeque<Effect> = driver.start().into();
-
-while let Some(effect) = queue.pop_front() {
-    match effect {
-        Effect::Write(text) => println!("{text}"),
-        Effect::ReadLine(reply) => queue.extend(driver.reply(reply, read_line())),
-    }
-}
-```
-
-`demo/` has the full greeter — four kinds of wait, fan-out — with a Rust host, a Python host over a C ABI, and a JS host over wasm-bindgen, all producing byte-identical transcripts. `nix develop` then `demo` runs all three.
+- _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `start`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
+- _Typed replies._ Every awaiting effect carries a `ReplyHandle<T>`: the typed, single-use capability to answer it. A Rust host replies through the handle, infallibly; a foreign host replies by id, and the host layer checks the kind.
+- _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits and a host may reply in any order.
+- _`no_std` core._ The mechanism, the routine, and its wire crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
 
 ## Crates
 
-| Crate                                         | Purpose                                                                                                          | Target             |
-|-----------------------------------------------|------------------------------------------------------------------------------------------------------------------|--------------------|
-| [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Post`, `ReplyHandle`, `Driver`, `join`, the reply menu, and the `wire` traits             | `no_std` + `alloc` |
-| [`effect_routine_host`](effect_routine_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe`   | `std`              |
-| [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                              | —                  |
-| [`demo/`](demo/)                              | The greeter; a Rust host; the C-ABI skin (the one crate with `unsafe`) and a Python host over it; a wasm-bindgen skin and a JS host over that | —                  |
-
-### Three styles, one mechanism
-
-The library does not pick how you write the routine; the mechanism is the same for all three.
-
-| Style          | The routine…                                                                          | Pick it when                                                          |
-|----------------|---------------------------------------------------------------------------------------|-----------------------------------------------------------------------|
-| _effects_      | owns a closed `Effect` enum; the enum is the wire                                     | the default: one routine, driven by a host, simulator, or replay      |
-| _coeffects_    | describes waits as `Request` structs and states `E: From<Asked<Lookup>>` bounds       | several routines share a host, or a host must attenuate what it offers |
-| _capabilities_ | asks for traits (`C: Clock + Directory`) and never sees an effect; a context decides  | the same logic must also run as a plain `async fn` on tokio            |
+| Crate                                         | Purpose                                                                                                        | Target             |
+|-----------------------------------------------|----------------------------------------------------------------------------------------------------------------|--------------------|
+| [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Post`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `wire`, `testing`    | `no_std` + `alloc` |
+| [`effect_routine_host`](effect_routine_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
+| [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                            | —                  |
+| [`demo/`](demo/)                              | The greeter and ticker; a native tokio host; a reifying context with `Full`/`Quiet` vocabularies; a C-ABI skin + Python host; a wasm-bindgen skin + JS host | — |
 
 ### Not here, on purpose
 
-An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; `pyo3`/`rustler` skins and a reusable wasm-bindgen layer (the demo has a hand-written one). Each is a natural next layer; none is needed to use what is here.
+An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; a derive for the `View`/`Encode` restatement (next); `pyo3`/`rustler` skins. Each is a natural next layer; none is needed to use what is here.
 
 ## Development
 
@@ -115,7 +137,7 @@ nix develop   # dev shell with a command menu
 menu          # list project commands: ci:full, demo, test:no_std, …
 ```
 
-Without Nix, `rust-toolchain.toml` pins the toolchain for `rustup`, and `demo/python/main.py` needs only a Python 3 interpreter.
+Without Nix, `rust-toolchain.toml` pins the toolchain for `rustup`; the demo's foreign hosts need Python 3, Node, and `wasm-bindgen-cli` at the version pinned in `Cargo.toml`.
 
 ## License
 

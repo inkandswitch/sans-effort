@@ -1,44 +1,47 @@
 //! The host side of an effect routine, for hosts that cannot hold a Rust
 //! value — minus the C ABI.
 //!
-//! `new(routine) → handle`, `step(handle, input) → effects`, `free(handle)`:
-//! sans-io's shape. The input is `Start` once, then one reply per awaited
-//! effect: `kind · id · payload`, where the id came out on the wire with the
-//! effect and the kind is one of the reply menu's ([`Pending`]).
+//! `new(routine) → handle`, `start(handle) → effects`, `reply(handle, record)
+//! → effects`, `free(handle)`. A reply record is `kind · id · payload`, where
+//! the id came out on the wire with the effect and the kind is one of the
+//! reply menu's ([`Pending`]).
 //!
-//! Everything a foreign host needs — the handle table, the step, the type
-//! check on replies, the encoding — over owned Rust types, in two layers:
+//! Everything a foreign host needs — the handle table, the type check on
+//! replies, the encoding — over owned Rust types, in two layers:
 //!
 //! - [`Machine`] is _typed_: [`start`](Machine::start) and
-//!   [`reply`](Machine::reply) return `Vec<E::View>`, the effects
-//!   with their handles replaced by ids. It owns the outstanding-request
-//!   table and the kind check. Skins that speak the host language's own
-//!   types — `PyO3`, Rustler — hold one directly.
-//! - [`Machine::step`] is the _byte_ layer over it: decode one input record,
-//!   call the typed method, encode the views. The [`table`] holds machines
-//!   behind this, and a C-ABI or `erl_nif` skin calls it.
+//!   [`reply`](Machine::reply) return `Vec<E::View>`, the effects with their
+//!   handles replaced by ids. It owns the outstanding-request table and the
+//!   kind check. Skins that speak the host language's own types —
+//!   wasm-bindgen, `PyO3`, Rustler — hold one directly.
+//! - [`start_encoded`](Machine::start_encoded) and
+//!   [`reply_encoded`](Machine::reply_encoded) are the _byte_ layer over it:
+//!   decode one reply record, call the typed method, encode the views. The
+//!   [`table`] holds machines behind this, and a C-ABI or `erl_nif` skin
+//!   calls it.
 //!
 //! The application adds the skin: one `#[no_mangle]` wrapper per function in
 //! [`table`], each a line plus the `unsafe` needed to touch foreign memory.
 //! That keeps this crate under `unsafe_code = "forbid"`.
 //!
 //! ```text
-//!   app cdylib                                  effect_routine_host
-//!   ─────────────────────────────────           ─────────────────────────────────────────
+//!   app cdylib                                 effect_routine_host
+//!   ────────────────────────────────           ──────────────────────────────────────────
 //!   enum Effect { … }  impl HostEffect
-//!   #[no_mangle] new()              ─────────▶  table::new(|outbox| Greeter::new(outbox).run())
-//!   #[no_mangle] step(h, in*, out*) ─────────▶  table::step(h, &[u8]) -> Result<(Vec<u8>, Status), Error>
-//!                                   ◀─────────  (bytes, status)   — app writes the out-pointers
+//!   #[no_mangle] new()             ─────────▶  table::new(|outbox| Greeter::new(Ctx::new(outbox)).run())
+//!   #[no_mangle] start(h, out*)    ─────────▶  table::start(h)          -> Result<(Vec<u8>, Status), Error>
+//!   #[no_mangle] reply(h, in*, out*) ───────▶  table::reply(h, &[u8])   -> Result<(Vec<u8>, Status), Error>
+//!                                  ◀─────────  (bytes, status)   — app writes the out-pointers
 //! ```
 //!
 //! # Wire
 //!
 //! The codec, the reply menu ([`Value`](effect_routine::wire::Value)), and
 //! the [`HostEffect`]/[`Encode`] traits live in [`effect_routine::wire`] — the
-//! `no_std` half of the boundary, so a routine's own crate may implement
-//! them. This crate decodes inputs (`0` start; `1 id str`; `2 id u64`;
-//! `3 id`; `4 id bytes`) and keeps the table. `ABI.md` at the repository root
-//! is the contract in full.
+//! `no_std` half of the boundary, so a routine's wire crate may implement
+//! them. This crate decodes reply records (`1 id str`; `2 id u64`; `3 id`;
+//! `4 id bytes`) and keeps the table. `ABI.md` at the repository root is the
+//! contract in full.
 
 use effect_routine::{
     driver::{Drive, Status as DriveStatus},
@@ -62,7 +65,7 @@ pub mod code {
     /// Suspended on something the driver cannot wake.
     pub const STALLED: i32 = 2;
 
-    /// Another thread is inside `step` for this handle.
+    /// Another thread is inside `start` or `reply` for this handle.
     pub const BUSY: i32 = -1;
     /// The routine already completed.
     pub const FINISHED: i32 = -2;
@@ -172,7 +175,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<D, E> {
             })
             .collect();
 
-        // After inserting: a request polled and dropped in the same turn is
+        // After inserting: a request polled and dropped in the same step is
         // both in this batch and already closed.
         for id in self.driver.closed() {
             self.pending.retain(|(i, _)| *i != id);
@@ -210,30 +213,41 @@ impl<E: HostEffect, D: Drive<E>> Machine<D, E>
 where
     E::View: Encode,
 {
-    /// The byte layer: one input record in, the resulting effects out.
-    ///
-    /// `0` starts; `1 id str`, `2 id u64`, `3 id`, `4 id bytes` reply. The
-    /// effects come back encoded by [`Encode`], one record each.
+    /// The byte layer's `start`: the first batch, encoded by [`Encode`], one
+    /// record per effect.
     ///
     /// # Errors
     ///
-    /// [`Error::BadInput`] on a malformed record, plus whatever the typed
-    /// method returns.
-    pub fn step(&mut self, input: &[u8]) -> Result<(Vec<u8>, Status), Error> {
-        let views = match Input::decode(input)? {
-            Input::Start => self.start()?,
+    /// As [`start`](Self::start).
+    pub fn start_encoded(&mut self) -> Result<(Vec<u8>, Status), Error> {
+        let views = self.start()?;
+        Ok((Self::encode(&views), self.status()))
+    }
+
+    /// The byte layer's `reply`: one reply record in — `1 id str`, `2 id u64`,
+    /// `3 id`, or `4 id bytes`, and nothing after it — the resulting effects
+    /// out, encoded.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadInput`] on a malformed record or trailing bytes, plus
+    /// whatever [`reply`](Self::reply) returns.
+    pub fn reply_encoded(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
+        let views = match Input::decode(record)? {
             Input::Bytes(id, v) => self.reply(id, v)?,
             Input::Str(id, v) => self.reply(id, v)?,
             Input::U64(id, v) => self.reply(id, v)?,
             Input::Unit(id) => self.reply(id, ())?,
         };
+        Ok((Self::encode(&views), self.status()))
+    }
 
+    fn encode(views: &[E::View]) -> Vec<u8> {
         let mut w = Writer::new();
-        for view in &views {
+        for view in views {
             view.encode(&mut w);
         }
-
-        Ok((w.finish(), self.status()))
+        w.finish()
     }
 }
 
@@ -246,7 +260,7 @@ impl<D, E> std::fmt::Debug for Machine<D, E> {
     }
 }
 
-/// What one `step` reports. [`code`](Self::code) is its wire form.
+/// What one `start` or `reply` reports. [`code`](Self::code) is its wire form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
     /// At least one request awaits a reply.
@@ -288,8 +302,8 @@ pub enum Error {
     /// Malformed input, a reply of the wrong kind, or an id nothing awaits.
     #[error("malformed input, wrong reply kind, or unknown request id")]
     BadInput,
-    /// Another thread is inside `step` for this handle.
-    #[error("another thread is stepping this routine")]
+    /// Another thread is inside `start` or `reply` for this handle.
+    #[error("another thread is driving this routine")]
     Busy,
     /// The routine already completed.
     #[error("routine already completed")]
@@ -320,9 +334,8 @@ pub fn code_of(result: Result<(), Error>) -> i32 {
     result.map_or_else(Error::code, |()| code::OK)
 }
 
-/// One decoded input: what the host is telling the routine.
+/// One decoded reply record: what the host is telling the routine.
 enum Input {
-    Start,
     Bytes(u64, Vec<u8>),
     Str(u64, String),
     U64(u64, u64),
@@ -335,7 +348,6 @@ impl Input {
         let bad = Error::BadInput;
 
         let input = match r.u8().ok_or(bad)? {
-            0 => Input::Start,
             1 => Input::Str(r.u64().ok_or(bad)?, r.str().ok_or(bad)?),
             2 => Input::U64(r.u64().ok_or(bad)?, r.u64().ok_or(bad)?),
             3 => Input::Unit(r.u64().ok_or(bad)?),
@@ -396,7 +408,7 @@ mod tests {
     pub(crate) struct Echo<O>(pub(crate) O);
 
     impl<O: Post<Effect>> Run for Echo<O> {
-        async fn turn(&mut self) -> ControlFlow<()> {
+        async fn step(&mut self) -> ControlFlow<()> {
             let answer = self.0.ask(Effect::Ask).await;
             self.0.tell(Effect::Say(answer));
             ControlFlow::Break(())
@@ -406,7 +418,7 @@ mod tests {
     pub(crate) struct Both<O>(pub(crate) O);
 
     impl<O: Post<Effect>> Run for Both<O> {
-        async fn turn(&mut self) -> ControlFlow<()> {
+        async fn step(&mut self) -> ControlFlow<()> {
             let (a, b) =
                 effect_routine::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
             self.0.tell(Effect::Say(format!("{a}+{b}")));
@@ -434,7 +446,7 @@ mod tests {
     struct Impatient<O>(O);
 
     impl<O: Post<Effect>> Run for Impatient<O> {
-        async fn turn(&mut self) -> ControlFlow<()> {
+        async fn step(&mut self) -> ControlFlow<()> {
             let abandoned = PollOnce(Some(self.0.ask(Effect::Ask))).await;
             drop(abandoned);
 
@@ -477,11 +489,11 @@ mod tests {
         let mut m = Machine::new(Driver::new(|outbox| Both(outbox).run()));
         assert_eq!(m.start().expect("start"), [View::Ask(1), View::Ask(2)]);
 
-        let (bytes, status) = m.step(&reply_str_record(2, "b")).expect("reply 2");
+        let (bytes, status) = m.reply_encoded(&reply_str_record(2, "b")).expect("reply 2");
         assert!(bytes.is_empty(), "one of two replied: no new effects");
         assert_eq!(status, Status::Awaiting);
 
-        let (bytes, status) = m.step(&reply_str_record(1, "a")).expect("reply 1");
+        let (bytes, status) = m.reply_encoded(&reply_str_record(1, "a")).expect("reply 1");
         assert_eq!(status, Status::Complete);
 
         let mut want = Writer::new();
@@ -517,7 +529,7 @@ mod tests {
             m.start().expect("start");
             // Any input either decodes to a well-formed record or is
             // `BadInput`; a well-formed record for id 1 of kind str succeeds.
-            match m.step(bytes) {
+            match m.reply_encoded(bytes) {
                 Ok((_, status)) => assert_eq!(status, Status::Complete),
                 Err(e) => assert_eq!(e, Error::BadInput),
             }
@@ -527,11 +539,26 @@ mod tests {
     #[test]
     fn trailing_bytes_are_bad_input() {
         let mut m = Machine::new(Driver::new(|outbox| Echo(outbox).run()));
+        assert_eq!(m.start_encoded().expect("start").1, Status::Awaiting);
+        let mut record = reply_str_record(1, "hi");
+        record.push(0);
         assert_eq!(
-            m.step(&[0, 0]),
+            m.reply_encoded(&record),
             Err(Error::BadInput),
-            "start with trailing byte"
+            "trailing byte"
         );
-        assert_eq!(m.step(&[0]).expect("start").1, Status::Awaiting);
+        assert_eq!(m.status(), Status::Awaiting, "nothing was delivered");
+    }
+
+    #[test]
+    fn start_encoded_is_the_first_batch() {
+        let mut m = Machine::new(Driver::new(|outbox| Echo(outbox).run()));
+        let (bytes, status) = m.start_encoded().expect("start");
+        assert_eq!(status, Status::Awaiting);
+        let mut want = Writer::new();
+        want.u8(1);
+        want.u64(1);
+        assert_eq!(bytes, want.finish());
+        assert_eq!(m.start_encoded(), Err(Error::BadInput), "start twice");
     }
 }

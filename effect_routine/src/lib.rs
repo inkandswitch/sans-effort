@@ -3,13 +3,13 @@
 //! An _effect routine_ is a coroutine written in direct style as an ordinary
 //! `async fn`, whose every wait is a typed effect answered by whoever drives
 //! it. The routine has no waker, no executor, and one `Box::pin` at the
-//! boundary; the host pulls it forward one step at a time and supplies the
-//! answers. It is a sans-io state machine that the compiler writes for you.
+//! boundary; a host resumes it one wait at a time and supplies the answers.
+//! It is a sans-io state machine that the compiler writes for you.
 //!
 //! ```text
 //!   host                                    routine
 //!     │                                        │
-//!     │  step()                                │
+//!     │  start()                               │
 //!     │───────────────────────────────────────▶│  runs until it needs input:
 //!     │                                        │  tells Write, asks ReadLine·1
 //!     │  [Write, ReadLine·1]   AWAITING        │
@@ -27,107 +27,179 @@
 //!     │                                        ┴
 //! ```
 //!
+//! # Three layers
+//!
+//! The routine asks for _traits_ and never sees an effect. A _context_
+//! implements those traits, and decides what each call does: a real future
+//! on a runtime, or an effect recorded for a host. The _host_ is whoever
+//! polls — tokio, or a foreign program over a [`Driver`](driver::Driver).
+//!
+//! ```text
+//!   ┌─────────────────────────────────────────────────────────────────┐
+//!   │ routine     Greeter<C: Clock + Directory + Console>: Run        │  no_std
+//!   │             owns the logic; knows nothing of effects or hosts   │
+//!   ├─────────────────────────────────────────────────────────────────┤
+//!   │ context     impl Clock for TokioCtx   │ impl Clock for Ctx<E,O> │
+//!   │             a real future             │ record an effect, wait  │
+//!   ├───────────────────────────────────────┼─────────────────────────┤
+//!   │ host        tokio polls the task      │ a Driver polls; Python, │
+//!   │             directly — no driver      │ JS, a test… performs    │
+//!   └───────────────────────────────────────┴─────────────────────────┘
+//! ```
+//!
+//! The left column is why you write the routine this way: it is also a plain
+//! `async fn`, usable at native speed by code that has never heard of this
+//! crate. The right column is what this crate provides.
+//!
 //! # The pieces
 //!
-//! - [`run::Run`] is the shape of a routine: a [`turn`](run::Run::turn) that
+//! - [`run::Run`] is the shape of a routine: a [`step`](run::Run::step) that
 //!   is one iteration of its loop, and a [`run`](run::Run::run) that repeats
 //!   it until it breaks.
-//! - [`post::Post`] is what a routine writes into: [`tell`](post::Post::tell)
-//!   an effect and move on, or [`ask`](post::Post::ask) one and await the
-//!   reply. Every wait goes through it.
+//! - [`post::Post`] is what a _reifying context_ writes into:
+//!   [`tell`](post::Post::tell) an effect and move on, or
+//!   [`ask`](post::Post::ask) one and await the reply.
 //! - [`reply::ReplyHandle`] is the typed, single-use capability to answer one
 //!   `ask`. It travels inside the effect to whoever performs it.
-//! - [`driver::Driver`] turns a routine into something a host can step:
+//! - [`request::Request`] lets a wait be a value — `Lookup(name)` — so a
+//!   context can be generic over the host's vocabulary, and a host can offer
+//!   a routine less than everything.
+//! - [`driver::Driver`] turns a routine into something a host can resume:
 //!   [`start`](driver::Driver::start), then [`reply`](driver::Driver::reply)
 //!   with each handle the effects hand back, until it is finished.
 //! - [`wire`] is what crosses a boundary: the reply menu, and the traits an
 //!   effect type implements to be shown to a host that cannot hold a Rust
 //!   value.
+//! - [`testing::run_now`] runs a routine against a mock context whose every
+//!   future is ready, in one poll, with no driver.
 //!
 //! # Writing one
 //!
-//! The routine owns a closed effect type and asks for each wait by name.
-//! Variants that carry a [`ReplyHandle`](reply::ReplyHandle) await a reply of
-//! that type; the rest are fire-and-forget.
+//! The routine names what it needs as traits, and asks for a context that
+//! provides them. Nothing from this crate appears in it except [`Run`](run::Run).
 //!
 //! ```
 //! use core::ops::ControlFlow;
-//! use effect_routine::{post::Post, reply::ReplyHandle, run::Run};
+//! use effect_routine::run::Run;
 //!
-//! enum Effect {
-//!     ReadLine(ReplyHandle<String>),
-//!     Write(String),
+//! trait Console {
+//!     async fn read_line(&self) -> String;
+//!     fn write(&self, line: String);
 //! }
 //!
-//! struct Greeter<O: Post<Effect>> {
-//!     outbox: O,
+//! struct Greeter<C: Console> {
+//!     ctx: C,
 //! }
 //!
-//! impl<O: Post<Effect>> Run for Greeter<O> {
-//!     async fn turn(&mut self) -> ControlFlow<()> {
-//!         self.outbox.tell(Effect::Write("Who are you?".into()));
-//!         let name = self.outbox.ask(Effect::ReadLine).await;
-//!         self.outbox.tell(Effect::Write(format!("Hello, {name}!")));
+//! impl<C: Console> Run for Greeter<C> {
+//!     async fn step(&mut self) -> ControlFlow<()> {
+//!         self.ctx.write("Who are you?".into());
+//!         let name = self.ctx.read_line().await;
+//!         self.ctx.write(format!("Hello, {name}!"));
 //!         ControlFlow::Break(())
 //!     }
 //! }
 //! ```
 //!
-//! # Driving one
+//! # A reifying context
 //!
-//! A Rust host matches on the effects and replies through the handle. This
-//! is the whole host loop for the routine above:
+//! To run behind a host, a context implements the same traits by recording
+//! effects. Each wait is a [`Request`](request::Request); the context is
+//! generic over any vocabulary `E` that can carry it, so the host — not the
+//! routine — decides what is on offer.
 //!
 //! ```
 //! # use core::ops::ControlFlow;
-//! # use effect_routine::{post::Post, reply::ReplyHandle, run::Run};
-//! # enum Effect { ReadLine(ReplyHandle<String>), Write(String) }
-//! # struct Greeter<O: Post<Effect>> { outbox: O }
-//! # impl<O: Post<Effect>> Run for Greeter<O> {
-//! #     async fn turn(&mut self) -> ControlFlow<()> {
-//! #         self.outbox.tell(Effect::Write("Who are you?".into()));
-//! #         let name = self.outbox.ask(Effect::ReadLine).await;
-//! #         self.outbox.tell(Effect::Write(format!("Hello, {name}!")));
+//! # use effect_routine::run::Run;
+//! # trait Console { async fn read_line(&self) -> String; fn write(&self, line: String); }
+//! # struct Greeter<C: Console> { ctx: C }
+//! # impl<C: Console> Run for Greeter<C> {
+//! #     async fn step(&mut self) -> ControlFlow<()> {
+//! #         self.ctx.write("Who are you?".into());
+//! #         let name = self.ctx.read_line().await;
+//! #         self.ctx.write(format!("Hello, {name}!"));
 //! #         ControlFlow::Break(())
 //! #     }
 //! # }
-//! use effect_routine::driver::{Driver, Status};
-//! use std::collections::VecDeque;
+//! use core::marker::PhantomData;
+//! use effect_routine::{post::Post, request::{Asked, Request}};
 //!
-//! let mut driver = Driver::new(|outbox| Greeter { outbox }.run());
-//! let mut queue: VecDeque<Effect> = driver.start().into();
-//! let mut written = Vec::new();
+//! // The wire vocabulary: one struct per wait, one per message.
+//! struct ReadLine;
+//! struct Write(String);
 //!
-//! // Each reply may return more effects; queue them so a batch with two
-//! // requests outstanding is handled the same as a batch with one.
-//! while let Some(effect) = queue.pop_front() {
-//!     match effect {
-//!         Effect::Write(text) => written.push(text),
-//!         Effect::ReadLine(reply) => queue.extend(driver.reply(reply, "bob".into())),
+//! impl Request for ReadLine {
+//!     type Reply = String;
+//! }
+//!
+//! // The reifying context: `Console` holds for any `E` that carries both.
+//! struct Ctx<E, O> {
+//!     outbox: O,
+//!     _e: PhantomData<fn() -> E>,
+//! }
+//!
+//! impl<E: From<Asked<ReadLine>> + From<Write>, O: Post<E>> Console for Ctx<E, O> {
+//!     async fn read_line(&self) -> String {
+//!         self.outbox.request(ReadLine).await
+//!     }
+//!
+//!     fn write(&self, line: String) {
+//!         self.outbox.notify(Write(line));
 //!     }
 //! }
 //!
-//! assert!(driver.is_finished());
+//! // A host's vocabulary, and the two `From` impls that admit it.
+//! enum Effect {
+//!     ReadLine(Asked<ReadLine>),
+//!     Write(Write),
+//! }
+//!
+//! impl From<Asked<ReadLine>> for Effect {
+//!     fn from(asked: Asked<ReadLine>) -> Self { Effect::ReadLine(asked) }
+//! }
+//!
+//! impl From<Write> for Effect {
+//!     fn from(write: Write) -> Self { Effect::Write(write) }
+//! }
+//!
+//! // Driving it from Rust: match on the effects, reply through the handles.
+//! use effect_routine::driver::{Driver, Status};
+//! use std::collections::VecDeque;
+//!
+//! let mut driver = Driver::<Effect>::new(|outbox| {
+//!     Greeter { ctx: Ctx { outbox, _e: PhantomData } }.run()
+//! });
+//! let mut queue: VecDeque<Effect> = driver.start().into();
+//! let mut written = Vec::new();
+//!
+//! while let Some(effect) = queue.pop_front() {
+//!     match effect {
+//!         Effect::Write(Write(text)) => written.push(text),
+//!         Effect::ReadLine(Asked { reply, .. }) => {
+//!             queue.extend(driver.reply(reply, "bob".into()));
+//!         }
+//!     }
+//! }
+//!
 //! assert_eq!(driver.status(), Status::Complete);
 //! assert_eq!(written, ["Who are you?", "Hello, bob!"]);
 //! ```
 //!
 //! A host in another language cannot hold a `ReplyHandle`; see [`wire`] and
-//! the `effect_routine_host` crate for that path.
+//! the `effect_routine_host` crate for that path. A host with a runtime needs
+//! none of this: implement `Console` with real futures and `tokio::spawn` the
+//! routine.
 //!
-//! # Three styles, one mechanism
+//! # Where the vocabulary lives
 //!
-//! The example above is the _effects_ style: the routine owns the enum, and
-//! the enum is also the wire. Two others use exactly the same mechanism:
-//!
-//! - _coeffects_: each wait is a [`request::Request`] struct, and the routine
-//!   states what its host must carry as `E: From<Asked<Lookup>>` bounds, so
-//!   several routines can share one host and a host can attenuate.
-//! - _capabilities_: the routine asks for traits (`C: Clock + Directory`) and
-//!   never sees an effect; a _context_ implements them either natively or by
-//!   posting effects. The routine can then also run as a plain `async fn`.
-//!
-//! Pick effects unless you need one of those two properties.
+//! The example above keeps the routine free of any effect type, and puts the
+//! vocabulary in the context, chosen by the host. Two other arrangements use
+//! the same mechanism and are documented in the exploration this crate came
+//! from: the routine may own a closed `Effect` enum and call
+//! [`Post::ask`](post::Post::ask) directly (fewest lines; no native path; the
+//! enum is the spec), or state its requirements as `E: From<Asked<…>>` bounds
+//! on the routine itself (host-chosen vocabulary without traits). Pick the
+//! traits-and-context arrangement unless you know why you want another.
 //!
 //! # `no_std`
 //!
@@ -149,4 +221,5 @@ pub mod post;
 pub mod reply;
 pub mod request;
 pub mod run;
+pub mod testing;
 pub mod wire;

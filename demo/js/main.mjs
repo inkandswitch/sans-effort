@@ -1,4 +1,5 @@
 // The greeter driven from JS, from the wasm-bindgen module in ./pkg.
+// The routine is `greeter`, under the reifying context from `greeter_wire`.
 //
 // The third host of the same routine. Where ../python/main.py decodes bytes
 // with a tag table it wrote itself, this one gets classes and typed getters
@@ -25,8 +26,8 @@ async function drive(greeter, script) {
   const written = [];
   let greeted = 0;
 
-  let step = greeter.start();
-  const queue = [...step.effects];
+  let batch = greeter.start();
+  const queue = [...batch.effects];
 
   while (queue.length > 0) {
     const e = queue.shift();
@@ -37,28 +38,28 @@ async function drive(greeter, script) {
         console.log(e.text);
         continue;
       case Kind.ReadLine:
-        step = greeter.replyStr(e.id, lines.next().value ?? "quit");
+        batch = greeter.replyStr(e.id, lines.next().value ?? "quit");
         break;
       case Kind.Lookup:
-        step = greeter.replyStr(e.id, GREETINGS[e.name] ?? "Greetings");
+        batch = greeter.replyStr(e.id, GREETINGS[e.name] ?? "Greetings");
         break;
       case Kind.Sleep:
         await sleep(e.millis);
-        step = greeter.replyUnit(e.id);
+        batch = greeter.replyUnit(e.id);
         break;
       case Kind.Count:
         greeted += 1;
-        step = greeter.replyNumber(e.id, greeted);
+        batch = greeter.replyNumber(e.id, greeted);
         break;
       default:
         throw new Error(`unknown effect kind ${e.kind}`);
     }
 
-    queue.push(...step.effects);
+    queue.push(...batch.effects);
   }
 
-  if (step.status !== Status.Complete) {
-    throw new Error(`routine ended with status ${step.status}`);
+  if (batch.status !== Status.Complete) {
+    throw new Error(`routine ended with status ${batch.status}`);
   }
   return written;
 }

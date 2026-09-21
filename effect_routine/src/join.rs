@@ -1,7 +1,7 @@
 //! Await two futures at once.
 //!
 //! The reason request ids exist on the wire. Two lazy requests polled in the
-//! same turn record two effects in one batch, and the host may reply to them
+//! same step record two effects in one batch, and the host may reply to them
 //! in either order; `join` is the smallest routine shape that does so.
 //! `no_std` has no `join!`, so this is the whole of it: poll both, keep what
 //! finished, return when neither is left.

@@ -1,11 +1,11 @@
-//! The shape of a routine: one turn at a time.
+//! The shape of a routine: one step at a time.
 
 use core::{future::Future, ops::ControlFlow};
 
-/// A routine that advances one turn at a time.
+/// A routine that advances one step at a time.
 ///
-/// `turn` is one iteration of the routine's loop; returning `Break` ends it.
-/// `run` repeats `turn` until it breaks. Neither method says anything about
+/// `step` is one iteration of the routine's loop; returning `Break` ends it.
+/// `run` repeats `step` until it breaks. Neither method says anything about
 /// `Send`: whether the returned future can cross threads is a property of the
 /// concrete implementor, and Rust infers it at the call site — see
 /// [`Driver::new`](crate::driver::Driver::new), which is where the check
@@ -17,22 +17,23 @@ use core::{future::Future, ops::ControlFlow};
 /// to, because nothing in it is generic over a routine and also spawns it.
 /// Implementors may write `async fn`.
 ///
-/// # Turns and hosts
+/// # Steps and hosts
 ///
-/// A host sees suspensions, not turns. [`run`](Self::run) loops over `turn`
+/// A host sees suspensions, not steps. [`run`](Self::run) loops over `step`
 /// inside the one boxed future, so `Break` is reported as
 /// [`Status::Complete`](crate::driver::Status::Complete) and `Continue` is not
-/// reported at all. If a host must observe a turn boundary, tell it an effect
-/// at the top of `turn`.
+/// reported at all. If a host must observe a step boundary, tell it an effect
+/// at the top of `step`. (The host's own unit of advance is finer — to the
+/// next wait — and is called `resume` on its side to keep the two apart.)
 pub trait Run {
-    /// One turn. `Break(())` means the routine is finished.
-    fn turn(&mut self) -> impl Future<Output = ControlFlow<()>>;
+    /// One iteration of the loop. `Break(())` means the routine is finished.
+    fn step(&mut self) -> impl Future<Output = ControlFlow<()>>;
 
-    /// Turns until one breaks.
+    /// Steps until one breaks.
     fn run(mut self) -> impl Future<Output = ()>
     where
         Self: Sized,
     {
-        async move { while self.turn().await.is_continue() {} }
+        async move { while self.step().await.is_continue() {} }
     }
 }

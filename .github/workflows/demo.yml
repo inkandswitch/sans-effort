@@ -49,15 +49,16 @@ jobs:
           wasm-bindgen --target nodejs --out-dir demo/js/pkg \
             target/wasm32-unknown-unknown/release/greeter_wasm.wasm
 
-      - name: Rust host
+      - name: Native host (tokio, no driver)
         run: |
-          printf 'alice\nbob\nquit\n' | cargo run -q -p greeter > rust.txt
-          printf 'bob\ncarol\n' | cargo run -q -p greeter -- --fanout > rust-fanout.txt
+          printf 'alice\nbob\nquit\n' | cargo run -q -p greeter_tokio > rust.txt
+          printf 'bob\ncarol\n' | cargo run -q -p greeter_tokio -- --fanout > rust-fanout.txt
 
       - name: Python host
         run: |
           python3 demo/python/main.py > python.txt
           python3 demo/python/main.py --fanout > python-fanout.txt
+          python3 demo/python/main.py --ticker
 
       - name: JS host
         run: |

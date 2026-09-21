@@ -24,7 +24,7 @@ in {
     echo "Done"
   '';
 
-  "test:no_std" = cmd "Check the core crate for no_std targets (wasm32, thumbv6m)" ''
+  "test:no_std" = cmd "Check the core crate (wasm32, thumbv6m) and the demo routine (wasm32) build without std" ''
     set -e
 
     echo "===> Checking effect_routine (no_std, no default features)..."
@@ -37,6 +37,10 @@ in {
     echo ""
     echo "===> Checking effect_routine (thumbv6m-none-eabi, critical-section)..."
     ${cargo} check -p effect_routine --no-default-features --features critical-section --target thumbv6m-none-eabi
+
+    echo ""
+    echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
+    ${cargo} check -p greeter -p greeter_wire --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"
@@ -57,7 +61,7 @@ in {
     echo "demo/js/pkg ready"
   '';
 
-  "demo" = cmd "Drive the greeter from Rust, Python (C ABI), and JS (wasm-bindgen); transcripts must agree" ''
+  "demo" = cmd "Drive the greeter natively on tokio, from Python (C ABI), and from JS (wasm-bindgen); transcripts must agree" ''
     set -e
 
     echo "===> Building the cdylib and the wasm module..."
@@ -72,8 +76,8 @@ in {
       fi
 
       echo ""
-      echo "===> Rust host $variant"
-      printf "$script" | ${cargo} run -q -p greeter -- $variant | tee /tmp/effect-routine-rust.txt
+      echo "===> tokio, natively (no driver) $variant"
+      printf "$script" | ${cargo} run -q -p greeter_tokio -- $variant | tee /tmp/effect-routine-rust.txt
 
       echo ""
       echo "===> Python host $variant"
@@ -88,6 +92,10 @@ in {
       diff /tmp/effect-routine-rust.txt /tmp/effect-routine-js.txt
       echo "Transcripts agree $variant"
     done
+
+    echo ""
+    echo "===> Python host, a Quiet machine (ticker): only tags 4 and 5 can appear"
+    ${python} demo/python/main.py --ticker
   '';
 
   "ci:quick" = cmd "Run quick CI checks (fmt, clippy, test)" ''

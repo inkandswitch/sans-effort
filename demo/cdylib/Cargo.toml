@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 effect_routine_host = { workspace = true }
-greeter = { version = "0.1.0", path = "../greeter" }
+greeter_wire = { version = "0.1.0", path = "../wire" }
 
 # The FFI boundary: reading host bytes and handing buffers back needs
 # `unsafe`, so this crate cannot inherit the workspace's `forbid`. Everything

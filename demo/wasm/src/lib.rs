@@ -1,6 +1,7 @@
 //! The greeter, exported to JS with `wasm-bindgen`.
 //!
-//! The routine is the unchanged `greeter` crate. This crate is the boundary:
+//! The routine is the unchanged `greeter` crate, under the reifying context
+//! from `greeter_wire`. This crate is the boundary:
 //! one JS class, [`Greeter`], whose `start()` runs the routine to its first
 //! wait and whose `reply*` methods deliver one answer by request id and run
 //! to the next, each returning the batch of effects emitted in between.
@@ -10,7 +11,7 @@
 //! itself. Here `wasm-bindgen` generates the class, the enum, and the typed
 //! getters, so there is no handle table and no codec — the
 //! [`Machine`](effect_routine_host::Machine) is held directly and its
-//! [`View`](greeter::View)s are converted to JS objects. What does not change
+//! [`View`](greeter_wire::View)s are converted to JS objects. What does not change
 //! is the contract: Rust never calls JS; the host owns the loop, the clock,
 //! and all IO; requests carry ids, and the host may reply in any order.
 //!
@@ -33,7 +34,7 @@
 
 use effect_routine::driver::Driver;
 use effect_routine_host::{Machine, Status as MachineStatus};
-use greeter::{Effect as Emitted, View};
+use greeter_wire::{Full, View};
 use wasm_bindgen::prelude::*;
 
 /// Which effect this is.
@@ -168,16 +169,17 @@ impl From<MachineStatus> for Status {
     }
 }
 
-/// What one call produced.
+/// What one call produced: the effects recorded before the next wait, and
+/// where the routine stopped.
 #[wasm_bindgen]
 #[derive(Debug)]
-pub struct Step {
+pub struct Batch {
     status: Status,
     effects: Vec<Effect>,
 }
 
 #[wasm_bindgen]
-impl Step {
+impl Batch {
     /// Where the routine stopped.
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -197,7 +199,7 @@ impl Step {
 /// `FinalizationRegistry` do it.
 #[wasm_bindgen]
 pub struct Greeter {
-    machine: Machine<Driver<Emitted>, Emitted>,
+    machine: Machine<Driver<Full>, Full>,
 }
 
 impl core::fmt::Debug for Greeter {
@@ -213,7 +215,7 @@ impl Greeter {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            machine: Machine::new(Driver::new(greeter::greeter)),
+            machine: Machine::new(Driver::new(greeter_wire::greeter)),
         }
     }
 
@@ -222,7 +224,7 @@ impl Greeter {
     #[must_use]
     pub fn fanout() -> Self {
         Self {
-            machine: Machine::new(Driver::new(greeter::fanout)),
+            machine: Machine::new(Driver::new(greeter_wire::fanout)),
         }
     }
 
@@ -231,7 +233,7 @@ impl Greeter {
     /// # Errors
     ///
     /// If already started or already finished.
-    pub fn start(&mut self) -> Result<Step, JsError> {
+    pub fn start(&mut self) -> Result<Batch, JsError> {
         let result = self.machine.start();
         self.present(result)
     }
@@ -243,7 +245,7 @@ impl Greeter {
     /// If nothing awaits `id`, it awaits another kind, or the routine has
     /// finished.
     #[wasm_bindgen(js_name = replyStr)]
-    pub fn reply_str(&mut self, id: f64, value: String) -> Result<Step, JsError> {
+    pub fn reply_str(&mut self, id: f64, value: String) -> Result<Batch, JsError> {
         let result = self.machine.reply(integer(id)?, value);
         self.present(result)
     }
@@ -256,7 +258,7 @@ impl Greeter {
     /// As [`reply_str`](Self::reply_str), or if `value` is not a non-negative
     /// safe integer.
     #[wasm_bindgen(js_name = replyNumber)]
-    pub fn reply_number(&mut self, id: f64, value: f64) -> Result<Step, JsError> {
+    pub fn reply_number(&mut self, id: f64, value: f64) -> Result<Batch, JsError> {
         let result = self.machine.reply(integer(id)?, integer(value)?);
         self.present(result)
     }
@@ -268,7 +270,7 @@ impl Greeter {
     ///
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyU64)]
-    pub fn reply_u64(&mut self, id: f64, value: u64) -> Result<Step, JsError> {
+    pub fn reply_u64(&mut self, id: f64, value: u64) -> Result<Batch, JsError> {
         let result = self.machine.reply(integer(id)?, value);
         self.present(result)
     }
@@ -279,7 +281,7 @@ impl Greeter {
     ///
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyUnit)]
-    pub fn reply_unit(&mut self, id: f64) -> Result<Step, JsError> {
+    pub fn reply_unit(&mut self, id: f64) -> Result<Batch, JsError> {
         let result = self.machine.reply(integer(id)?, ());
         self.present(result)
     }
@@ -290,7 +292,7 @@ impl Greeter {
     ///
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyBytes)]
-    pub fn reply_bytes(&mut self, id: f64, value: Vec<u8>) -> Result<Step, JsError> {
+    pub fn reply_bytes(&mut self, id: f64, value: Vec<u8>) -> Result<Batch, JsError> {
         let result = self.machine.reply(integer(id)?, value);
         self.present(result)
     }
@@ -305,10 +307,10 @@ impl Greeter {
     fn present(
         &self,
         result: Result<Vec<View>, effect_routine_host::Error>,
-    ) -> Result<Step, JsError> {
+    ) -> Result<Batch, JsError> {
         let views = result.map_err(|e| JsError::new(&e.to_string()))?;
 
-        Ok(Step {
+        Ok(Batch {
             status: self.machine.status().into(),
             effects: views.into_iter().map(Effect::from).collect(),
         })

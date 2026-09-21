@@ -1,34 +1,58 @@
-//! C ABI over the greeter, in sans-io's shape: `new`, `step`, `free`.
+//! C ABI over the greeter: `new`, `start`, `reply`, `free`.
 //!
-//! The vocabulary and the encoding are the `greeter` crate; the stepping,
-//! the handle table, and the type check on replies are `effect_routine_host`.
-//! This crate is the `extern "C"` skin over both: one wrapper per function,
-//! each a line plus the `unsafe` needed to touch foreign memory — building a
-//! slice from a host pointer, writing the out-pointers, reclaiming a buffer.
-//! Three blocks, and no mechanism.
+//! The vocabulary and the reifying context are `greeter_wire`; the handle
+//! table and the type check on replies are `effect_routine_host`. This crate
+//! is the `extern "C"` skin over both: one wrapper per function, each a line
+//! plus the `unsafe` needed to touch foreign memory — building a slice from a
+//! host pointer, writing the out-pointers, reclaiming a buffer. Three blocks,
+//! and no mechanism.
 //!
 //! `ABI.md` at the repository root is the contract; `../python/main.py` is a
 //! host that speaks it with a byte buffer and no library.
 
-use effect_routine_host::{code_of, table};
+use effect_routine_host::{Error, Status, code_of, table};
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two
-/// threads stepping it at once get `BUSY`.
+/// threads driving it at once get `BUSY`.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new() -> u64 {
-    table::new(greeter::greeter)
+    table::new(greeter_wire::greeter)
 }
 
 /// Create the fan-out greeter: two requests per batch, replied to in any
-/// order. Same handle type, same `step`, same codec.
+/// order. Same handle type, same calls, same codec.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_fanout() -> u64 {
-    table::new(greeter::fanout)
+    table::new(greeter_wire::fanout)
 }
 
-/// Feed one input — `0` to start, then one reply per awaited effect — and
-/// receive the effects recorded before the next wait plus a status code. On
-/// error nothing is written.
+/// Create a three-tick ticker under the `Quiet` vocabulary. It only ever
+/// emits tags 4 and 5, and a host can know that from the type alone.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_ticker() -> u64 {
+    table::new(greeter_wire::ticker)
+}
+
+/// Run the routine to its first wait and receive the effects it recorded plus
+/// a status code. Valid once per handle. On error nothing is written.
+///
+/// # Safety
+///
+/// `out_ptr` and `out_len` must be valid for writes. Free the buffer with
+/// [`greeter_buf_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn greeter_start(
+    handle: u64,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    // SAFETY: caller contract.
+    unsafe { deliver(table::start(handle), out_ptr, out_len) }
+}
+
+/// Deliver one reply record — `kind · id · payload` — and receive the effects
+/// recorded before the next wait plus a status code. On error nothing is
+/// written.
 ///
 /// # Safety
 ///
@@ -36,14 +60,14 @@ pub extern "C" fn greeter_new_fanout() -> u64 {
 /// `out_ptr` and `out_len` must be valid for writes. Free the buffer with
 /// [`greeter_buf_free`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn greeter_step(
+pub unsafe extern "C" fn greeter_reply(
     handle: u64,
     in_ptr: *const u8,
     in_len: usize,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    let input = if in_ptr.is_null() {
+    let record = if in_ptr.is_null() {
         &[][..]
     } else {
         // SAFETY: caller contract. `from_raw_parts` needs a non-null pointer
@@ -52,14 +76,8 @@ pub unsafe extern "C" fn greeter_step(
         unsafe { std::slice::from_raw_parts(in_ptr, in_len) }
     };
 
-    match table::step(handle, input) {
-        Ok((bytes, status)) => {
-            // SAFETY: caller contract.
-            unsafe { give(bytes, out_ptr, out_len) };
-            status.code()
-        }
-        Err(e) => e.code(),
-    }
+    // SAFETY: caller contract.
+    unsafe { deliver(table::reply(handle, record), out_ptr, out_len) }
 }
 
 /// Drop a greeter, including any request it had outstanding.
@@ -68,7 +86,8 @@ pub extern "C" fn greeter_free(handle: u64) -> i32 {
     code_of(table::free(handle))
 }
 
-/// Free a buffer previously returned by [`greeter_step`].
+/// Free a buffer previously returned by [`greeter_start`] or
+/// [`greeter_reply`].
 ///
 /// # Safety
 ///
@@ -80,21 +99,33 @@ pub unsafe extern "C" fn greeter_buf_free(ptr: *mut u8, len: usize) {
         return;
     }
 
-    // SAFETY: reconstructing the `Box<[u8]>` leaked in `give`.
+    // SAFETY: reconstructing the `Box<[u8]>` leaked in `deliver`.
     drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
 }
 
-/// Hand a Rust-allocated buffer to the host through two out-pointers.
+/// Hand a result to the host: on success, the buffer through the two
+/// out-pointers and the status as the return code; on error, the error's
+/// code and nothing written.
 ///
 /// # Safety
 ///
 /// `out_ptr` and `out_len` must be valid for writes. Free with
 /// [`greeter_buf_free`].
-unsafe fn give(bytes: Vec<u8>, out_ptr: *mut *mut u8, out_len: *mut usize) {
-    let boxed = bytes.into_boxed_slice();
-    // SAFETY: caller guarantees both out-pointers are writable.
-    unsafe {
-        *out_len = boxed.len();
-        *out_ptr = Box::into_raw(boxed).cast::<u8>();
+unsafe fn deliver(
+    result: Result<(Vec<u8>, Status), Error>,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    match result {
+        Ok((bytes, status)) => {
+            let boxed = bytes.into_boxed_slice();
+            // SAFETY: caller guarantees both out-pointers are writable.
+            unsafe {
+                *out_len = boxed.len();
+                *out_ptr = Box::into_raw(boxed).cast::<u8>();
+            }
+            status.code()
+        }
+        Err(e) => e.code(),
     }
 }

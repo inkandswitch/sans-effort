@@ -8,6 +8,7 @@ rather than the ABI's, and it is `TAGS` below.
     cargo build -p greeter_cdylib
     python3 demo/python/main.py            # alice, bob, quit
     python3 demo/python/main.py --fanout   # two waits per batch
+    python3 demo/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
 """
 
 import ctypes
@@ -23,8 +24,7 @@ OK = AWAITING = 0
 COMPLETE, STALLED = 1, 2
 ERRORS = {-1: "BUSY", -2: "FINISHED", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT"}
 
-# Input records: tag, then request id, then payload by kind.
-START = b"\x00"
+# Reply records: kind, then request id, then payload.
 
 
 def reply_str(id_: int, s: str) -> bytes:
@@ -72,14 +72,21 @@ class Reader:
 
 
 class Library:
-    """`new / step / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
+    """`new / start / reply / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
 
     def __init__(self, path: Path):
         self.lib = ctypes.CDLL(str(path))
         self.lib.greeter_new.restype = ctypes.c_uint64
         self.lib.greeter_new_fanout.restype = ctypes.c_uint64
-        self.lib.greeter_step.restype = ctypes.c_int32
-        self.lib.greeter_step.argtypes = [
+        self.lib.greeter_new_ticker.restype = ctypes.c_uint64
+        self.lib.greeter_start.restype = ctypes.c_int32
+        self.lib.greeter_start.argtypes = [
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        self.lib.greeter_reply.restype = ctypes.c_int32
+        self.lib.greeter_reply.argtypes = [
             ctypes.c_uint64,
             ctypes.c_char_p,
             ctypes.c_size_t,
@@ -89,14 +96,24 @@ class Library:
         self.lib.greeter_free.restype = ctypes.c_int32
         self.lib.greeter_buf_free.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
 
-    def new(self, fanout: bool) -> int:
-        return self.lib.greeter_new_fanout() if fanout else self.lib.greeter_new()
+    def new(self, kind: str) -> int:
+        return {"greeter": self.lib.greeter_new, "fanout": self.lib.greeter_new_fanout, "ticker": self.lib.greeter_new_ticker}[kind]()
 
-    def step(self, handle: int, record: bytes) -> tuple[int, bytes]:
-        """One input record in; (status, effect bytes) out. Raises on an error code."""
+    def start(self, handle: int) -> tuple[int, bytes]:
+        """Run to the first wait; (status, effect bytes) out. Raises on an error code."""
         out_ptr = ctypes.POINTER(ctypes.c_uint8)()
         out_len = ctypes.c_size_t()
-        code = self.lib.greeter_step(handle, record, len(record), ctypes.byref(out_ptr), ctypes.byref(out_len))
+        code = self.lib.greeter_start(handle, ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)
+
+    def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
+        """One reply record in; (status, effect bytes) out. Raises on an error code."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_reply(handle, record, len(record), ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)
+
+    def _collect(self, code: int, out_ptr, out_len) -> tuple[int, bytes]:
         if code < 0:
             raise RuntimeError(ERRORS.get(code, code))
         data = ctypes.string_at(out_ptr, out_len.value)
@@ -140,7 +157,7 @@ GREETINGS = {"alice": "Hello", "bob": "Hi", "carol": "Hey"}
 def drive(lib: Library, handle: int, script: list[str]) -> list[str]:
     """Perform each effect and reply by id until the routine completes."""
     lines, written, greeted = iter(script), [], 0
-    status, data = lib.step(handle, START)
+    status, data = lib.start(handle)
     queue = deque(decode(data))
 
     while queue:
@@ -159,7 +176,7 @@ def drive(lib: Library, handle: int, script: list[str]) -> list[str]:
         elif e["kind"] == "count":
             greeted += 1
             record = reply_u64(e["id"], greeted)
-        status, data = lib.step(handle, record)
+        status, data = lib.reply(handle, record)
         queue.extend(decode(data))
 
     assert status == COMPLETE, f"routine ended with status {status}"
@@ -177,10 +194,11 @@ def find_library() -> Path:
 
 
 if __name__ == "__main__":
-    fanout = "--fanout" in sys.argv
+    kind = "fanout" if "--fanout" in sys.argv else "ticker" if "--ticker" in sys.argv else "greeter"
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": []}[kind]
     lib = Library(find_library())
-    handle = lib.new(fanout)
+    handle = lib.new(kind)
     try:
-        drive(lib, handle, ["alice", "bob"] if not fanout else ["bob", "carol"])
+        drive(lib, handle, script)
     finally:
         lib.free(handle)

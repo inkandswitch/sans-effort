@@ -1,7 +1,7 @@
 [package]
-name = "greeter"
+name = "greeter_wire"
 version = "0.1.0"
-description = "The greeter, written against capability traits. Knows nothing of effects, handles, drivers, or hosts"
+description = "The greeter's reifying context and wire vocabulary: what only the routine's author can write, and nothing else"
 publish = false
 
 authors.workspace = true
@@ -12,9 +12,11 @@ rust-version.workspace = true
 
 [dependencies]
 effect_routine = { workspace = true }
+greeter = { version = "0.1.0", path = "../greeter" }
 
 [dev-dependencies]
 bolero = { workspace = true }
+effect_routine = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

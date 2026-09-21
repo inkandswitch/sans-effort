@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 effect_routine = { workspace = true, features = ["std"] }
 effect_routine_host = { workspace = true }
-greeter = { version = "0.1.0", path = "../greeter" }
+greeter_wire = { version = "0.1.0", path = "../wire" }
 wasm-bindgen = { workspace = true }
 
 [lints]
