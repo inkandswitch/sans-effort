@@ -2,11 +2,7 @@
 
 > Host-driven async coroutines whose every wait is a typed effect
 
-An _effect routine_ is an ordinary `async fn` whose waits are answered by
-whoever drives it: no waker, no executor, one `Box::pin` at the boundary. It
-is a sans-io state machine the compiler writes for you — and because the
-routine asks for _traits_ rather than effects, the same code is also a plain
-`async fn` that tokio runs natively with no driver at all.
+An _effect routine_ is an ordinary `async fn` whose waits are answered by whoever drives it: no waker, no executor, one `Box::pin` at the boundary. It is a sans-io state machine the compiler writes for you — and because the routine asks for _traits_ rather than effects, the same code is also a plain `async fn` that tokio runs natively with no driver at all.
 
 This crate is the mechanism. It is `no_std` + `alloc`.
 
@@ -79,9 +75,7 @@ for effect in driver.start() {
 }
 ```
 
-A host with a runtime needs none of this: implement `Console` with real futures
-and `tokio::spawn` the routine. A host in another language cannot hold a
-`ReplyHandle`; see `effect_routine_host` and `ABI.md` in the repository.
+A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `effect_routine_host` and `ABI.md` in the repository.
 
 ## Features
 
@@ -92,8 +86,7 @@ and `tokio::spawn` the routine. A host in another language cannot hold a
 | `portable-atomic` | …this supplies them, for targets without native CAS or 64-bit atomics. Implies `spin` |
 | `critical-section` | `portable-atomic` backed by an application-provided `critical-section` |
 
-At least one of `std` and `spin` must be enabled; the crate refuses to build
-otherwise, with a message saying so.
+At least one of `std` and `spin` must be enabled; the crate refuses to build otherwise, with a message saying so.
 
 ## License
 

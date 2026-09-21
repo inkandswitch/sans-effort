@@ -2,9 +2,7 @@
 
 > _sans-io, sans effort_
 
-[![CI](https://github.com/inkandswitch/effect-routine/actions/workflows/test-host.yml/badge.svg)](https://github.com/inkandswitch/effect-routine/actions/workflows/test-host.yml)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
-[![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/effect_routine)
+[![CI](https://github.com/inkandswitch/effect-routine/actions/workflows/test-host.yml/badge.svg)](https://github.com/inkandswitch/effect-routine/actions/workflows/test-host.yml) [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT) [![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/effect_routine)
 
 An _effect routine_ is a coroutine written in direct style as an ordinary `async fn`, whose every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you — and because the routine asks for _traits_ rather than effects, the very same code is also a plain `async fn` that tokio runs at native speed with no driver at all.
 
@@ -17,11 +15,7 @@ This is the library. The research that motivates it, with the alternatives built
 | The same program in six styles, side by side | [`compare/`][compare]                         |
 | What it costs per step, per host             | [`hosts/bench/`][bench]                       |
 
-[exploration]: https://tangled.org/expede.wtf/effect-routines-exploration
-[guide]: https://tangled.org/expede.wtf/effect-routines-exploration/raw/main/guide/how-to-write-effect-routines.pdf
-[analysis]: https://tangled.org/expede.wtf/effect-routines-exploration/blob/main/analysis/README.md
-[compare]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/compare
-[bench]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/hosts/bench
+[exploration]: https://tangled.org/expede.wtf/effect-routines-exploration [guide]: https://tangled.org/expede.wtf/effect-routines-exploration/raw/main/guide/how-to-write-effect-routines.pdf [analysis]: https://tangled.org/expede.wtf/effect-routines-exploration/blob/main/analysis/README.md [compare]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/compare [bench]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/hosts/bench
 
 ## Three layers
 
