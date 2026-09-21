@@ -35,6 +35,7 @@
 use effect_routine::driver::Driver;
 use effect_routine_host::{Machine, Status as MachineStatus};
 use greeter_wire::{Full, View};
+use safe_integer::SafeInteger;
 use wasm_bindgen::prelude::*;
 
 /// Which effect this is.
@@ -61,10 +62,10 @@ pub enum Kind {
 #[derive(Clone, Debug)]
 pub struct Effect {
     kind: Kind,
-    id: Option<f64>,
+    id: Option<SafeInteger>,
     name: Option<String>,
     text: Option<String>,
-    millis: Option<f64>,
+    millis: Option<SafeInteger>,
 }
 
 #[wasm_bindgen]
@@ -81,7 +82,7 @@ impl Effect {
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn id(&self) -> Option<f64> {
-        self.id
+        self.id.map(f64::from)
     }
 
     /// The name to look up, for `Lookup`.
@@ -102,12 +103,16 @@ impl Effect {
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn millis(&self) -> Option<f64> {
-        self.millis
+        self.millis.map(f64::from)
     }
 }
 
-impl From<View> for Effect {
-    fn from(view: View) -> Self {
+impl TryFrom<View> for Effect {
+    type Error = safe_integer::NotSafe;
+
+    /// Fails only if an id or a duration exceeds 2^53 − 1, which the routine
+    /// never produces; the check lives here so the getters can be total.
+    fn try_from(view: View) -> Result<Self, Self::Error> {
         let blank = Self {
             kind: Kind::Write,
             id: None,
@@ -116,34 +121,34 @@ impl From<View> for Effect {
             millis: None,
         };
 
-        match view {
+        Ok(match view {
             View::Count { id } => Self {
                 kind: Kind::Count,
-                id: Some(number(id)),
+                id: Some(id.try_into()?),
                 ..blank
             },
             View::Lookup { name, id } => Self {
                 kind: Kind::Lookup,
-                id: Some(number(id)),
+                id: Some(id.try_into()?),
                 name: Some(name),
                 ..blank
             },
             View::ReadLine { id } => Self {
                 kind: Kind::ReadLine,
-                id: Some(number(id)),
+                id: Some(id.try_into()?),
                 ..blank
             },
             View::Sleep { millis, id } => Self {
                 kind: Kind::Sleep,
-                id: Some(number(id)),
-                millis: Some(number(millis)),
+                id: Some(id.try_into()?),
+                millis: Some(millis.try_into()?),
                 ..blank
             },
             View::Write { text } => Self {
                 text: Some(text),
                 ..blank
             },
-        }
+        })
     }
 }
 
@@ -246,7 +251,7 @@ impl Greeter {
     /// finished.
     #[wasm_bindgen(js_name = replyStr)]
     pub fn reply_str(&mut self, id: f64, value: String) -> Result<Batch, JsError> {
-        let result = self.machine.reply(integer(id)?, value);
+        let result = self.machine.reply(id_of(id)?, value);
         self.present(result)
     }
 
@@ -259,7 +264,9 @@ impl Greeter {
     /// safe integer.
     #[wasm_bindgen(js_name = replyNumber)]
     pub fn reply_number(&mut self, id: f64, value: f64) -> Result<Batch, JsError> {
-        let result = self.machine.reply(integer(id)?, integer(value)?);
+        let result = self
+            .machine
+            .reply(id_of(id)?, u64::from(SafeInteger::try_from(value)?));
         self.present(result)
     }
 
@@ -271,7 +278,7 @@ impl Greeter {
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyU64)]
     pub fn reply_u64(&mut self, id: f64, value: u64) -> Result<Batch, JsError> {
-        let result = self.machine.reply(integer(id)?, value);
+        let result = self.machine.reply(id_of(id)?, value);
         self.present(result)
     }
 
@@ -282,7 +289,7 @@ impl Greeter {
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyUnit)]
     pub fn reply_unit(&mut self, id: f64) -> Result<Batch, JsError> {
-        let result = self.machine.reply(integer(id)?, ());
+        let result = self.machine.reply(id_of(id)?, ());
         self.present(result)
     }
 
@@ -293,7 +300,7 @@ impl Greeter {
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyBytes)]
     pub fn reply_bytes(&mut self, id: f64, value: Vec<u8>) -> Result<Batch, JsError> {
-        let result = self.machine.reply(integer(id)?, value);
+        let result = self.machine.reply(id_of(id)?, value);
         self.present(result)
     }
 
@@ -312,7 +319,10 @@ impl Greeter {
 
         Ok(Batch {
             status: self.machine.status().into(),
-            effects: views.into_iter().map(Effect::from).collect(),
+            effects: views
+                .into_iter()
+                .map(Effect::try_from)
+                .collect::<Result<_, _>>()?,
         })
     }
 }
@@ -323,38 +333,9 @@ impl Default for Greeter {
     }
 }
 
-/// The largest integer a JS `number` holds exactly.
-const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+mod safe_integer;
 
-/// A `u64` as a JS `number`. Ids and millisecond durations never approach
-/// 2^53; anything that did is clamped rather than rounded.
-fn number(n: u64) -> f64 {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "clamped to MAX_SAFE_INTEGER, which f64 represents exactly"
-    )]
-    let exact = n.min(MAX_SAFE_INTEGER) as f64;
-    exact
-}
-
-/// A JS `number` as a `u64`, or an error if it is not a non-negative safe
-/// integer.
-fn integer(n: f64) -> Result<u64, JsError> {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "MAX_SAFE_INTEGER is exactly representable"
-    )]
-    let max = MAX_SAFE_INTEGER as f64;
-
-    if n.is_finite() && n >= 0.0 && n.fract() == 0.0 && n <= max {
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "checked: finite, integral, and within [0, 2^53)"
-        )]
-        let value = n as u64;
-        Ok(value)
-    } else {
-        Err(JsError::new("expected a non-negative safe integer"))
-    }
+/// A request id from JS: a `number` that must be a safe integer.
+fn id_of(id: f64) -> Result<u64, JsError> {
+    Ok(SafeInteger::try_from(id)?.into())
 }

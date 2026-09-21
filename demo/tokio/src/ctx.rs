@@ -9,7 +9,7 @@
 use routines::traits::{Clock, Counter, Directory, Input, Output};
 use std::{
     io::{self, Write as _},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Duration,
 };
 use tokio::{
@@ -24,10 +24,17 @@ use tokio::{
 /// is an atomic; `Clock` is `tokio::time::sleep`, so under a paused-clock
 /// test it costs no wall time.
 pub(crate) struct TokioCtx<R> {
-    /// `read_line` needs `&mut`; the trait takes `&self`. An async mutex,
-    /// never contended: one routine holds one context.
+    /// `read_line` needs `&mut R`; the trait takes `&self` so that a routine
+    /// can `join` two waits on one context. Something must bridge the two,
+    /// and it is the context's job, not the caller's. It must be tokio's mutex,
+    /// not `std`'s: the guard is held across `.await`, and a `std` guard there
+    /// would make the future `!Send` and could deadlock a single thread.
+    /// Never contended — one routine holds one context.
     lines: Mutex<R>,
     greeted: AtomicU64,
+    /// Set once stdout has failed, so the failure is reported once and the
+    /// routine is left to finish on its own (it reads EOF and quits).
+    stdout_failed: AtomicBool,
 }
 
 impl<R: AsyncBufRead + Send + Unpin> TokioCtx<R> {
@@ -36,6 +43,7 @@ impl<R: AsyncBufRead + Send + Unpin> TokioCtx<R> {
         Self {
             lines: Mutex::const_new(input),
             greeted: AtomicU64::new(0),
+            stdout_failed: AtomicBool::new(false),
         }
     }
 }
@@ -86,10 +94,17 @@ impl<R: AsyncBufRead + Send + Unpin> Input for TokioCtx<R> {
 }
 
 impl<R: AsyncBufRead + Send + Unpin> Output for TokioCtx<R> {
+    /// `Output::write` is fire-and-forget by design, so a stdout error has
+    /// nowhere to go. A context must not end the process on the routine's
+    /// behalf; it reports once and carries on.
     fn write(&self, line: String) {
-        // A closed stdout is the host's problem, not the routine's.
-        if writeln!(io::stdout().lock(), "{line}").is_err() {
-            std::process::exit(0);
+        if self.stdout_failed.load(Ordering::Relaxed) {
+            return;
+        }
+
+        if let Err(e) = writeln!(io::stdout().lock(), "{line}") {
+            self.stdout_failed.store(true, Ordering::Relaxed);
+            eprintln!("greeter_tokio: stdout: {e}");
         }
     }
 }

@@ -66,18 +66,15 @@
 
         format-pkgs = with pkgs; [
           alejandra
-          nixpkgs-fmt
           taplo
         ];
 
         cargo-installs = with pkgs; [
           cargo-criterion
           cargo-deny
-          cargo-expand
           cargo-hack
           cargo-nextest
           cargo-semver-checks
-          cargo-sort
           cargo-watch
           typos
         ];

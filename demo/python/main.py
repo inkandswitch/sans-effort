@@ -135,7 +135,10 @@ def decode(data: bytes) -> list[dict]:
     """Effect records → dicts with a `kind`, its fields, and an `id` if awaiting."""
     r, effects = Reader(data), []
     while not r.done():
-        kind = TAGS[r.u8()]
+        at, tag = r.at, r.u8()
+        kind = TAGS.get(tag)
+        if kind is None:
+            raise ValueError(f"unknown effect tag {tag} at byte {at}: this host knows {sorted(TAGS)}")
         if kind == "count":
             effects.append({"kind": kind, "id": r.u64()})
         elif kind == "lookup":

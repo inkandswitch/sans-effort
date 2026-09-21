@@ -81,16 +81,19 @@ cargo = { level = "deny", priority = -1 }
 multiple_crate_versions = "allow"            # various transitive deps
 pedantic = { level = "deny", priority = -1 }
 
+# A library workspace, not an embedded one: optimise for speed, keep
+# unwinding (the host crate's panic isolation depends on it), keep symbols.
+# Fat LTO: the per-step cost lives in cross-crate inlining (routine → context
+# → driver), and a release build is a one-off.
 [profile.release]
 codegen-units = 1
 lto = "fat"
-opt-level = "z"
-panic = "abort"
-strip = "symbols"
+opt-level = 3
+
+# Close to release, but thin LTO: benches are rebuilt often.
 
 [profile.bench]
 codegen-units = 1
 debug = true
 lto = "thin"
 opt-level = 3
-strip = false

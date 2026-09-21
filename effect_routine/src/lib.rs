@@ -199,12 +199,12 @@
 //!
 //! # `no_std`
 //!
-//! This crate is `no_std` + `alloc`. The `std` feature swaps the driver's one
-//! lock from `spin` to `std::sync::Mutex`. Targets without native CAS or
-//! 64-bit atomics enable `portable-atomic` (and usually `critical-section`).
+//! This crate is `no_std` + `alloc`. The driver has one lock: `std::sync::Mutex`
+//! under the default `std` feature, `spin::Mutex` under `spin`. Targets without
+//! native CAS or 64-bit atomics add `portable-atomic` (which implies `spin`) and
+//! usually `critical-section`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
 
 extern crate alloc;
 

@@ -27,12 +27,16 @@ in {
   "test:no_std" = cmd "Check the core crate (wasm32, thumbv6m) and the demo routine (wasm32) build without std" ''
     set -e
 
-    echo "===> Checking effect_routine (no_std, no default features)..."
-    ${cargo} check -p effect_routine --no-default-features
+    echo "===> Checking effect_routine (no_std: spin lock)..."
+    ${cargo} check -p effect_routine --no-default-features --features spin
+
+    echo ""
+    echo "===> Checking every feature combination builds (or is refused on purpose)..."
+    ${cargo} hack check -p effect_routine --feature-powerset --at-least-one-of std,spin
 
     echo ""
     echo "===> Checking effect_routine (wasm32-unknown-unknown)..."
-    ${cargo} check -p effect_routine --no-default-features --target wasm32-unknown-unknown
+    ${cargo} check -p effect_routine --no-default-features --features spin --target wasm32-unknown-unknown
 
     echo ""
     echo "===> Checking effect_routine (thumbv6m-none-eabi, critical-section)..."
@@ -40,7 +44,9 @@ in {
 
     echo ""
     echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
-    ${cargo} check -p routines -p greeter_wire --target wasm32-unknown-unknown
+    # Neither crate picks a lock — that is the binary's decision — so checking
+    # them as leaves means standing in for the binary here.
+    ${cargo} check -p routines -p greeter_wire --features effect_routine/spin --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"
