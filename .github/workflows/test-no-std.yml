@@ -25,11 +25,13 @@ jobs:
           cache: true
           target: wasm32-unknown-unknown, thumbv6m-none-eabi
 
+      # Only the core crate is no_std; the host crate and the demo are std by
+      # design, so these are scoped with -p rather than --workspace.
       - name: Check no_std (host)
-        run: cargo check --workspace --no-default-features
+        run: cargo check -p effect_routine --no-default-features
 
       - name: Check wasm32
-        run: cargo check --workspace --no-default-features --target wasm32-unknown-unknown
+        run: cargo check -p effect_routine --no-default-features --target wasm32-unknown-unknown
 
-      - name: Check thumbv6m
-        run: cargo check --workspace --no-default-features --target thumbv6m-none-eabi
+      - name: Check thumbv6m (no CAS, no 64-bit atomics)
+        run: cargo check -p effect_routine --no-default-features --features critical-section --target thumbv6m-none-eabi

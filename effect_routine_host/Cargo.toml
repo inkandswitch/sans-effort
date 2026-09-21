@@ -1,0 +1,24 @@
+[package]
+name = "effect_routine_host"
+version = "0.1.0"
+description = "Everything a foreign host needs to step effect routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
+readme = "README.md"
+
+categories = ["asynchronous", "external-ffi-bindings"]
+keywords = ["async", "coroutine", "effects", "ffi", "sans-io"]
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+effect_routine = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+bolero = { workspace = true }
+
+[lints]
+workspace = true

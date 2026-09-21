@@ -14,13 +14,30 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+portable-atomic = { workspace = true, optional = true }
+portable-atomic-util = { workspace = true, optional = true }
+spin = { workspace = true }
 
 [dev-dependencies]
 bolero = { workspace = true }
 
 [features]
 default = ["std"]
+## Use `std::sync::Mutex` for the driver's one lock instead of `spin`.
 std = []
+## Atomics for targets without native CAS or 64-bit atomics (e.g. `thumbv6m`).
+portable-atomic = [
+  "dep:portable-atomic",
+  "dep:portable-atomic-util",
+  "spin/portable-atomic",
+]
+## `portable-atomic` backed by a `critical-section` implementation the
+## application provides.
+critical-section = ["portable-atomic", "portable-atomic/critical-section"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

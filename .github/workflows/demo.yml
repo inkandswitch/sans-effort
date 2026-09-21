@@ -1,0 +1,50 @@
+name: Demo
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The same routine, driven from Rust and from Python over the C ABI, must
+  # produce the same transcript. This is the ABI.md contract, exercised.
+  hosts-agree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build the cdylib
+        run: cargo build -p greeter_cdylib
+
+      - name: Rust host
+        run: |
+          printf 'alice\nbob\nquit\n' | cargo run -q -p greeter > rust.txt
+          printf 'bob\ncarol\n' | cargo run -q -p greeter -- --fanout > rust-fanout.txt
+
+      - name: Python host
+        run: |
+          python3 demo/python/main.py > python.txt
+          python3 demo/python/main.py --fanout > python-fanout.txt
+
+      - name: Transcripts agree
+        run: |
+          diff rust.txt python.txt
+          diff rust-fanout.txt python-fanout.txt
+          cat rust.txt rust-fanout.txt

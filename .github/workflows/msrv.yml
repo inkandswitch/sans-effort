@@ -59,7 +59,7 @@ jobs:
         run: cargo +${{ env.MSRV }} build --workspace --all-features
 
       - name: Check no_std (wasm32)
-        run: cargo +${{ env.MSRV }} check --workspace --no-default-features --target wasm32-unknown-unknown
+        run: cargo +${{ env.MSRV }} check -p effect_routine --no-default-features --target wasm32-unknown-unknown
 
       - name: Test
         run: cargo +${{ env.MSRV }} test --workspace --all-features

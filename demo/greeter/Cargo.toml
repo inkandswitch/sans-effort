@@ -1,0 +1,20 @@
+[package]
+name = "greeter"
+version = "0.1.0"
+description = "The greeter: one effect routine, written in the effects style, with a scripted Rust host"
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+effect_routine = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+bolero = { workspace = true }
+
+[lints]
+workspace = true

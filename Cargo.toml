@@ -1,7 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
+  "demo/cdylib",
+  "demo/greeter",
   "effect_routine",
+  "effect_routine_host",
 ]
 
 [workspace.package]
@@ -9,18 +12,26 @@ edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/inkandswitch/effect-routine"
-authors = [
-  "Brooklyn Zelenka <hello@brooklynzelenka.com>",
-]
+authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]
 
 [workspace.dependencies]
 # Internal crates
 effect_routine = { version = "0.1.0", path = "effect_routine", default-features = false }
+effect_routine_host = { version = "0.1.0", path = "effect_routine_host" }
 
 # External crates
 bolero = "0.13"
+portable-atomic = { version = "1", default-features = false, features = [
+  "fallback",
+] }
+portable-atomic-util = { version = "0.2", default-features = false, features = [
+  "alloc",
+] }
+spin = { version = "0.12", default-features = false, features = [
+  "mutex",
+  "spin_mutex",
+] }
 thiserror = { version = "2.0", default-features = false }
-tracing = { version = "0.1", default-features = false }
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
@@ -52,7 +63,7 @@ wildcard_enum_match_arm = "warn"
 
 all = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
-multiple_crate_versions = "allow" # various transitive deps
+multiple_crate_versions = "allow"            # various transitive deps
 pedantic = { level = "deny", priority = -1 }
 
 [profile.release]
