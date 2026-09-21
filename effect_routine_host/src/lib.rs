@@ -36,7 +36,7 @@
 //!
 //! # Wire
 //!
-//! The codec, the reply menu ([`Value`](effect_routine::wire::Value)), and
+//! The codec, the reply menu ([`Value`](effect_routine::wire::menu::Value)), and
 //! the [`HostEffect`]/[`Encode`] traits live in [`effect_routine::wire`] — the
 //! `no_std` half of the boundary, so a routine's wire crate may implement
 //! them. This crate decodes reply records (`1 id str`; `2 id u64`; `3 id`;
@@ -46,7 +46,12 @@
 use effect_routine::{
     driver::{Driver, status::Status as DriveStatus},
     reply::ReplyHandle,
-    wire::{Encode, HostEffect, Pending, Reader, Reply, Writer},
+    wire::{
+        codec::{Encode, Reader, Writer},
+        host_effect::HostEffect,
+        menu::Reply,
+        pending::Pending,
+    },
 };
 use std::marker::PhantomData;
 

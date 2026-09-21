@@ -8,7 +8,7 @@ use super::{
 use crate::{
     reply::ReplyHandle,
     request::{Asked, Request},
-    wire::{Kind, Reply, Value},
+    wire::menu::{Kind, Reply, Value},
 };
 use alloc::vec::Vec;
 

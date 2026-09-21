@@ -23,7 +23,7 @@
 //! [`request`](crate::driver::outbox::Outbox::request) and
 //! [`notify`](crate::driver::outbox::Outbox::notify).
 
-use crate::{reply::ReplyHandle, wire::Reply};
+use crate::{reply::ReplyHandle, wire::menu::Reply};
 
 /// A request names the type of its reply.
 pub trait Request {
@@ -33,7 +33,7 @@ pub trait Request {
 
 /// A request in flight: what was asked, and the handle the host replies
 /// through. A host's effect type carries these; the host layer splits them
-/// into a view and a [`Pending`](crate::wire::Pending).
+/// into a view and a [`Pending`](crate::wire::pending::Pending).
 #[derive(Debug)]
 pub struct Asked<R: Request> {
     /// What was asked.

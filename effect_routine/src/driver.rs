@@ -8,7 +8,7 @@
 //! recorded before the next.
 //!
 //! An [`Outbox`] serves every wait the same way: mint a [`ReplyHandle`], build
-//! the effect around it, return an [`Awaiting`] future that _holds_ the
+//! the effect around it, return an [`Awaiting`](awaiting::Awaiting) future that _holds_ the
 //! effect. Nothing has happened yet — like every Rust future, it is lazy. Its
 //! first poll records the effect, opens a mailbox slot, and returns `Pending`;
 //! the routine suspends; the driver hands the recorded effects to the host.
@@ -55,7 +55,7 @@ mod mail;
 mod sync;
 
 use self::{outbox::Outbox, status::Status};
-use crate::{reply::ReplyHandle, wire::Reply};
+use crate::{reply::ReplyHandle, wire::menu::Reply};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     future::Future,

@@ -13,7 +13,7 @@
 use crate::{Error, Machine, Status};
 use effect_routine::{
     driver::{Driver, outbox::Outbox},
-    wire::{Encode, HostEffect},
+    wire::{codec::Encode, host_effect::HostEffect},
 };
 use std::{
     collections::HashMap,
@@ -141,7 +141,7 @@ mod tests {
 
     use super::*;
     use crate::tests::{Echo, Effect, reply_str_record};
-    use effect_routine::{run::Run, wire::Writer};
+    use effect_routine::{run::Run, wire::codec::Writer};
 
     #[test]
     fn round_trip_across_threads() {

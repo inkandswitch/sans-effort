@@ -10,8 +10,8 @@
 //! a `u64` handle and a byte buffer and decodes it with a table it wrote
 //! itself. Here `wasm-bindgen` generates the class, the enum, and the typed
 //! getters, so there is no handle table and no codec — the
-//! [`Machine`](effect_routine_host::Machine) is held directly and its
-//! [`View`](greeter_wire::View)s are converted to JS objects. What does not change
+//! [`Machine`] is held directly and its
+//! [`View`]s are converted to JS objects. What does not change
 //! is the contract: Rust never calls JS; the host owns the loop, the clock,
 //! and all IO; requests carry ids, and the host may reply in any order.
 //!

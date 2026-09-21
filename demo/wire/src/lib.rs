@@ -62,7 +62,12 @@ use effect_routine::{
     driver::outbox::Outbox,
     request::{Asked, Request},
     run::Run,
-    wire::{Encode, HostEffect, Pending, Reply, Writer},
+    wire::{
+        codec::{Encode, Writer},
+        host_effect::HostEffect,
+        menu::Reply,
+        pending::Pending,
+    },
 };
 use routines::{
     fanout::Fanout,

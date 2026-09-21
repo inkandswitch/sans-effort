@@ -126,8 +126,9 @@ in {
     echo "===> [1/7] Checking formatting..."
     ${cargo} fmt --all --check
 
-    echo "===> [2/7] Running Clippy (all features)..."
+    echo "===> [2/7] Running Clippy (all features) and rustdoc (no broken links)..."
     ${cargo} clippy --workspace --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" ${cargo} doc --workspace --no-deps --all-features
 
     echo "===> [3/7] Testing (all features)..."
     ${cargo} test --workspace --all-features

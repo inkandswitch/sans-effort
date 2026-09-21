@@ -1,7 +1,7 @@
 //! The routine's half of a request.
 
 use super::outbox::Outbox;
-use crate::wire::Reply;
+use crate::wire::menu::Reply;
 use core::{
     future::Future,
     marker::PhantomData,

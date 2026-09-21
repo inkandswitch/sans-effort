@@ -13,7 +13,7 @@
 use super::sync::AtomicU64;
 use crate::{
     reply::ReplyHandle,
-    wire::{Kind, Value},
+    wire::menu::{Kind, Value},
 };
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
