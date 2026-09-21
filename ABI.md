@@ -59,6 +59,6 @@ host → step(h, [01 id=5 "quit"])
 host → free(h)                                   OK
 ```
 
-## Relationship to the exploration
+## Provenance
 
-This is `hosts/effects/ABI.md` from [`effect-routines-exploration`](https://tangled.org/expede.wtf/effect-routines-exploration), with the `local` (thread-affine) export set removed — a library ships one driver — and `u32` widened to `u64`. Hosts written against that dialect need those two changes and nothing else.
+This descends from `hosts/effects/ABI.md` in [`effect-routines-exploration`](https://tangled.org/expede.wtf/effect-routines-exploration), which eight hosts in five languages implemented. It is not compatible with it and does not try to be: the thread-affine export set is gone, `u32` is `u64`, and trailing bytes are rejected. This document is the contract; the exploration is where it was tested.

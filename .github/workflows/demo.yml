@@ -40,7 +40,7 @@ jobs:
         # Must match the `=` pin on the `wasm-bindgen` crate in Cargo.toml.
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-bindgen@0.2.121
+          tool: wasm-bindgen@0.2.127
 
       - name: Build the cdylib and the wasm module
         run: |

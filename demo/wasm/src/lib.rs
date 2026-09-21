@@ -17,7 +17,7 @@
 //! ```text
 //!   JS:  const g = new Greeter();
 //!        let { status, effects } = g.start();            // [Write, ReadLine·1]
-//!        ({ status, effects } = g.replyStr(1n, "bob"));  // [Lookup·2]
+//!        ({ status, effects } = g.replyStr(1, "bob"));   // [Lookup·2]
 //! ```
 //!
 //! # Panics
@@ -40,7 +40,8 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// How many greetings so far. Reply with `replyU64`.
+    /// How many greetings so far. Reply with `replyNumber` (or `replyU64`
+    /// for a value above 2^53).
     Count,
     /// The greeting for `name`. Reply with `replyStr`.
     Lookup,
@@ -59,10 +60,10 @@ pub enum Kind {
 #[derive(Clone, Debug)]
 pub struct Effect {
     kind: Kind,
-    id: Option<u64>,
+    id: Option<f64>,
     name: Option<String>,
     text: Option<String>,
-    millis: Option<u64>,
+    millis: Option<f64>,
 }
 
 #[wasm_bindgen]
@@ -74,10 +75,11 @@ impl Effect {
         self.kind
     }
 
-    /// The request id, if this effect awaits a reply.
+    /// The request id, if this effect awaits a reply. A plain `number`: ids
+    /// count up from 1 per routine and never approach 2^53.
     #[wasm_bindgen(getter)]
     #[must_use]
-    pub fn id(&self) -> Option<u64> {
+    pub fn id(&self) -> Option<f64> {
         self.id
     }
 
@@ -98,7 +100,7 @@ impl Effect {
     /// How long to wait in milliseconds, for `Sleep`.
     #[wasm_bindgen(getter)]
     #[must_use]
-    pub fn millis(&self) -> Option<u64> {
+    pub fn millis(&self) -> Option<f64> {
         self.millis
     }
 }
@@ -116,24 +118,24 @@ impl From<View> for Effect {
         match view {
             View::Count { id } => Self {
                 kind: Kind::Count,
-                id: Some(id),
+                id: Some(number(id)),
                 ..blank
             },
             View::Lookup { name, id } => Self {
                 kind: Kind::Lookup,
-                id: Some(id),
+                id: Some(number(id)),
                 name: Some(name),
                 ..blank
             },
             View::ReadLine { id } => Self {
                 kind: Kind::ReadLine,
-                id: Some(id),
+                id: Some(number(id)),
                 ..blank
             },
             View::Sleep { millis, id } => Self {
                 kind: Kind::Sleep,
-                id: Some(id),
-                millis: Some(millis),
+                id: Some(number(id)),
+                millis: Some(number(millis)),
                 ..blank
             },
             View::Write { text } => Self {
@@ -241,19 +243,33 @@ impl Greeter {
     /// If nothing awaits `id`, it awaits another kind, or the routine has
     /// finished.
     #[wasm_bindgen(js_name = replyStr)]
-    pub fn reply_str(&mut self, id: u64, value: String) -> Result<Step, JsError> {
-        let result = self.machine.reply(id, value);
+    pub fn reply_str(&mut self, id: f64, value: String) -> Result<Step, JsError> {
+        let result = self.machine.reply(integer(id)?, value);
         self.present(result)
     }
 
-    /// Reply to request `id` with a `u64` (a JS `BigInt`).
+    /// Reply to request `id` with an integer given as a JS `number`. The
+    /// idiomatic path; use [`reply_u64`](Self::reply_u64) above 2^53.
+    ///
+    /// # Errors
+    ///
+    /// As [`reply_str`](Self::reply_str), or if `value` is not a non-negative
+    /// safe integer.
+    #[wasm_bindgen(js_name = replyNumber)]
+    pub fn reply_number(&mut self, id: f64, value: f64) -> Result<Step, JsError> {
+        let result = self.machine.reply(integer(id)?, integer(value)?);
+        self.present(result)
+    }
+
+    /// Reply to request `id` with a `u64` given as a JS `BigInt`, for values
+    /// a `number` cannot hold exactly.
     ///
     /// # Errors
     ///
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyU64)]
-    pub fn reply_u64(&mut self, id: u64, value: u64) -> Result<Step, JsError> {
-        let result = self.machine.reply(id, value);
+    pub fn reply_u64(&mut self, id: f64, value: u64) -> Result<Step, JsError> {
+        let result = self.machine.reply(integer(id)?, value);
         self.present(result)
     }
 
@@ -263,8 +279,8 @@ impl Greeter {
     ///
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyUnit)]
-    pub fn reply_unit(&mut self, id: u64) -> Result<Step, JsError> {
-        let result = self.machine.reply(id, ());
+    pub fn reply_unit(&mut self, id: f64) -> Result<Step, JsError> {
+        let result = self.machine.reply(integer(id)?, ());
         self.present(result)
     }
 
@@ -274,8 +290,8 @@ impl Greeter {
     ///
     /// As [`reply_str`](Self::reply_str).
     #[wasm_bindgen(js_name = replyBytes)]
-    pub fn reply_bytes(&mut self, id: u64, value: Vec<u8>) -> Result<Step, JsError> {
-        let result = self.machine.reply(id, value);
+    pub fn reply_bytes(&mut self, id: f64, value: Vec<u8>) -> Result<Step, JsError> {
+        let result = self.machine.reply(integer(id)?, value);
         self.present(result)
     }
 
@@ -302,5 +318,41 @@ impl Greeter {
 impl Default for Greeter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The largest integer a JS `number` holds exactly.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+/// A `u64` as a JS `number`. Ids and millisecond durations never approach
+/// 2^53; anything that did is clamped rather than rounded.
+fn number(n: u64) -> f64 {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "clamped to MAX_SAFE_INTEGER, which f64 represents exactly"
+    )]
+    let exact = n.min(MAX_SAFE_INTEGER) as f64;
+    exact
+}
+
+/// A JS `number` as a `u64`, or an error if it is not a non-negative safe
+/// integer.
+fn integer(n: f64) -> Result<u64, JsError> {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "MAX_SAFE_INTEGER is exactly representable"
+    )]
+    let max = MAX_SAFE_INTEGER as f64;
+
+    if n.is_finite() && n >= 0.0 && n.fract() == 0.0 && n <= max {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "checked: finite, integral, and within [0, 2^53)"
+        )]
+        let value = n as u64;
+        Ok(value)
+    } else {
+        Err(JsError::new("expected a non-negative safe integer"))
     }
 }

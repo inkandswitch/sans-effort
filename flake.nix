@@ -3,6 +3,9 @@
 
   inputs = {
     nixpkgs.url = "nixpkgs/nixos-26.05";
+    # Only for `wasm-bindgen-cli`, which stable lags on and which must match
+    # the crate version exactly.
+    unstable-nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
 
     command-utils.url = "git+https://tangled.org/expede.wtf/nix-command-utils";
     flake-utils.url = "github:numtide/flake-utils";
@@ -19,6 +22,7 @@
     flake-utils,
     nixpkgs,
     rust-overlay,
+    unstable-nixpkgs,
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -29,6 +33,8 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+
+        unstable = import unstable-nixpkgs {inherit system;};
 
         # Keep in lockstep with `rust-version` in Cargo.toml and rust-toolchain.toml.
         rustVersion = "1.91.0";
@@ -78,10 +84,10 @@
 
         # The demo's foreign hosts. `wasm-bindgen-cli` must match the `=` pin on
         # the `wasm-bindgen` crate in Cargo.toml; bump both together.
-        demo-pkgs = with pkgs; [
-          nodejs
-          python3
-          wasm-bindgen-cli
+        demo-pkgs = [
+          pkgs.nodejs
+          pkgs.python3
+          unstable.wasm-bindgen-cli
         ];
 
         # xdg-utils ships several binaries and sets no mainProgram; name the one
@@ -98,6 +104,7 @@
         # Project-specific commands
         projectCommands = import ./nix/commands.nix {
           inherit pkgs system cmd;
+          wasm-bindgen-cli = unstable.wasm-bindgen-cli;
         };
 
         command_menu = command-utils.commands.${system} [
@@ -160,11 +167,7 @@
           typos
         ];
 
-        ci-demo-pkgs = with pkgs; [
-          nodejs
-          python3
-          wasm-bindgen-cli
-        ];
+        ci-demo-pkgs = demo-pkgs;
       in rec {
         devShells.default = pkgs.mkShell {
           name = "effect_routine_shell";

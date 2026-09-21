@@ -3,11 +3,12 @@
   pkgs,
   system,
   cmd,
+  wasm-bindgen-cli,
 }: let
   cargo = "${pkgs.cargo}/bin/cargo";
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
-  wasm-bindgen = "${pkgs.wasm-bindgen-cli}/bin/wasm-bindgen";
+  wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
 in {
   "test:host" = cmd "Run tests and doc tests" ''
     set -e

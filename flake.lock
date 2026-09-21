@@ -88,7 +88,8 @@
         "command-utils": "command-utils",
         "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs_2",
-        "rust-overlay": "rust-overlay"
+        "rust-overlay": "rust-overlay",
+        "unstable-nixpkgs": "unstable-nixpkgs"
       }
     },
     "rust-overlay": {
@@ -138,6 +139,22 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "unstable-nixpkgs": {
+      "locked": {
+        "lastModified": 1789844176,
+        "narHash": "sha256-COQmpo4lFIzMgUjr3ntDpjH0NwrCnf7N0uhR+6WPGP8=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "79b35bf0bda5cd110f856aa5b5b2c5ba4460dbf5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
         "type": "github"
       }
     }

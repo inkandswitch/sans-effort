@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function drive(greeter, script) {
   const lines = script[Symbol.iterator]();
   const written = [];
-  let greeted = 0n;
+  let greeted = 0;
 
   let step = greeter.start();
   const queue = [...step.effects];
@@ -43,12 +43,12 @@ async function drive(greeter, script) {
         step = greeter.replyStr(e.id, GREETINGS[e.name] ?? "Greetings");
         break;
       case Kind.Sleep:
-        await sleep(Number(e.millis));
+        await sleep(e.millis);
         step = greeter.replyUnit(e.id);
         break;
       case Kind.Count:
-        greeted += 1n;
-        step = greeter.replyU64(e.id, greeted);
+        greeted += 1;
+        step = greeter.replyNumber(e.id, greeted);
         break;
       default:
         throw new Error(`unknown effect kind ${e.kind}`);
