@@ -1,7 +1,7 @@
 //! An outstanding request, by the kind of reply it takes.
 
 use crate::reply::handle::ReplyHandle;
-use crate::reply::value::Kind;
+use crate::reply::kind::Kind;
 use alloc::{string::String, vec::Vec};
 
 /// One variant per entry of the menu; a host replies with the matching kind,

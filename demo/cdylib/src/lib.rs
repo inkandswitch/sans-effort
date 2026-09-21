@@ -10,27 +10,30 @@
 //! `ABI.md` at the repository root is the contract; `../python/main.py` is a
 //! host that speaks it with a byte buffer and no library.
 
+use effect_routine::run::Run;
 use effect_routine_host::{code::code_of, error::Error, status::Status, table};
+use greeter_wire::{Ctx, Full, Quiet};
+use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two
 /// threads driving it at once get `BUSY`.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new() -> u64 {
-    table::new(greeter_wire::greeter)
+    table::new(|outbox| Greeter::new(Ctx::<Full>::new(outbox)).run())
 }
 
 /// Create the fan-out greeter: two requests per batch, replied to in any
 /// order. Same handle type, same calls, same codec.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_fanout() -> u64 {
-    table::new(greeter_wire::fanout)
+    table::new(|outbox| Fanout::new(Ctx::<Full>::new(outbox)).run())
 }
 
 /// Create a three-tick ticker under the `Quiet` vocabulary. It only ever
 /// emits tags 4 and 5, and a host can know that from the type alone.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_ticker() -> u64 {
-    table::new(greeter_wire::ticker)
+    table::new(|outbox| Ticker::new(Ctx::<Quiet>::new(outbox), 3).run())
 }
 
 /// Run the routine to its first wait and receive the effects it recorded plus

@@ -57,19 +57,18 @@
 extern crate alloc;
 
 use alloc::string::String;
-use core::{future::Future, time::Duration};
+use core::time::Duration;
 use effect_routine::{
     driver::outbox::Outbox,
     reply::Reply,
     request::{Asked, Request},
-    run::Run,
     wire::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
         pending::Pending,
     },
 };
-use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker, traits};
+use routines::traits;
 
 // ---- requests: one per awaited capability, plus the one message ----------
 
@@ -310,7 +309,8 @@ impl Encode for View {
 // ---- Quiet: a host that offers only a clock and an output -----------------
 
 /// The vocabulary of a host that offers only `Sleep` and `WriteLine`. A
-/// [`Ticker`] runs under it; a [`Greeter`] does not compile against it.
+/// [`Ticker`](routines::ticker::Ticker) runs under it; a
+/// [`Greeter`](routines::greeter::Greeter) does not compile against it.
 #[derive(Debug)]
 pub enum Quiet {
     /// Tag 4.
@@ -342,27 +342,6 @@ impl HostEffect for Quiet {
     }
 }
 
-// ---- the routines, running against an outbox ------------------------------
-//
-// What a skin hands to `effect_routine_host::table::new`. No `Send` bound
-// here, on purpose: `Driver::new` decides it at the concrete call site by
-// auto-trait leakage.
-
-/// The greeter under a [`Full`] host.
-pub fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
-    Greeter::new(Ctx::new(outbox)).run()
-}
-
-/// The fan-out greeter under a [`Full`] host.
-pub fn fanout(outbox: Outbox<Full>) -> impl Future<Output = ()> {
-    Fanout::new(Ctx::new(outbox)).run()
-}
-
-/// A three-tick [`Ticker`] under a [`Quiet`] host.
-pub fn ticker(outbox: Outbox<Quiet>) -> impl Future<Output = ()> {
-    Ticker::new(Ctx::new(outbox), 3).run()
-}
-
 #[cfg(test)]
 mod tests {
     //! The wire's test story: the same routine, through a `Driver`, read off
@@ -380,8 +359,24 @@ mod tests {
 
     use super::*;
     use alloc::{collections::VecDeque, format, vec, vec::Vec};
-    use effect_routine::driver::{Driver, status::Status};
-    use routines::PAUSE;
+    use core::future::Future;
+    use effect_routine::{
+        driver::{Driver, status::Status},
+        run::Run,
+    };
+    use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
+
+    fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
+        Greeter::new(Ctx::new(outbox)).run()
+    }
+
+    fn fanout(outbox: Outbox<Full>) -> impl Future<Output = ()> {
+        Fanout::new(Ctx::new(outbox)).run()
+    }
+
+    fn ticker(outbox: Outbox<Quiet>) -> impl Future<Output = ()> {
+        Ticker::new(Ctx::new(outbox), 3).run()
+    }
 
     /// A scripted host: answers every request at once, records what it was
     /// shown, and returns what the routine wrote.

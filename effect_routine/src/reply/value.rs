@@ -1,5 +1,6 @@
 //! A reply value as the mailbox and the ABI carry it.
 
+use super::kind::Kind;
 use alloc::{string::String, vec::Vec};
 
 /// A reply value as the mailbox and the ABI carry it.
@@ -12,21 +13,6 @@ pub enum Value {
     /// Counts, ids, timestamps, lengths.
     U64(u64),
     /// An acknowledgement: a sleep, an ack.
-    Unit,
-}
-
-/// Which entry of the menu a slot expects. Recorded when a request opens,
-/// checked when a value is delivered, so a mismatch is caught at the mailbox
-/// and never reaches the routine.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// [`Value::Bytes`].
-    Bytes,
-    /// [`Value::Str`].
-    Str,
-    /// [`Value::U64`].
-    U64,
-    /// [`Value::Unit`].
     Unit,
 }
 

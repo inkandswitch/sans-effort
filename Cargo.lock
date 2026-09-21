@@ -194,8 +194,10 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 name = "greeter_cdylib"
 version = "0.1.0"
 dependencies = [
+ "effect_routine",
  "effect_routine_host",
  "greeter_wire",
+ "routines",
 ]
 
 [[package]]
@@ -214,6 +216,7 @@ dependencies = [
  "effect_routine",
  "effect_routine_host",
  "greeter_wire",
+ "routines",
  "wasm-bindgen",
 ]
 

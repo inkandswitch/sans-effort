@@ -11,12 +11,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 effect_routine = { workspace = true, features = ["std"] }
 effect_routine_host = { workspace = true }
 greeter_wire = { version = "0.1.0", path = "../wire" }
+routines = { version = "0.1.0", path = "../routines" }
 wasm-bindgen = { workspace = true }
 
 [lints]

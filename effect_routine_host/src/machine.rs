@@ -48,9 +48,15 @@ impl<E: HostEffect> Machine<E> {
     }
 
     /// Build a driver around `make` and wrap it: `Machine::new(Driver::new(make))`.
+    /// Nothing runs until [`start`](Self::start).
+    ///
     /// `make` receives the outbox the routine's context should write into and
-    /// returns the routine's future; see [`Driver::new`] for what is checked.
-    pub fn drive<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
+    /// returns the routine's _future_ — `|outbox| Greeter::new(Ctx::new(outbox)).run()`
+    /// — not the routine. The `.run()` cannot be hidden here: `Driver::new`
+    /// requires the future to be `Send`, and only where the routine's type is
+    /// concrete can the compiler decide that. A constructor generic over
+    /// `P: Run` would have no way to state `P::run(): Send` on stable Rust.
+    pub fn from_routine<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
         make: M,
     ) -> Self {
         Self::new(Driver::new(make))
@@ -215,11 +221,11 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Both, Echo, Impatient, View, reply_str_record};
-    use effect_routine::{reply::value::Kind, run::Run, wire::codec::Writer};
+    use effect_routine::{reply::kind::Kind, run::Run, wire::codec::Writer};
 
     #[test]
     fn typed_layer() {
-        let mut m = Machine::drive(|outbox| Echo(outbox).run());
+        let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
         assert_eq!(m.start().expect("start"), [View::Ask(1)]);
         assert_eq!(m.start(), Err(Error::BadInput), "start twice");
         assert_eq!(
@@ -243,7 +249,7 @@ mod tests {
     /// other order: ids 1 and 2 out, `2 replied → []`, `1 replied → Say`.
     #[test]
     fn fan_out_through_the_byte_layer() {
-        let mut m = Machine::drive(|outbox| Both(outbox).run());
+        let mut m = Machine::from_routine(|outbox| Both(outbox).run());
         assert_eq!(m.start().expect("start"), [View::Ask(1), View::Ask(2)]);
 
         let (bytes, status) = m.reply_encoded(&reply_str_record(2, "b")).expect("reply 2");
@@ -263,7 +269,7 @@ mod tests {
     /// until the drop; the machine's own table must not keep it either.
     #[test]
     fn dropped_requests_are_forgotten() {
-        let mut m = Machine::drive(|outbox| Impatient(outbox).run());
+        let mut m = Machine::from_routine(|outbox| Impatient(outbox).run());
         let views = m.start().expect("start");
         assert_eq!(views, [View::Ask(1), View::Ask(2)], "abandoned, then live");
         assert_eq!(
@@ -282,7 +288,7 @@ mod tests {
     #[test]
     fn malformed_input_is_bad_input_never_a_panic() {
         bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
-            let mut m = Machine::drive(|outbox| Echo(outbox).run());
+            let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
             m.start().expect("start");
             // Any input either decodes to a well-formed record or is
             // `BadInput`; a well-formed record for id 1 of kind str succeeds.
@@ -295,7 +301,7 @@ mod tests {
 
     #[test]
     fn trailing_bytes_are_bad_input() {
-        let mut m = Machine::drive(|outbox| Echo(outbox).run());
+        let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
         assert_eq!(m.start_encoded().expect("start").1, Status::Awaiting);
         let mut record = reply_str_record(1, "hi");
         record.push(0);
@@ -309,7 +315,7 @@ mod tests {
 
     #[test]
     fn start_encoded_is_the_first_batch() {
-        let mut m = Machine::drive(|outbox| Echo(outbox).run());
+        let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
         let (bytes, status) = m.start_encoded().expect("start");
         assert_eq!(status, Status::Awaiting);
         let mut want = Writer::new();

@@ -1,8 +1,10 @@
 //! One greeter conversation, owned by JS.
 
 use crate::{batch::Batch, effect::Effect, safe_integer::SafeInteger};
+use effect_routine::run::Run;
 use effect_routine_host::machine::Machine;
-use greeter_wire::{Full, View};
+use greeter_wire::{Ctx, Full, View};
+use routines::{fanout::Fanout, greeter::Greeter as Routine};
 use wasm_bindgen::prelude::*;
 
 /// `FinalizationRegistry` do it.
@@ -16,9 +18,13 @@ impl Greeter {
     /// Spawn a greeter. Nothing runs until `start`.
     #[wasm_bindgen(constructor)]
     #[must_use]
+    #[expect(
+        clippy::new_without_default,
+        reason = "constructed from JS as `new Greeter()`; there is no Rust caller to default it for"
+    )]
     pub fn new() -> Self {
         Self {
-            machine: Machine::drive(greeter_wire::greeter),
+            machine: Machine::from_routine(|outbox| Routine::new(Ctx::new(outbox)).run()),
         }
     }
 
@@ -27,7 +33,7 @@ impl Greeter {
     #[must_use]
     pub fn fanout() -> Self {
         Self {
-            machine: Machine::drive(greeter_wire::fanout),
+            machine: Machine::from_routine(|outbox| Fanout::new(Ctx::new(outbox)).run()),
         }
     }
 
@@ -120,12 +126,6 @@ impl Greeter {
             .map(Effect::try_from)
             .collect::<Result<_, _>>()?;
         Ok(Batch::new(self.machine.status().into(), effects))
-    }
-}
-
-impl Default for Greeter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

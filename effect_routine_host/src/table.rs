@@ -19,10 +19,7 @@ use std::{
     collections::HashMap,
     future::Future,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{
-        Arc, Mutex, MutexGuard, PoisonError, TryLockError,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError, TryLockError},
 };
 
 /// What the table holds: a machine of any effect type, behind its byte
@@ -45,15 +42,68 @@ where
     }
 }
 
-type Boxed = Box<dyn Encoded + Send>;
-type Table = HashMap<u64, Arc<Mutex<Boxed>>>;
+/// A machine behind its own lock, shared between the table and whoever is
+/// driving it right now. Any effect type: the table is one `static` holding
+/// every routine every skin registers, so the machine is type-erased here.
+#[derive(Clone)]
+struct Entry(Arc<Mutex<Box<dyn Encoded + Send>>>);
 
-static MACHINES: Mutex<Option<Table>> = Mutex::new(None);
-static NEXT: AtomicU64 = AtomicU64::new(1);
+impl Entry {
+    fn new(machine: Box<dyn Encoded + Send>) -> Self {
+        Self(Arc::new(Mutex::new(machine)))
+    }
 
-fn with_table<T>(f: impl FnOnce(&mut Table) -> T) -> T {
-    let mut guard = MACHINES.lock().unwrap_or_else(PoisonError::into_inner);
-    f(guard.get_or_insert_with(HashMap::new))
+    /// Take the machine's lock without waiting: a concurrent call is
+    /// [`Error::Busy`] rather than a wait, and a lock poisoned by an earlier
+    /// panic is [`Error::Panicked`].
+    fn try_lock(&self) -> Result<MutexGuard<'_, Box<dyn Encoded + Send>>, Error> {
+        self.0.try_lock().map_err(|e| match e {
+            TryLockError::WouldBlock => Error::Busy,
+            TryLockError::Poisoned(_) => Error::Panicked,
+        })
+    }
+}
+
+/// The process-wide table: machines by handle, and the next handle to issue.
+/// One lock covers both, so a handle is never issued twice.
+struct Table {
+    machines: HashMap<u64, Entry>,
+    next: u64,
+}
+
+impl Table {
+    fn new() -> Self {
+        Self {
+            machines: HashMap::new(),
+            next: 1,
+        }
+    }
+
+    /// Store a machine under a fresh handle, never `0`, never reused.
+    fn insert(&mut self, machine: Box<dyn Encoded + Send>) -> u64 {
+        let handle = self.next;
+        self.next += 1;
+        self.machines.insert(handle, Entry::new(machine));
+        handle
+    }
+
+    fn get(&self, handle: u64) -> Option<Entry> {
+        self.machines.get(&handle).cloned()
+    }
+
+    /// `true` if there was a machine to remove.
+    fn remove(&mut self, handle: u64) -> bool {
+        self.machines.remove(&handle).is_some()
+    }
+}
+
+static TABLE: LazyLock<Mutex<Table>> = LazyLock::new(|| Mutex::new(Table::new()));
+
+/// The table, with a poisoned lock recovered: a panic while holding it can
+/// only have been in `HashMap` itself, and the routines behind it are
+/// untouched.
+fn table() -> MutexGuard<'static, Table> {
+    TABLE.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Register a routine. `make` receives the outbox the routine's context
@@ -66,11 +116,7 @@ where
     F: Future<Output = ()> + Send + 'static,
     M: FnOnce(Outbox<E>) -> F,
 {
-    let handle = NEXT.fetch_add(1, Ordering::Relaxed);
-    let machine: Boxed = Box::new(Machine::drive(make));
-
-    with_table(|t| t.insert(handle, Arc::new(Mutex::new(machine))));
-    handle
+    table().insert(Box::new(Machine::from_routine(make)))
 }
 
 /// Run the routine to its first wait: the effects it recorded, encoded, plus
@@ -101,36 +147,32 @@ pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
 ///
 /// [`Error::BadHandle`] if there is no such routine.
 pub fn free(handle: u64) -> Result<(), Error> {
-    with_table(|t| t.remove(&handle))
-        .map(drop)
-        .ok_or(Error::BadHandle)
+    if table().remove(handle) {
+        Ok(())
+    } else {
+        Err(Error::BadHandle)
+    }
 }
 
 /// Look the handle up, take its lock without waiting, and run `f` with the
 /// routine's panics caught.
 ///
-/// The table lock is not held while the routine runs; the machine's own lock
-/// is `try_lock`ed so a concurrent call is [`Error::Busy`] rather than a wait.
-/// A panicking routine is removed and reported as [`Error::Panicked`]; the
+/// The table lock is not held while the routine runs. A panicking routine is removed and reported as [`Error::Panicked`]; the
 /// removal happens before its lock is released, so no other thread can
 /// observe the poisoned machine in between.
 fn guarded<T>(
     handle: u64,
-    f: impl FnOnce(&mut MutexGuard<'_, Boxed>) -> Result<T, Error>,
+    f: impl FnOnce(&mut MutexGuard<'_, Box<dyn Encoded + Send>>) -> Result<T, Error>,
 ) -> Result<T, Error> {
-    let machine = with_table(|t| t.get(&handle).cloned()).ok_or(Error::BadHandle)?;
+    let machine = table().get(handle).ok_or(Error::BadHandle)?;
 
-    let mut guard = match machine.try_lock() {
-        Ok(g) => g,
-        Err(TryLockError::WouldBlock) => return Err(Error::Busy),
-        Err(TryLockError::Poisoned(_)) => return Err(Error::Panicked),
-    };
+    let mut guard = machine.try_lock()?;
 
     if let Ok(result) = catch_unwind(AssertUnwindSafe(|| f(&mut guard))) {
         return result;
     }
 
-    with_table(|t| t.remove(&handle));
+    table().remove(handle);
     drop(guard);
     Err(Error::Panicked)
 }

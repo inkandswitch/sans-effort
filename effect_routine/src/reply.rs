@@ -12,6 +12,7 @@
 //! one wait with a `T: Reply`.
 
 pub mod handle;
+pub mod kind;
 pub mod value;
 
 use self::{handle::ReplyHandle, value::Value};
