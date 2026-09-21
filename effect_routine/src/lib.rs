@@ -6,10 +6,24 @@
 //! pulls it forward one step at a time and supplies the answers.
 //!
 //! ```text
-//! host                                  routine
-//! step(0)             ──────▶           emits Write, awaits ReadLine·1
-//! ◀── [Write, ReadLine·1], AWAITING
-//! answer 1 "bob"      ──────▶           resumes; emits Lookup·2
+//!   host                                    routine
+//!     │                                        │
+//!     │  step()                                │
+//!     │───────────────────────────────────────▶│  runs until it needs input:
+//!     │                                        │  emits Write, awaits ReadLine·1
+//!     │  [Write, ReadLine·1]   AWAITING        │
+//!     │◀───────────────────────────────────────│
+//!     │                                        │
+//!     │  answer(1, "bob")                      │
+//!     │───────────────────────────────────────▶│  resumes; awaits Lookup·2
+//!     │  [Lookup·2]            AWAITING        │
+//!     │◀───────────────────────────────────────│
+//!     │                                        │
+//!     │  answer(2, "Hello")                    │
+//!     │───────────────────────────────────────▶│  resumes; emits Write, returns
+//!     │  [Write]               COMPLETE        │
+//!     │◀───────────────────────────────────────│
+//!     │                                        ┴
 //! ```
 //!
 //! This crate is `no_std` by default; enable the `std` feature for
