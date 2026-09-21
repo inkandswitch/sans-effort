@@ -19,8 +19,9 @@
 //! checked at the spawn site and visible on the wire.
 //!
 //! The mechanism is these two items; the methods live on
-//! [`Post`](crate::post::Post) as [`request`](crate::post::Post::request) and
-//! [`notify`](crate::post::Post::notify).
+//! [`Outbox`](crate::driver::outbox::Outbox) as
+//! [`request`](crate::driver::outbox::Outbox::request) and
+//! [`notify`](crate::driver::outbox::Outbox::notify).
 
 use crate::{reply::ReplyHandle, wire::Reply};
 

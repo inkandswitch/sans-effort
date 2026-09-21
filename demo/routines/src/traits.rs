@@ -1,13 +1,19 @@
 //! The capabilities a context may offer. Each is one thing the greeter can
 //! do to, or wait on from, its environment.
 //!
-//! Written as `async fn`. rustc warns that this leaves auto traits unstated;
-//! that is the intent — `Send` is the poller's concern, not the routine's,
-//! and the compiler infers it at each spawn site from the concrete context.
+//! Written as `async fn`. rustc warns that this leaves auto traits unstated,
+//! and it is right about what that costs: nothing generic over `C` can also
+//! spawn the routine, because there is no way on stable Rust to write
+//! `C::sleep(..): Send`. This library accepts that and never does it — a
+//! routine is spawned where its context is concrete, and the compiler then
+//! decides `Send` on the real state machine. In exchange, no context is
+//! forced to be `Send`: the `Rc`-based test mock in `recording.rs` compiles,
+//! and so would a context for a target without atomics. Both halves are
+//! pinned in `tests/send.rs`.
 
 #![allow(
     async_fn_in_trait,
-    reason = "Send is decided by the concrete context at the spawn site, not here"
+    reason = "spawn sites are always concrete (tokio::spawn, Driver::new), so Send is inferred there; a bound here would forbid !Send contexts such as the Rc-based test mock"
 )]
 
 use alloc::string::String;

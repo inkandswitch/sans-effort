@@ -199,7 +199,7 @@ impl Batch {
 /// `FinalizationRegistry` do it.
 #[wasm_bindgen]
 pub struct Greeter {
-    machine: Machine<Driver<Full>, Full>,
+    machine: Machine<Full>,
 }
 
 impl core::fmt::Debug for Greeter {

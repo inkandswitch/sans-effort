@@ -1,7 +1,7 @@
 //! The greeter's reifying context and wire vocabulary.
 //!
-//! `Greeter<Ctx<E, O>>` is the same routine as under `greeter_tokio`; only
-//! the context differs. [`Ctx`] serves every wait by recording a request that
+//! `Greeter<Ctx<E>>` is the same routine as under `greeter_tokio`; only
+//! the context differs. The routines are the `routines` crate. [`Ctx`] serves every wait by recording a request that
 //! carries a [`ReplyHandle`](effect_routine::reply::ReplyHandle) and suspending; a host replies by id. This crate
 //! is what only the routine's author can write — which requests exist, how
 //! the five traits map onto them, how a host sees them — and nothing else.
@@ -10,7 +10,7 @@
 //! _skin_ over both, one per binding, in `../cdylib` and `../wasm`.
 //!
 //! ```text
-//!   greeter    Greeter<C>: Run   ──▶   this crate   Ctx<E, O> · Full · View · Encode   ──▶   effect_routine_host
+//!   routines   Greeter<C>: Run   ──▶   this crate   Ctx<E> · Full · View · Encode   ──▶   effect_routine_host
 //!                                                                                                  │
 //!                                                                     ┌────────────────────────────┴──────────┐
 //!                                                                  cdylib  greeter_* (C ABI)          wasm  Greeter class
@@ -32,7 +32,7 @@
 //!
 //! ```compile_fail,E0277
 //! use effect_routine::{driver::Driver, run::Run};
-//! use greeter::Greeter;
+//! use routines::greeter::Greeter;
 //! use greeter_wire::{Ctx, Quiet};
 //!
 //! // error[E0277]: the trait bound `Ctx<Quiet, _>: Directory` is not satisfied
@@ -57,15 +57,17 @@
 extern crate alloc;
 
 use alloc::string::String;
-use core::{future::Future, marker::PhantomData, time::Duration};
+use core::{future::Future, time::Duration};
 use effect_routine::{
-    post::Post,
+    driver::outbox::Outbox,
     request::{Asked, Request},
     run::Run,
     wire::{Encode, HostEffect, Pending, Reply, Writer},
 };
-use greeter::{
-    Fanout, Greeter, Ticker,
+use routines::{
+    fanout::Fanout,
+    greeter::Greeter,
+    ticker::Ticker,
     traits::{Clock, Counter, Directory, Input, Output},
 };
 
@@ -111,51 +113,48 @@ impl Request for Sleep {
 
 /// A context that serves every wait by asking the host.
 ///
-/// Generic over the host's vocabulary `E` and the outbox `O` it writes into.
-/// Each trait impl below holds exactly when `E` can carry that trait's
-/// request, so the set of traits `Ctx<E, O>` implements _is_ the set of
-/// capabilities the host has agreed to provide.
+/// Generic over the host's vocabulary `E`. Each trait impl below holds
+/// exactly when `E` can carry that trait's request, so the set of traits
+/// `Ctx<E>` implements _is_ the set of capabilities the host has agreed to
+/// provide.
 #[derive(Debug)]
-pub struct Ctx<E, O> {
-    outbox: O,
-    _vocabulary: PhantomData<fn() -> E>,
+pub struct Ctx<E> {
+    outbox: Outbox<E>,
 }
 
-impl<E, O: Post<E>> Ctx<E, O> {
+impl<E> Ctx<E> {
     /// A context writing into `outbox`.
-    pub const fn new(outbox: O) -> Self {
-        Self {
-            outbox,
-            _vocabulary: PhantomData,
-        }
+    #[must_use]
+    pub const fn new(outbox: Outbox<E>) -> Self {
+        Self { outbox }
     }
 }
 
-impl<E: From<Asked<Sleep>>, O: Post<E>> Clock for Ctx<E, O> {
+impl<E: From<Asked<Sleep>>> Clock for Ctx<E> {
     async fn sleep(&self, duration: Duration) {
         self.outbox.request(Sleep(duration)).await;
     }
 }
 
-impl<E: From<Asked<Count>>, O: Post<E>> Counter for Ctx<E, O> {
+impl<E: From<Asked<Count>>> Counter for Ctx<E> {
     async fn count(&self) -> u64 {
         self.outbox.request(Count).await
     }
 }
 
-impl<E: From<Asked<Lookup>>, O: Post<E>> Directory for Ctx<E, O> {
+impl<E: From<Asked<Lookup>>> Directory for Ctx<E> {
     async fn lookup(&self, name: String) -> String {
         self.outbox.request(Lookup(name)).await
     }
 }
 
-impl<E: From<Asked<ReadLine>>, O: Post<E>> Input for Ctx<E, O> {
+impl<E: From<Asked<ReadLine>>> Input for Ctx<E> {
     async fn read_line(&self) -> String {
         self.outbox.request(ReadLine).await
     }
 }
 
-impl<E: From<Write>, O: Post<E>> Output for Ctx<E, O> {
+impl<E: From<Write>> Output for Ctx<E> {
     fn write(&self, line: String) {
         self.outbox.notify(Write(line));
     }
@@ -346,21 +345,21 @@ impl HostEffect for Quiet {
 // ---- the routines, running against an outbox ------------------------------
 //
 // What a skin hands to `effect_routine_host::table::new`. No `Send` bound
-// here, on purpose: whether the future can cross threads depends on `O`, and
-// `Driver::new` decides it at the concrete call site by auto-trait leakage.
+// here, on purpose: `Driver::new` decides it at the concrete call site by
+// auto-trait leakage.
 
 /// The greeter under a [`Full`] host.
-pub fn greeter<O: Post<Full> + 'static>(outbox: O) -> impl Future<Output = ()> {
+pub fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
     Greeter::new(Ctx::new(outbox)).run()
 }
 
 /// The fan-out greeter under a [`Full`] host.
-pub fn fanout<O: Post<Full> + 'static>(outbox: O) -> impl Future<Output = ()> {
+pub fn fanout(outbox: Outbox<Full>) -> impl Future<Output = ()> {
     Fanout::new(Ctx::new(outbox)).run()
 }
 
 /// A three-tick [`Ticker`] under a [`Quiet`] host.
-pub fn ticker<O: Post<Quiet> + 'static>(outbox: O) -> impl Future<Output = ()> {
+pub fn ticker(outbox: Outbox<Quiet>) -> impl Future<Output = ()> {
     Ticker::new(Ctx::new(outbox), 3).run()
 }
 
@@ -377,8 +376,8 @@ mod tests {
 
     use super::*;
     use alloc::{collections::VecDeque, format, vec, vec::Vec};
-    use effect_routine::driver::{Driver, Status};
-    use greeter::PAUSE;
+    use effect_routine::driver::{Driver, status::Status};
+    use routines::PAUSE;
 
     /// A scripted host: answers every request at once, records what it was
     /// shown, and returns what the routine wrote.

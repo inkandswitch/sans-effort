@@ -31,7 +31,7 @@ This is the library. The research that motivates it, with the alternatives built
   │              owns the logic; asks for traits; knows nothing of        │
   │              effects, handles, drivers, or hosts                      │
   ├──────────────────────────────────────────────────────────────────────┤
-  │ context      impl Clock for TokioCtx    │  impl Clock for Ctx<E, O>   │
+  │ context      impl Clock for TokioCtx    │  impl Clock for Ctx<E>      │
   │              each call is a real future │  each call records an       │
   │                                         │  effect and suspends        │
   ├─────────────────────────────────────────┼────────────────────────────┤
@@ -78,7 +78,7 @@ tokio::spawn(Greeter::new(TokioCtx::new(stdin)).run());
 Behind a host — each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
 
 ```rust
-impl<E: From<Asked<Sleep>>, O: Post<E>> Clock for Ctx<E, O> {
+impl<E: From<Asked<Sleep>>> Clock for Ctx<E> {
     async fn sleep(&self, d: Duration) { self.outbox.request(Sleep(d)).await }
 }
 // …
@@ -121,7 +121,7 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 
 | Crate                                         | Purpose                                                                                                        | Target             |
 |-----------------------------------------------|----------------------------------------------------------------------------------------------------------------|--------------------|
-| [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Post`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `wire`, `testing`    | `no_std` + `alloc` |
+| [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `wire`, `testing`    | `no_std` + `alloc` |
 | [`effect_routine_host`](effect_routine_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                            | —                  |
 | [`demo/`](demo/)                              | The greeter and ticker; a native tokio host; a reifying context with `Full`/`Quiet` vocabularies; a C-ABI skin + Python host; a wasm-bindgen skin + JS host | — |

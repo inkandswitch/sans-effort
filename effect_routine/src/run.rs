@@ -21,7 +21,7 @@ use core::{future::Future, ops::ControlFlow};
 ///
 /// A host sees suspensions, not steps. [`run`](Self::run) loops over `step`
 /// inside the one boxed future, so `Break` is reported as
-/// [`Status::Complete`](crate::driver::Status::Complete) and `Continue` is not
+/// [`Status::Complete`](crate::driver::status::Status::Complete) and `Continue` is not
 /// reported at all. If a host must observe a step boundary, tell it an effect
 /// at the top of `step`. (The host's own unit of advance is finer — to the
 /// next wait — and is called `resume` on its side to keep the two apart.)

@@ -47,24 +47,23 @@
 //! you anyway (a `#[wasm_bindgen]` struct, a `PyO3` class, a NIF resource) and
 //! holds a `Send` driver beside them.
 
+pub mod awaiting;
+pub mod outbox;
+pub mod status;
+
+mod mail;
 mod sync;
 
-use self::sync::{Arc, AtomicU64, Mutex};
-use crate::{
-    post::Post,
-    reply::ReplyHandle,
-    wire::{Kind, Reply, Value},
-};
+use self::{outbox::Outbox, status::Status};
+use crate::{reply::ReplyHandle, wire::Reply};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     future::Future,
-    marker::PhantomData,
     pin::Pin,
-    sync::atomic::Ordering,
-    task::{Context, Poll, Waker},
+    task::{Context, Waker},
 };
 
-/// One suspended routine plus the outbox it writes into.
+/// One suspended routine plus the outbox its context writes into.
 ///
 /// The host API is sans-io's: [`start`](Self::start), then
 /// [`reply`](Self::reply) with each handle the effects hand back, until
@@ -78,11 +77,11 @@ pub struct Driver<E> {
 
 impl<E> Driver<E> {
     /// Build the routine around a fresh outbox. `make` receives the outbox
-    /// the routine should write into and returns the routine's future —
-    /// typically `|outbox| Routine::new(outbox).run()`.
+    /// the routine's context should write into and returns the routine's
+    /// future — typically `|outbox| Routine::new(Ctx::new(outbox)).run()`.
     ///
     /// `Send` is checked here, once, on the concrete future: this is where a
-    /// routine holding an `Rc` across an `.await` is rejected. This is also
+    /// context holding an `Rc` across an `.await` is rejected. This is also
     /// the one `Box::pin` in the design: an `async fn`'s state machine holds
     /// borrows across awaits and must not move between polls.
     pub fn new<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
@@ -118,20 +117,17 @@ impl<E> Driver<E> {
     /// is reported as one rather than delivered to whichever slot of this
     /// driver shares the id.
     pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<E> {
-        let delivered = self
-            .outbox
-            .inner
-            .lock()
-            .mail
-            .deliver(reply, value.into_value());
-
-        if delivered { self.poll() } else { Vec::new() }
+        if self.outbox.deliver(reply, value.into_value()) {
+            self.poll()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Ids of requests the routine dropped unanswered since the last call —
     /// so a host keeping handles of its own can drop them too.
     pub fn closed(&mut self) -> Vec<u64> {
-        core::mem::take(&mut self.outbox.inner.lock().mail.closed)
+        self.outbox.take_closed()
     }
 
     /// What the last poll reported.
@@ -154,14 +150,7 @@ impl<E> Driver<E> {
         let poll = future
             .as_mut()
             .poll(&mut Context::from_waker(Waker::noop()));
-
-        let (effects, outstanding) = {
-            let mut inner = self.outbox.inner.lock();
-            (
-                core::mem::take(&mut inner.effects),
-                inner.mail.outstanding(),
-            )
-        };
+        let (effects, outstanding) = self.outbox.drain();
 
         self.status = Status::classify(poll, outstanding);
 
@@ -182,304 +171,6 @@ impl<E> core::fmt::Debug for Driver<E> {
     }
 }
 
-/// What a host needs from a driver.
-///
-/// [`Driver`] implements it; a host layer generic over `D: Drive<E>` can also
-/// wrap one — for instrumentation, recording, or replay.
-pub trait Drive<E> {
-    /// Begin: the effects recorded before the first wait.
-    fn start(&mut self) -> Vec<E>;
-
-    /// Deliver a value and advance: the effects recorded before the next wait.
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<E>;
-
-    /// Ids of requests the routine dropped unanswered since the last call.
-    fn closed(&mut self) -> Vec<u64>;
-
-    /// What the last poll reported.
-    fn status(&self) -> Status;
-
-    /// `true` once the routine has returned.
-    fn is_finished(&self) -> bool;
-}
-
-impl<E> Drive<E> for Driver<E> {
-    fn start(&mut self) -> Vec<E> {
-        Driver::start(self)
-    }
-
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<E> {
-        Driver::reply(self, reply, value)
-    }
-
-    fn closed(&mut self) -> Vec<u64> {
-        Driver::closed(self)
-    }
-
-    fn status(&self) -> Status {
-        Driver::status(self)
-    }
-
-    fn is_finished(&self) -> bool {
-        Driver::is_finished(self)
-    }
-}
-
-/// What one poll reported.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Status {
-    /// At least one request awaits a reply; reply and resume.
-    Awaiting,
-    /// The routine returned. Further replies return nothing.
-    Complete,
-    /// Pending with no request outstanding. Will never progress: the routine
-    /// awaited something the driver cannot wake.
-    Stalled,
-}
-
-impl Status {
-    /// `Ready` is `Complete`; `Pending` with requests outstanding is
-    /// `Awaiting`; `Pending` with none is `Stalled` — there is no waker, so
-    /// nothing else could ever wake it.
-    const fn classify(poll: Poll<()>, outstanding: usize) -> Self {
-        match poll {
-            Poll::Ready(()) => Status::Complete,
-            Poll::Pending if outstanding > 0 => Status::Awaiting,
-            Poll::Pending => Status::Stalled,
-        }
-    }
-}
-
-/// Where a routine records what it wants the host to do. Cloning shares the
-/// same outbox; the [`Driver`] holds one clone, the routine the other.
-pub struct Outbox<E> {
-    /// Effects and mailbox behind one lock, not two: every operation touches
-    /// one or both, and taking the guard once per operation is most of what a
-    /// step costs.
-    inner: Arc<Mutex<Inner<E>>>,
-}
-
-struct Inner<E> {
-    effects: Vec<E>,
-    mail: Mail,
-}
-
-impl<E> Clone for Outbox<E> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
-impl<E> core::fmt::Debug for Outbox<E> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Outbox").finish_non_exhaustive()
-    }
-}
-
-impl<E> Outbox<E> {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(Inner {
-                effects: Vec::new(),
-                mail: Mail::new(),
-            })),
-        }
-    }
-}
-
-impl<E> Post<E> for Outbox<E> {
-    type Awaiting<T: Reply> = Awaiting<E, T>;
-
-    fn tell(&self, effect: E) {
-        self.inner.lock().effects.push(effect);
-    }
-
-    fn ask<T: Reply, F: FnOnce(ReplyHandle<T>) -> E>(&self, make: F) -> Awaiting<E, T> {
-        let reply: ReplyHandle<T> = self.inner.lock().mail.mint();
-
-        Awaiting {
-            id: reply.id(),
-            effect: Some(make(reply)),
-            outbox: self.clone(),
-            polled: false,
-            _reply: PhantomData,
-        }
-    }
-}
-
-/// The routine's half of a request. Lazy: holds the effect until first poll,
-/// then records it and opens its mailbox slot; resolves once the host has
-/// replied. `Unpin`: it borrows nothing of itself.
-pub struct Awaiting<E, T> {
-    id: u64,
-    effect: Option<E>,
-    outbox: Outbox<E>,
-    polled: bool,
-    _reply: PhantomData<fn() -> T>,
-}
-
-/// Holds an `E` and an outbox handle, never a reference into itself: safe to
-/// move between polls whatever `E` is. Without this, a non-`Unpin` effect
-/// type would make every routine generic over it non-`Unpin` too.
-impl<E, T> Unpin for Awaiting<E, T> {}
-
-impl<E, T> core::fmt::Debug for Awaiting<E, T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Awaiting")
-            .field("id", &self.id)
-            .field("polled", &self.polled)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<E, T: Reply> Future for Awaiting<E, T> {
-    type Output = T;
-
-    fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<T> {
-        if let Some(effect) = self.effect.take() {
-            let mut inner = self.outbox.inner.lock();
-            inner.mail.open(self.id, T::KIND);
-            inner.effects.push(effect);
-            drop(inner);
-            self.polled = true;
-            return Poll::Pending;
-        }
-
-        let collected = self.outbox.inner.lock().mail.collect(self.id);
-
-        match collected {
-            Some(value) => {
-                self.polled = false;
-                Poll::Ready(T::from_value(value).unwrap_or_else(|| {
-                    unreachable!("a ReplyHandle<T> is only minted for a T slot")
-                }))
-            }
-            None => Poll::Pending,
-        }
-    }
-}
-
-/// Dropping a polled-but-unanswered request closes its slot, so a late reply
-/// is discarded rather than kept forever. Dropping an unpolled one is a
-/// no-op: nothing was ever recorded.
-impl<E, T> Drop for Awaiting<E, T> {
-    fn drop(&mut self) {
-        if self.polled {
-            self.outbox.inner.lock().mail.close(self.id);
-        }
-    }
-}
-
-/// Every mailbox gets a number no other mailbox in the process has: the one
-/// atomic the driver touches, once, at construction.
-static DRIVERS: AtomicU64 = AtomicU64::new(1);
-
-/// The mailboxes: one slot per outstanding request. A slot exists from the
-/// request's first poll until the future takes its value or is dropped;
-/// slots closed by a drop are remembered in `closed` until a host asks, so
-/// that a host keeping its own table of handles can forget them too.
-///
-/// Values are stored as [`Value`] — the closed menu — not type-erased; the
-/// [`ReplyHandle<T>`]'s type says which variant to expect back. The menu is
-/// the wire's: every foreign host replies across an ABI that carries exactly
-/// these kinds, and the mailbox mirrors it.
-struct Mail {
-    driver: u64,
-    /// Open slots by id. A `Vec` scanned linearly: a routine has one or two
-    /// requests in flight, and a tree or a hash costs more than two compares.
-    /// Wide fan-out would want a sorted `Vec` with binary search.
-    slots: Vec<Slot>,
-    closed: Vec<u64>,
-    next: u64,
-}
-
-struct Slot {
-    id: u64,
-    kind: Kind,
-    value: Option<Value>,
-}
-
-impl Mail {
-    fn new() -> Self {
-        Self {
-            driver: DRIVERS.fetch_add(1, Ordering::Relaxed),
-            slots: Vec::new(),
-            closed: Vec::new(),
-            next: 1,
-        }
-    }
-
-    /// A fresh handle. Its slot is not open yet: that happens on first poll.
-    const fn mint<T>(&mut self) -> ReplyHandle<T> {
-        let id = self.next;
-        self.next += 1;
-        ReplyHandle::mint(self.driver, id)
-    }
-
-    fn open(&mut self, id: u64, kind: Kind) {
-        self.slots.push(Slot {
-            id,
-            kind,
-            value: None,
-        });
-    }
-
-    fn position(&self, id: u64) -> Option<usize> {
-        self.slots.iter().position(|slot| slot.id == id)
-    }
-
-    /// `false` if no request with that id is waiting: it was already
-    /// answered or its future was dropped.
-    fn deliver<T>(&mut self, reply: ReplyHandle<T>, value: Value) -> bool {
-        let (driver, id) = reply.into_parts();
-        assert_eq!(
-            driver, self.driver,
-            "ReplyHandle({driver}/{id}) was minted by driver {driver} and replied to driver {}",
-            self.driver
-        );
-
-        match self.position(id).and_then(|at| self.slots.get_mut(at)) {
-            Some(slot) => {
-                debug_assert_eq!(
-                    slot.kind,
-                    value.kind(),
-                    "ReplyHandle({driver}/{id}) opened a {:?} slot; a {:?} was delivered",
-                    slot.kind,
-                    value.kind()
-                );
-                slot.value = Some(value);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// `Some(value)` closes the slot; `None` leaves it waiting.
-    fn collect(&mut self, id: u64) -> Option<Value> {
-        let at = self.position(id)?;
-        if self.slots.get(at)?.value.is_some() {
-            self.slots.swap_remove(at).value
-        } else {
-            None
-        }
-    }
-
-    /// The routine dropped a polled request. Its slot goes, and its id is
-    /// kept for [`Drive::closed`].
-    fn close(&mut self, id: u64) {
-        if let Some(at) = self.position(id) {
-            self.slots.swap_remove(at);
-            self.closed.push(id);
-        }
-    }
-
-    const fn outstanding(&self) -> usize {
-        self.slots.len()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
@@ -487,7 +178,7 @@ mod tests {
     use super::*;
     use crate::run::Run;
     use alloc::string::String;
-    use core::ops::ControlFlow;
+    use core::{ops::ControlFlow, task::Poll};
 
     #[derive(Debug)]
     enum Effect {

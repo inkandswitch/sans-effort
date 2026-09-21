@@ -1,7 +1,7 @@
 [package]
-name = "greeter"
+name = "routines"
 version = "0.1.0"
-description = "The greeter, written against capability traits. Knows nothing of effects, handles, drivers, or hosts"
+description = "The demo routines — a greeter, its fan-out variant, and a ticker — written against capability traits. They know nothing of effects, handles, drivers, or hosts"
 publish = false
 
 authors.workspace = true
@@ -15,6 +15,8 @@ effect_routine = { workspace = true }
 
 [dev-dependencies]
 bolero = { workspace = true }
+effect_routine = { workspace = true, features = ["std"] }
+trybuild = { workspace = true }
 
 [lints]
 workspace = true

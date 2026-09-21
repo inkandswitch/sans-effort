@@ -40,7 +40,7 @@ in {
 
     echo ""
     echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
-    ${cargo} check -p greeter -p greeter_wire --target wasm32-unknown-unknown
+    ${cargo} check -p routines -p greeter_wire --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"

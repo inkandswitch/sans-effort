@@ -12,7 +12,7 @@
 
 use crate::{Error, Machine, Status};
 use effect_routine::{
-    driver::{Drive, Driver, Outbox},
+    driver::{Driver, outbox::Outbox},
     wire::{Encode, HostEffect},
 };
 use std::{
@@ -32,7 +32,7 @@ trait Encoded {
     fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error>;
 }
 
-impl<E: HostEffect, D: Drive<E>> Encoded for Machine<D, E>
+impl<E: HostEffect> Encoded for Machine<E>
 where
     E::View: Encode,
 {

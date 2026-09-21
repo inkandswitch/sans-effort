@@ -23,7 +23,7 @@ mod ctx;
 
 use ctx::TokioCtx;
 use effect_routine::run::Run;
-use greeter::{Fanout, Greeter};
+use routines::{fanout::Fanout, greeter::Greeter};
 use tokio::io::BufReader;
 
 #[tokio::main]
@@ -47,13 +47,21 @@ mod tests {
     /// The greeter runs to completion under tokio alone — no `Driver`
     /// anywhere — and its sleeps are tokio's: under a paused clock, three
     /// 50 ms pauses take no wall time and advance virtual time by 150 ms.
+    ///
+    /// The traits say nothing about `Send`; the future is `Send` because
+    /// `TokioCtx` is, and the compiler works that out here, where the
+    /// context is concrete. `assert_send` makes the inference visible.
     #[tokio::test(start_paused = true)]
     async fn greeter_runs_natively_in_virtual_time() {
+        fn assert_send<T: Send>(value: T) -> T {
+            value
+        }
+
         let started = Instant::now();
         let virtual_start = tokio::time::Instant::now();
 
         let ctx = TokioCtx::new(BufReader::new(&b"alice\nbob\ncarol\nquit\n"[..]));
-        tokio::spawn(Greeter::new(ctx).run())
+        tokio::spawn(assert_send(Greeter::new(ctx).run()))
             .await
             .expect("finished");
 

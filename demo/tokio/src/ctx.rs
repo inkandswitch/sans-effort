@@ -6,7 +6,7 @@
 //! waker drives it. No effect is built, no driver polls, no host loop
 //! interprets anything. The routine is the task.
 
-use greeter::traits::{Clock, Counter, Directory, Input, Output};
+use routines::traits::{Clock, Counter, Directory, Input, Output};
 use std::{
     io::{self, Write as _},
     sync::atomic::{AtomicU64, Ordering},
@@ -19,28 +19,28 @@ use tokio::{
 
 /// A context whose waits are tokio futures.
 ///
-/// `Input` reads from any async reader (stdin in `main`, a byte slice in
-/// tests); `Output` writes to stdout; `Directory` is a fixed table; `Counter`
+/// Generic over its line source `R`: stdin in `main`, a byte slice in tests,
+/// statically dispatched either way. `Output` writes to stdout; `Directory` is a fixed table; `Counter`
 /// is an atomic; `Clock` is `tokio::time::sleep`, so under a paused-clock
 /// test it costs no wall time.
-pub(crate) struct TokioCtx {
+pub(crate) struct TokioCtx<R> {
     /// `read_line` needs `&mut`; the trait takes `&self`. An async mutex,
     /// never contended: one routine holds one context.
-    lines: Mutex<Box<dyn AsyncBufRead + Send + Unpin>>,
+    lines: Mutex<R>,
     greeted: AtomicU64,
 }
 
-impl TokioCtx {
+impl<R: AsyncBufRead + Send + Unpin> TokioCtx<R> {
     /// A context reading lines from `input`.
-    pub(crate) fn new(input: impl AsyncBufRead + Send + Unpin + 'static) -> Self {
+    pub(crate) const fn new(input: R) -> Self {
         Self {
-            lines: Mutex::new(Box::new(input)),
+            lines: Mutex::const_new(input),
             greeted: AtomicU64::new(0),
         }
     }
 }
 
-impl std::fmt::Debug for TokioCtx {
+impl<R> std::fmt::Debug for TokioCtx<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TokioCtx")
             .field("greeted", &self.greeted)
@@ -48,19 +48,19 @@ impl std::fmt::Debug for TokioCtx {
     }
 }
 
-impl Clock for TokioCtx {
+impl<R: AsyncBufRead + Send + Unpin> Clock for TokioCtx<R> {
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;
     }
 }
 
-impl Counter for TokioCtx {
+impl<R: AsyncBufRead + Send + Unpin> Counter for TokioCtx<R> {
     async fn count(&self) -> u64 {
         self.greeted.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 
-impl Directory for TokioCtx {
+impl<R: AsyncBufRead + Send + Unpin> Directory for TokioCtx<R> {
     async fn lookup(&self, name: String) -> String {
         match name.as_str() {
             "alice" => "Hello",
@@ -72,7 +72,7 @@ impl Directory for TokioCtx {
     }
 }
 
-impl Input for TokioCtx {
+impl<R: AsyncBufRead + Send + Unpin> Input for TokioCtx<R> {
     /// The next line, or `quit` at end of input.
     async fn read_line(&self) -> String {
         let mut line = String::new();
@@ -85,7 +85,7 @@ impl Input for TokioCtx {
     }
 }
 
-impl Output for TokioCtx {
+impl<R: AsyncBufRead + Send + Unpin> Output for TokioCtx<R> {
     fn write(&self, line: String) {
         // A closed stdout is the host's problem, not the routine's.
         if writeln!(io::stdout().lock(), "{line}").is_err() {

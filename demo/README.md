@@ -5,15 +5,16 @@ once against four capability traits, then run three ways that must agree
 byte for byte.
 
 ```
-  greeter/   the routine: traits.rs, Greeter, Fanout (two waits at once), Ticker
-             (needs only Clock + Output). no_std. Imports Run and join, nothing else.
+  routines/  the routines, one per module: greeter (the conversation), fanout (two
+             waits at once), ticker (needs only Clock + Output); traits.rs. no_std.
+             Imports Run and join, nothing else.
              Tests: a Recording mock + testing::run_now — no driver, one poll.
 
   tokio/     the native path. TokioCtx implements the traits with tokio futures;
              tokio::spawn(Greeter::new(ctx).run()). No Driver anywhere.
              Tests: paused clock — three 50 ms pauses cost no wall time.
 
-  wire/      the reifying context. Request structs (Lookup, ReadLine, …); Ctx<E, O>
+  wire/      the reifying context. Request structs (Lookup, ReadLine, …); Ctx<E>
              implements each trait for any E: From<Asked<…>>; Full carries all five,
              Quiet only Sleep + Write. View/HostEffect/Encode: the tag table.
              Tests: through a Driver, as data; Greeter under Quiet is a compile_fail.

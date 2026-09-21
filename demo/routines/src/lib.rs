@@ -1,0 +1,47 @@
+//! The demo routines, written against capability traits.
+//!
+//! Three routines share five [`traits`]. [`greeter::Greeter`] is the one
+//! every host in the exploration this library came from drove: prompt, read
+//! a name, look up a greeting, pause, greet, count, repeat; `quit` ends it.
+//! [`fanout::Fanout`] is the same conversation with two waits in flight at
+//! once. [`ticker::Ticker`] needs only two of the five traits, which is the
+//! point of it.
+//!
+//! A routine owns a context `C` and asks nothing of it beyond its trait
+//! bounds. It does not know whether `read_line` awaits a tokio channel, pops
+//! a line off a test script, or records an effect for a Python host and
+//! suspends; each of those is a different `C`, and the routine is the same
+//! code under all of them. This crate imports [`Run`](effect_routine::run::Run)
+//! and [`join`](effect_routine::join::join) from the mechanism and nothing
+//! else — no effect, no handle, no driver — and it is `no_std`.
+//!
+//! ```text
+//!   Greeter<C: Clock + Counter + Directory + Input + Output>: Run
+//!        │
+//!        ├── C = TokioCtx          (../tokio)   waits are tokio futures; tokio polls; no driver
+//!        ├── C = wire::Ctx<E>      (../wire)    waits record effects; a Driver polls; any host
+//!        └── C = Recording         (tests)      waits are ready at once; one poll runs it all
+//! ```
+//!
+//! No `Send` appears in the traits. Whether a routine's `run()` is `Send` is
+//! decided by `C`, and the compiler works it out where `C` is concrete —
+//! `tokio::spawn` accepts a `Greeter<TokioCtx>` because tokio's handles are
+//! `Send`; `Driver::new` accepts a `Greeter<Ctx<E, Outbox<E>>>` for the same
+//! reason; and the `Rc`-based test mock is accepted by nothing that asks.
+
+#![no_std]
+
+extern crate alloc;
+
+pub mod fanout;
+pub mod greeter;
+pub mod ticker;
+pub mod traits;
+
+#[cfg(test)]
+mod recording;
+
+use core::time::Duration;
+
+/// How long a routine pauses when it pauses.
+pub const PAUSE: Duration = Duration::from_millis(50);

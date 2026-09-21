@@ -5,7 +5,7 @@ use core::{fmt, marker::PhantomData};
 /// Evidence that a request for a `T` is outstanding, and the means to answer
 /// it.
 ///
-/// Minted by [`Post::ask`](crate::post::Post::ask), consumed by
+/// Minted by [`Outbox::ask`](crate::driver::outbox::Outbox::ask), consumed by
 /// [`Driver::reply`](crate::driver::Driver::reply). Not `Clone`, so it
 /// answers at most once; `#[must_use]`, so dropping it silently is a
 /// warning. Nothing outside this crate can construct one.

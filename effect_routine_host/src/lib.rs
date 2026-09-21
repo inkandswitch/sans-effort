@@ -44,7 +44,7 @@
 //! contract in full.
 
 use effect_routine::{
-    driver::{Drive, Status as DriveStatus},
+    driver::{Driver, status::Status as DriveStatus},
     reply::ReplyHandle,
     wire::{Encode, HostEffect, Pending, Reader, Reply, Writer},
 };
@@ -85,12 +85,9 @@ pub mod code {
 /// `pending` table is this layer's wallet of capabilities: it holds the
 /// handles the effects carried out, so that an `(id, value)` from across the
 /// boundary can be turned back into the typed, infallible
-/// [`Drive::reply`].
-///
-/// Generic over the driver through [`Drive`], so the same bookkeeping serves
-/// every skin and any wrapper around a driver.
-pub struct Machine<D, E> {
-    driver: D,
+/// [`Driver::reply`].
+pub struct Machine<E> {
+    driver: Driver<E>,
     /// Outstanding requests by id. A `Vec` scanned linearly, not a map: a
     /// routine has one or two requests in flight, and hashing a `u64` costs
     /// more than looking at two entries. Wide fan-out would want a sorted
@@ -100,9 +97,10 @@ pub struct Machine<D, E> {
     _effect: PhantomData<E>,
 }
 
-impl<E: HostEffect, D: Drive<E>> Machine<D, E> {
+impl<E: HostEffect> Machine<E> {
     /// Wrap a driver. Nothing has been polled yet.
-    pub const fn new(driver: D) -> Self {
+    #[must_use]
+    pub const fn new(driver: Driver<E>) -> Self {
         Self {
             driver,
             pending: Vec::new(),
@@ -151,12 +149,14 @@ impl<E: HostEffect, D: Drive<E>> Machine<D, E> {
     }
 
     /// What the last poll reported.
+    #[must_use]
     pub fn status(&self) -> Status {
         self.driver.status().into()
     }
 
     /// `true` once the routine has returned.
-    pub fn is_finished(&self) -> bool {
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
         self.driver.is_finished()
     }
 
@@ -209,7 +209,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<D, E> {
     }
 }
 
-impl<E: HostEffect, D: Drive<E>> Machine<D, E>
+impl<E: HostEffect> Machine<E>
 where
     E::View: Encode,
 {
@@ -251,7 +251,7 @@ where
     }
 }
 
-impl<D, E> std::fmt::Debug for Machine<D, E> {
+impl<E> std::fmt::Debug for Machine<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Machine")
             .field("started", &self.started)
@@ -365,7 +365,10 @@ mod tests {
 
     use super::*;
     use core::ops::ControlFlow;
-    use effect_routine::{driver::Driver, post::Post, run::Run};
+    use effect_routine::{
+        driver::{Driver, outbox::Outbox},
+        run::Run,
+    };
 
     /// Asks once (tag 1), says the answer (tag 2), finishes.
     pub(crate) enum Effect {
@@ -405,9 +408,9 @@ mod tests {
         }
     }
 
-    pub(crate) struct Echo<O>(pub(crate) O);
+    pub(crate) struct Echo(pub(crate) Outbox<Effect>);
 
-    impl<O: Post<Effect>> Run for Echo<O> {
+    impl Run for Echo {
         async fn step(&mut self) -> ControlFlow<()> {
             let answer = self.0.ask(Effect::Ask).await;
             self.0.tell(Effect::Say(answer));
@@ -415,9 +418,9 @@ mod tests {
         }
     }
 
-    pub(crate) struct Both<O>(pub(crate) O);
+    pub(crate) struct Both(pub(crate) Outbox<Effect>);
 
-    impl<O: Post<Effect>> Run for Both<O> {
+    impl Run for Both {
         async fn step(&mut self) -> ControlFlow<()> {
             let (a, b) =
                 effect_routine::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
@@ -443,9 +446,9 @@ mod tests {
         }
     }
 
-    struct Impatient<O>(O);
+    struct Impatient(Outbox<Effect>);
 
-    impl<O: Post<Effect>> Run for Impatient<O> {
+    impl Run for Impatient {
         async fn step(&mut self) -> ControlFlow<()> {
             let abandoned = PollOnce(Some(self.0.ask(Effect::Ask))).await;
             drop(abandoned);

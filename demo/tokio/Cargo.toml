@@ -12,7 +12,7 @@ rust-version.workspace = true
 
 [dependencies]
 effect_routine = { workspace = true, features = ["std"] }
-greeter = { version = "0.1.0", path = "../greeter" }
+routines = { version = "0.1.0", path = "../routines" }
 tokio = { workspace = true }
 
 [dev-dependencies]

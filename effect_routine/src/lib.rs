@@ -56,9 +56,9 @@
 //! - [`run::Run`] is the shape of a routine: a [`step`](run::Run::step) that
 //!   is one iteration of its loop, and a [`run`](run::Run::run) that repeats
 //!   it until it breaks.
-//! - [`post::Post`] is what a _reifying context_ writes into:
-//!   [`tell`](post::Post::tell) an effect and move on, or
-//!   [`ask`](post::Post::ask) one and await the reply.
+//! - [`driver::outbox::Outbox`] is what a _reifying context_ writes into:
+//!   [`tell`](driver::outbox::Outbox::tell) an effect and move on, or
+//!   [`ask`](driver::outbox::Outbox::ask) one and await the reply.
 //! - [`reply::ReplyHandle`] is the typed, single-use capability to answer one
 //!   `ask`. It travels inside the effect to whoever performs it.
 //! - [`request::Request`] lets a wait be a value — `Lookup(name)` — so a
@@ -121,8 +121,7 @@
 //! #         ControlFlow::Break(())
 //! #     }
 //! # }
-//! use core::marker::PhantomData;
-//! use effect_routine::{post::Post, request::{Asked, Request}};
+//! use effect_routine::{driver::outbox::Outbox, request::{Asked, Request}};
 //!
 //! // The wire vocabulary: one struct per wait, one per message.
 //! struct ReadLine;
@@ -133,12 +132,11 @@
 //! }
 //!
 //! // The reifying context: `Console` holds for any `E` that carries both.
-//! struct Ctx<E, O> {
-//!     outbox: O,
-//!     _e: PhantomData<fn() -> E>,
+//! struct Ctx<E> {
+//!     outbox: Outbox<E>,
 //! }
 //!
-//! impl<E: From<Asked<ReadLine>> + From<Write>, O: Post<E>> Console for Ctx<E, O> {
+//! impl<E: From<Asked<ReadLine>> + From<Write>> Console for Ctx<E> {
 //!     async fn read_line(&self) -> String {
 //!         self.outbox.request(ReadLine).await
 //!     }
@@ -163,12 +161,10 @@
 //! }
 //!
 //! // Driving it from Rust: match on the effects, reply through the handles.
-//! use effect_routine::driver::{Driver, Status};
+//! use effect_routine::driver::{Driver, status::Status};
 //! use std::collections::VecDeque;
 //!
-//! let mut driver = Driver::<Effect>::new(|outbox| {
-//!     Greeter { ctx: Ctx { outbox, _e: PhantomData } }.run()
-//! });
+//! let mut driver = Driver::<Effect>::new(|outbox| Greeter { ctx: Ctx { outbox } }.run());
 //! let mut queue: VecDeque<Effect> = driver.start().into();
 //! let mut written = Vec::new();
 //!
@@ -196,7 +192,7 @@
 //! vocabulary in the context, chosen by the host. Two other arrangements use
 //! the same mechanism and are documented in the exploration this crate came
 //! from: the routine may own a closed `Effect` enum and call
-//! [`Post::ask`](post::Post::ask) directly (fewest lines; no native path; the
+//! [`Outbox::ask`](driver::outbox::Outbox::ask) directly (fewest lines; no native path; the
 //! enum is the spec), or state its requirements as `E: From<Asked<…>>` bounds
 //! on the routine itself (host-chosen vocabulary without traits). Pick the
 //! traits-and-context arrangement unless you know why you want another.
@@ -217,7 +213,6 @@ extern crate std;
 
 pub mod driver;
 pub mod join;
-pub mod post;
 pub mod reply;
 pub mod request;
 pub mod run;

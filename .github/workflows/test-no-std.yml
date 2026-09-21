@@ -37,4 +37,4 @@ jobs:
         run: cargo check -p effect_routine --no-default-features --features critical-section --target thumbv6m-none-eabi
 
       - name: Check the demo routine and wire crate are no_std (wasm32)
-        run: cargo check -p greeter -p greeter_wire --target wasm32-unknown-unknown
+        run: cargo check -p routines -p greeter_wire --target wasm32-unknown-unknown
