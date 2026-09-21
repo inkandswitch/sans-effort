@@ -22,6 +22,7 @@ byte for byte.
   cdylib/    the C-ABI skin over effect_routine_host: new/start/reply/free/buf_free,
              three unsafe blocks, no mechanism. The only crate allowing unsafe.
   python/    a ctypes host that speaks ABI.md with a byte buffer and no library.
+  java/      a Panama (java.lang.foreign) host: the same ABI, downcalls only, no JNI.
 
   wasm/      the second native path. JsCtx implements the traits by calling a JS
              object the caller supplies, awaiting Promises; the event loop is the
@@ -29,11 +30,12 @@ byte for byte.
   js/        a Node host: five functions and one awaited promise. pkg/ is generated.
 ```
 
-Two native runtimes and one foreign host, on purpose. tokio and the JS event
+Two native runtimes and two foreign hosts, on purpose. tokio and the JS event
 loop are executors: the routine is spawned on them and its context makes each
-wait a real future — no driver. Python cannot poll a Rust future, so there the
-routine runs behind a `Driver`, and Python replies by request id over the C
-ABI it decodes from `ABI.md`. The routine cannot tell which it is under.
+wait a real future — no driver. Python and Java cannot poll a Rust future, so
+there the routine runs behind a `Driver`, and the host replies by request id
+over the C ABI it decodes from `ABI.md`. The routine cannot tell which it is
+under.
 
 A JS host _could_ take the Python role — hold a `Machine` in a wasm-bindgen
 class and step it — and would want to for a deterministic scheduler or a
@@ -42,11 +44,12 @@ a routine in a page, the native form is the idiomatic one.
 
 ```sh
 printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio          # native
-cargo build -p greeter_cdylib && python3 demo/python/main.py       # C ABI
+cargo build -p greeter_cdylib && python3 demo/python/main.py       # C ABI, ctypes
+java --enable-native-access=ALL-UNNAMED demo/java/Main.java       # C ABI, Panama
 nix develop --command demo:wasm && node demo/js/main.mjs           # wasm-bindgen
 nix develop --command demo                                         # all three, diffed
 ```
 
 `--fanout` on any host runs the two-waits-per-batch variant; `--ticker` on
-the Python host drives a `Quiet` machine, which can only ever emit tags 4
-and 5.
+the Python or Java host drives a `Quiet` machine, which can only ever emit
+tags 4 and 5.

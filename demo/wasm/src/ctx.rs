@@ -6,7 +6,7 @@
 //! event loop's microtask queue. No effect is built and no driver polls; the
 //! routine is a task on the JS event loop.
 
-use crate::host::Host;
+use crate::host::JsHost;
 use core::time::Duration;
 use js_sys::Promise;
 use routines::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
@@ -15,13 +15,13 @@ use wasm_bindgen_futures::JsFuture;
 
 /// A context whose waits are JS calls.
 pub struct JsCtx {
-    host: Host,
+    host: JsHost,
 }
 
 impl JsCtx {
     /// A context calling into `host`.
     #[must_use]
-    pub const fn new(host: Host) -> Self {
+    pub const fn new(host: JsHost) -> Self {
         Self { host }
     }
 }

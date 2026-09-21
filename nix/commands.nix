@@ -6,6 +6,7 @@
   wasm-bindgen-cli,
 }: let
   cargo = "${pkgs.cargo}/bin/cargo";
+  java = "${pkgs.jdk25}/bin/java";
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
   wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
@@ -67,7 +68,7 @@ in {
     echo "demo/js/pkg ready"
   '';
 
-  "demo" = cmd "Run the greeter natively on tokio and on Node (wasm-bindgen), and drive it from Python over the C ABI; transcripts must agree" ''
+  "demo" = cmd "Run the greeter natively on tokio and on Node, and drive it from Python and Java over the C ABI; transcripts must agree" ''
     set -e
 
     echo "===> Building the cdylib and the wasm module..."
@@ -94,8 +95,13 @@ in {
       ${node} demo/js/main.mjs $variant | tee /tmp/effect-routine-js.txt
 
       echo ""
+      echo "===> Java host (Panama, C ABI) $variant"
+      ${java} --enable-native-access=ALL-UNNAMED demo/java/Main.java $variant | tee /tmp/effect-routine-java.txt
+
+      echo ""
       diff /tmp/effect-routine-rust.txt /tmp/effect-routine-python.txt
       diff /tmp/effect-routine-rust.txt /tmp/effect-routine-js.txt
+      diff /tmp/effect-routine-rust.txt /tmp/effect-routine-java.txt
       echo "Transcripts agree $variant"
     done
 

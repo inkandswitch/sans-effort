@@ -1,6 +1,6 @@
 //! The greeter as a JS class.
 
-use crate::{ctx::JsCtx, host::Host};
+use crate::{ctx::JsCtx, host::JsHost};
 use effect_routine::run::Run;
 use routines::greeter::Greeter;
 use wasm_bindgen::prelude::*;
@@ -17,7 +17,7 @@ impl JsGreeter {
     /// A greeter that does everything through `host`.
     #[wasm_bindgen(constructor)]
     #[must_use]
-    pub fn new(host: Host) -> Self {
+    pub fn new(host: JsHost) -> Self {
         Self {
             routine: Greeter::new(JsCtx::new(host)),
         }

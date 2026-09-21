@@ -11,25 +11,27 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 extern "C" {
     /// An object with `readLine`, `lookup`, `sleep`, `count`, and `write`.
-    pub type Host;
+    /// `Host` to JS; the `Js` prefix is the Rust side's, as with the classes.
+    #[wasm_bindgen(js_name = Host)]
+    pub type JsHost;
 
     /// The next line of input. `string`, or a `Promise` of one.
     #[wasm_bindgen(method, js_name = readLine)]
-    pub fn read_line(this: &Host) -> JsValue;
+    pub fn read_line(this: &JsHost) -> JsValue;
 
     /// The greeting for `name`. `string`, or a `Promise` of one.
     #[wasm_bindgen(method)]
-    pub fn lookup(this: &Host, name: &str) -> JsValue;
+    pub fn lookup(this: &JsHost, name: &str) -> JsValue;
 
     /// Wait `millis`. Anything, or a `Promise` to await.
     #[wasm_bindgen(method)]
-    pub fn sleep(this: &Host, millis: f64) -> JsValue;
+    pub fn sleep(this: &JsHost, millis: f64) -> JsValue;
 
     /// One more greeting; how many so far. `number`, or a `Promise` of one.
     #[wasm_bindgen(method)]
-    pub fn count(this: &Host) -> JsValue;
+    pub fn count(this: &JsHost) -> JsValue;
 
     /// Show `line`.
     #[wasm_bindgen(method)]
-    pub fn write(this: &Host, line: &str);
+    pub fn write(this: &JsHost, line: &str);
 }
