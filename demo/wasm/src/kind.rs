@@ -1,4 +1,4 @@
-//! Which effect a batch entry is.
+//! Which effect this is.
 
 use wasm_bindgen::prelude::*;
 

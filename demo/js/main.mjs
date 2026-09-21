@@ -26,8 +26,7 @@ async function drive(greeter, script) {
   const written = [];
   let greeted = 0;
 
-  let batch = greeter.start();
-  const queue = [...batch.effects];
+  const queue = [...greeter.start()];
 
   while (queue.length > 0) {
     const e = queue.shift();
@@ -38,28 +37,27 @@ async function drive(greeter, script) {
         console.log(e.text);
         continue;
       case Kind.ReadLine:
-        batch = greeter.replyStr(e.id, lines.next().value ?? "quit");
+        queue.push(...greeter.replyStr(e.id, lines.next().value ?? "quit"));
         break;
       case Kind.Lookup:
-        batch = greeter.replyStr(e.id, GREETINGS[e.name] ?? "Greetings");
+        queue.push(...greeter.replyStr(e.id, GREETINGS[e.name] ?? "Greetings"));
         break;
       case Kind.Sleep:
         await sleep(e.millis);
-        batch = greeter.replyUnit(e.id);
+        queue.push(...greeter.replyUnit(e.id));
         break;
       case Kind.Count:
         greeted += 1;
-        batch = greeter.replyNumber(e.id, greeted);
+        queue.push(...greeter.replyNumber(e.id, greeted));
         break;
       default:
         throw new Error(`unknown effect kind ${e.kind}`);
     }
 
-    queue.push(...batch.effects);
   }
 
-  if (batch.status !== Status.Complete) {
-    throw new Error(`routine ended with status ${batch.status}`);
+  if (greeter.status !== Status.Complete) {
+    throw new Error(`routine ended with status `);
   }
   return written;
 }

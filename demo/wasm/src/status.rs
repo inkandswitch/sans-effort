@@ -1,4 +1,8 @@
 //! Where the routine stopped.
+//!
+//! A mirror of [`effect_routine_host::status::Status`], because wasm-bindgen
+//! can only export an enum whose definition carries its attribute. The
+//! `From` impl is the whole relationship.
 
 use effect_routine_host::status::Status as MachineStatus;
 use wasm_bindgen::prelude::*;

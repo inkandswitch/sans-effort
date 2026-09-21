@@ -4,7 +4,8 @@
 //! from `greeter_wire`. This crate is the boundary:
 //! one JS class, [`Greeter`](greeter::Greeter), whose `start()` runs the routine to its first
 //! wait and whose `reply*` methods deliver one answer by request id and run
-//! to the next, each returning the batch of effects emitted in between.
+//! to the next, each returning the effects emitted in between; `status` says
+//! where it stopped.
 //!
 //! Beside `../cdylib`, this is the _other_ kind of skin. There, the host gets
 //! a `u64` handle and a byte buffer and decodes it with a table it wrote
@@ -31,7 +32,6 @@
     clippy::missing_const_for_fn,
     reason = "wasm-bindgen cannot export `const fn`"
 )]
-pub mod batch;
 pub mod effect;
 pub mod greeter;
 pub mod kind;

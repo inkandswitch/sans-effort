@@ -1,4 +1,4 @@
-//! One effect out of a batch, as JS sees it.
+//! One effect, as JS sees it.
 
 use crate::{
     kind::Kind,
