@@ -1,7 +1,7 @@
 [package]
 name = "greeter_wasm"
 version = "0.1.0"
-description = "The greeter as a wasm-bindgen module: the generated class is the handle, typed getters replace the byte codec"
+description = "The greeter in the browser: a JS-backed context, the event loop as executor, no driver"
 publish = false
 
 authors.workspace = true
@@ -15,10 +15,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 effect_routine = { workspace = true, features = ["std"] }
-effect_routine_host = { workspace = true }
-greeter_wire = { version = "0.1.0", path = "../wire" }
+js-sys = { workspace = true }
 routines = { version = "0.1.0", path = "../routines" }
 wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
 
 [lints]
 workspace = true

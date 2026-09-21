@@ -27,17 +27,19 @@ memory.
 | `code`, `Status`, `Error`                 | The status and error codes as they cross the ABI, and their Rust forms                                                                                                                                                                                                            |
 
 `ABI.md` in the repository root is the contract a foreign host assumes, and
-`demo/` there has a C-ABI skin with a Python host and a wasm-bindgen skin with
-a JS host, both driving the same routine as a native tokio task does.
+`demo/` there has a C-ABI skin with a Python host driving the same routine
+that runs natively on tokio and on the JS event loop.
 
 ## Two kinds of skin
 
 The raw path: a `cdylib` exports the five functions over `table`, and any
 language that can `dlopen` and hand over a byte buffer drives the routine,
 decoding effects from a tag table the routine's author documents. The
-generated path: a wasm-bindgen or `PyO3` class holds a `Machine` directly and
+generated path: a `PyO3` or Rustler class holds a `Machine` directly and
 converts `View`s to native objects — no handle table, no codec, a per-language
-toolchain. The routine cannot tell which it is under.
+toolchain. (A JS host with wasm-bindgen usually needs neither: the event loop
+is an executor, so a routine runs there natively, as `demo/wasm` shows.) The
+routine cannot tell which it is under.
 
 ## License
 

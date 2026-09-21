@@ -23,16 +23,22 @@ byte for byte.
              three unsafe blocks, no mechanism. The only crate allowing unsafe.
   python/    a ctypes host that speaks ABI.md with a byte buffer and no library.
 
-  wasm/      the wasm-bindgen skin: the generated class is the handle; holds a
-             Machine directly; typed getters replace the codec.
-  js/        a Node host over that module. pkg/ is generated.
+  wasm/      the second native path. JsCtx implements the traits by calling a JS
+             object the caller supplies, awaiting Promises; the event loop is the
+             executor. No Driver anywhere, like tokio/.
+  js/        a Node host: five functions and one awaited promise. pkg/ is generated.
 ```
 
-Two kinds of foreign skin, on purpose. The C ABI is the _raw_ path: any
-language that can `dlopen` and hand over bytes can drive the routine, and
-the host writes its own decoder from `ABI.md`. wasm-bindgen is the
-_generated_ path: no handle table, no codec, but a per-language toolchain.
-The routine cannot tell which it is under — or that it is under anything.
+Two native runtimes and one foreign host, on purpose. tokio and the JS event
+loop are executors: the routine is spawned on them and its context makes each
+wait a real future — no driver. Python cannot poll a Rust future, so there the
+routine runs behind a `Driver`, and Python replies by request id over the C
+ABI it decodes from `ABI.md`. The routine cannot tell which it is under.
+
+A JS host _could_ take the Python role — hold a `Machine` in a wasm-bindgen
+class and step it — and would want to for a deterministic scheduler or a
+replay harness; the exploration this library came from has one. For running
+a routine in a page, the native form is the idiomatic one.
 
 ```sh
 printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio          # native

@@ -87,7 +87,7 @@ Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());  // E0277: 
 Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ticker needs only Sleep + WriteLine
 ```
 
-`demo/` has all of this in full — the greeter, the ticker, both contexts, a C-ABI skin with a Python host, a wasm-bindgen skin with a JS host — and `nix develop` then `demo` runs the routine natively and behind both foreign hosts and checks the transcripts are byte-identical.
+`demo/` has all of this in full — the greeter, the ticker, both contexts, a native tokio host, a native JS host over wasm-bindgen, and a C-ABI skin with a Python host — and `nix develop` then `demo` runs the routine on tokio, on Node, and behind the C ABI, and checks the three transcripts are byte-identical.
 
 ## How the wire works
 
@@ -124,7 +124,7 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 | [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `wire`, `testing`    | `no_std` + `alloc` |
 | [`effect_routine_host`](effect_routine_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                            | —                  |
-| [`demo/`](demo/)                              | The greeter and ticker; a native tokio host; a reifying context with `Full`/`Quiet` vocabularies; a C-ABI skin + Python host; a wasm-bindgen skin + JS host | — |
+| [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI skin + Python host | — |
 
 ### Not here, on purpose
 

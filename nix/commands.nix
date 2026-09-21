@@ -67,7 +67,7 @@ in {
     echo "demo/js/pkg ready"
   '';
 
-  "demo" = cmd "Drive the greeter natively on tokio, from Python (C ABI), and from JS (wasm-bindgen); transcripts must agree" ''
+  "demo" = cmd "Run the greeter natively on tokio and on Node (wasm-bindgen), and drive it from Python over the C ABI; transcripts must agree" ''
     set -e
 
     echo "===> Building the cdylib and the wasm module..."
@@ -90,7 +90,7 @@ in {
       ${python} demo/python/main.py $variant | tee /tmp/effect-routine-python.txt
 
       echo ""
-      echo "===> JS host $variant"
+      echo "===> Node, natively (no driver) $variant"
       ${node} demo/js/main.mjs $variant | tee /tmp/effect-routine-js.txt
 
       echo ""
