@@ -2,7 +2,7 @@
 //!
 //! `Greeter<Ctx<E>>` is the same routine as under `greeter_tokio`; only
 //! the context differs. The routines are the `routines` crate. [`Ctx`] serves every wait by recording a request that
-//! carries a [`ReplyHandle`](effect_routine::reply::ReplyHandle) and suspending; a host replies by id. This crate
+//! carries a [`ReplyHandle`](effect_routine::reply::handle::ReplyHandle) and suspending; a host replies by id. This crate
 //! is what only the routine's author can write — which requests exist, how
 //! the five traits map onto them, how a host sees them — and nothing else.
 //! Stepping, the handle table, and the type check on replies are
@@ -26,7 +26,7 @@
 //! `Sleep` and `Write`.
 //!
 //! That is attenuation, checked where the routine is built and visible on the
-//! wire: `Ctx<Quiet, _>` does not implement `Directory`, so a `Greeter` cannot
+//! wire: `Ctx<Quiet>` does not implement `traits::Lookup`, so a `Greeter` cannot
 //! be spawned under it, while a `Ticker` can — and a host driving a `Quiet`
 //! machine knows from the type alone that tags 1–3 can never appear.
 //!
@@ -35,7 +35,7 @@
 //! use routines::greeter::Greeter;
 //! use greeter_wire::{Ctx, Quiet};
 //!
-//! // error[E0277]: the trait bound `Ctx<Quiet, _>: Directory` is not satisfied
+//! // error[E0277]: the trait bound `Ctx<Quiet>: Lookup` is not satisfied
 //! let _ = Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());
 //! ```
 //!
@@ -60,21 +60,16 @@ use alloc::string::String;
 use core::{future::Future, time::Duration};
 use effect_routine::{
     driver::outbox::Outbox,
+    reply::Reply,
     request::{Asked, Request},
     run::Run,
     wire::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
-        menu::Reply,
         pending::Pending,
     },
 };
-use routines::{
-    fanout::Fanout,
-    greeter::Greeter,
-    ticker::Ticker,
-    traits::{Clock, Counter, Directory, Input, Output},
-};
+use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker, traits};
 
 // ---- requests: one per awaited capability, plus the one message ----------
 
@@ -96,7 +91,7 @@ pub struct Sleep(pub Duration);
 
 /// Show a line. Fire-and-forget; not a [`Request`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Write(pub String);
+pub struct WriteLine(pub String);
 
 impl Request for Count {
     type Reply = u64;
@@ -135,33 +130,33 @@ impl<E> Ctx<E> {
     }
 }
 
-impl<E: From<Asked<Sleep>>> Clock for Ctx<E> {
+impl<E: From<Asked<Sleep>>> traits::Sleep for Ctx<E> {
     async fn sleep(&self, duration: Duration) {
         self.outbox.request(Sleep(duration)).await;
     }
 }
 
-impl<E: From<Asked<Count>>> Counter for Ctx<E> {
+impl<E: From<Asked<Count>>> traits::Count for Ctx<E> {
     async fn count(&self) -> u64 {
         self.outbox.request(Count).await
     }
 }
 
-impl<E: From<Asked<Lookup>>> Directory for Ctx<E> {
+impl<E: From<Asked<Lookup>>> traits::Lookup for Ctx<E> {
     async fn lookup(&self, name: String) -> String {
         self.outbox.request(Lookup(name)).await
     }
 }
 
-impl<E: From<Asked<ReadLine>>> Input for Ctx<E> {
+impl<E: From<Asked<ReadLine>>> traits::ReadLine for Ctx<E> {
     async fn read_line(&self) -> String {
         self.outbox.request(ReadLine).await
     }
 }
 
-impl<E: From<Write>> Output for Ctx<E> {
+impl<E: From<WriteLine>> traits::WriteLine for Ctx<E> {
     fn write(&self, line: String) {
-        self.outbox.notify(Write(line));
+        self.outbox.notify(WriteLine(line));
     }
 }
 
@@ -179,7 +174,7 @@ pub enum Full {
     /// Tag 4.
     Sleep(Asked<Sleep>),
     /// Tag 5.
-    Write(Write),
+    Write(WriteLine),
 }
 
 impl From<Asked<Count>> for Full {
@@ -206,8 +201,8 @@ impl From<Asked<Sleep>> for Full {
     }
 }
 
-impl From<Write> for Full {
-    fn from(write: Write) -> Self {
+impl From<WriteLine> for Full {
+    fn from(write: WriteLine) -> Self {
         Full::Write(write)
     }
 }
@@ -278,7 +273,7 @@ impl HostEffect for Full {
                 },
                 Some(<()>::pending(reply)),
             ),
-            Full::Write(Write(text)) => (View::Write { text }, None),
+            Full::Write(WriteLine(text)) => (View::Write { text }, None),
         }
     }
 }
@@ -314,14 +309,14 @@ impl Encode for View {
 
 // ---- Quiet: a host that offers only a clock and an output -----------------
 
-/// The vocabulary of a host that offers only `Clock` and `Output`. A
+/// The vocabulary of a host that offers only `Sleep` and `WriteLine`. A
 /// [`Ticker`] runs under it; a [`Greeter`] does not compile against it.
 #[derive(Debug)]
 pub enum Quiet {
     /// Tag 4.
     Sleep(Asked<Sleep>),
     /// Tag 5.
-    Write(Write),
+    Write(WriteLine),
 }
 
 impl From<Asked<Sleep>> for Quiet {
@@ -330,8 +325,8 @@ impl From<Asked<Sleep>> for Quiet {
     }
 }
 
-impl From<Write> for Quiet {
-    fn from(write: Write) -> Self {
+impl From<WriteLine> for Quiet {
+    fn from(write: WriteLine) -> Self {
         Quiet::Write(write)
     }
 }
@@ -375,7 +370,11 @@ mod tests {
     //! assert on the effects a host would see — the thing the wire exists to
     //! carry.
 
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+    #![expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests assert their preconditions; let-else arms name the batch they expected"
+    )]
 
     extern crate std;
 
@@ -395,7 +394,7 @@ mod tests {
 
         while let Some(effect) = queue.pop_front() {
             let more = match effect {
-                Full::Write(Write(text)) => {
+                Full::Write(WriteLine(text)) => {
                     seen.push(View::Write { text: text.clone() });
                     written.push(text);
                     continue;
@@ -420,7 +419,7 @@ mod tests {
                     reply,
                 }) => {
                     seen.push(View::Sleep {
-                        millis: u64::try_from(after.as_millis()).unwrap(),
+                        millis: u64::try_from(after.as_millis()).expect("a demo pause fits in u64"),
                         id: reply.id(),
                     });
                     driver.reply(reply, ())
@@ -443,13 +442,14 @@ mod tests {
         let mut out = Vec::new();
 
         for (i, name) in script.iter().take_while(|n| **n != "quit").enumerate() {
-            out.push(String::from("Who are you?"));
-            out.push(format!("Hello to {name}, {name}!"));
-            out.push(format!("(greeted {} so far)", i + 1));
+            out.extend([
+                String::from("Who are you?"),
+                format!("Hello to {name}, {name}!"),
+                format!("(greeted {} so far)", i + 1),
+            ]);
         }
 
-        out.push(String::from("Who are you?"));
-        out.push(String::from("Bye."));
+        out.extend([String::from("Who are you?"), String::from("Bye.")]);
         out
     }
 
@@ -493,7 +493,7 @@ mod tests {
                 let mut written = Vec::new();
 
                 let [
-                    Full::Write(Write(prompt)),
+                    Full::Write(WriteLine(prompt)),
                     Full::ReadLine(Asked { reply: read, .. }),
                 ] = exactly(driver.start())
                 else {
@@ -524,7 +524,7 @@ mod tests {
                     third.extend(driver.reply(lookup, String::from("Hi")));
                 }
                 let [
-                    Full::Write(Write(greeting)),
+                    Full::Write(WriteLine(greeting)),
                     Full::Sleep(Asked { reply: sleep, .. }),
                     Full::ReadLine(Asked { reply: read, .. }),
                 ] = exactly(third)
@@ -543,7 +543,7 @@ mod tests {
                     assert!(fourth.is_empty());
                     fourth.extend(driver.reply(sleep, ()));
                 }
-                let [Full::Write(Write(bye))] = exactly(fourth) else {
+                let [Full::Write(WriteLine(bye))] = exactly(fourth) else {
                     panic!("last batch: bye");
                 };
                 written.push(bye);
@@ -562,7 +562,7 @@ mod tests {
 
         while let Some(effect) = queue.pop_front() {
             match effect {
-                Quiet::Write(Write(text)) => written.push(text),
+                Quiet::Write(WriteLine(text)) => written.push(text),
                 Quiet::Sleep(Asked { request, reply }) => {
                     assert_eq!(request, Sleep(PAUSE));
                     queue.extend(driver.reply(reply, ()));

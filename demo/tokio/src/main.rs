@@ -39,7 +39,7 @@ async fn main() -> Result<(), tokio::task::JoinError> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
     use std::time::Instant;

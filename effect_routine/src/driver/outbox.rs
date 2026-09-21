@@ -6,9 +6,8 @@ use super::{
     sync::{Arc, Mutex},
 };
 use crate::{
-    reply::ReplyHandle,
+    reply::{Reply, handle::ReplyHandle, value::Value},
     request::{Asked, Request},
-    wire::menu::{Kind, Reply, Value},
 };
 use alloc::vec::Vec;
 
@@ -94,9 +93,9 @@ impl<E> Outbox<E> {
 
     /// First poll of a request: open its slot and record its effect, under
     /// one lock.
-    pub(super) fn open(&self, id: u64, kind: Kind, effect: E) {
+    pub(super) fn open(&self, id: u64, effect: E) {
         let mut inner = self.inner.lock();
-        inner.mail.open(id, kind);
+        inner.mail.open(id);
         inner.effects.push(effect);
     }
 

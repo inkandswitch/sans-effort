@@ -5,17 +5,17 @@ use core::{cell::Cell, time::Duration};
 use effect_routine::run::Run;
 use routines::{
     ticker::Ticker,
-    traits::{Clock, Output},
+    traits::{Sleep, WriteLine},
 };
 use std::rc::Rc;
 
 struct Local(Rc<Cell<u32>>);
 
-impl Clock for Local {
+impl Sleep for Local {
     async fn sleep(&self, _: Duration) {}
 }
 
-impl Output for Local {
+impl WriteLine for Local {
     fn write(&self, _: String) {}
 }
 

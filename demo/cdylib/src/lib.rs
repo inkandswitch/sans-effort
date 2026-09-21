@@ -10,7 +10,7 @@
 //! `ABI.md` at the repository root is the contract; `../python/main.py` is a
 //! host that speaks it with a byte buffer and no library.
 
-use effect_routine_host::{Error, Status, code_of, table};
+use effect_routine_host::{code::code_of, error::Error, status::Status, table};
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two
 /// threads driving it at once get `BUSY`.

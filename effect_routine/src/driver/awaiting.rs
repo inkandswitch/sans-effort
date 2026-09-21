@@ -1,7 +1,7 @@
 //! The routine's half of a request.
 
 use super::outbox::Outbox;
-use crate::wire::menu::Reply;
+use crate::reply::Reply;
 use core::{
     future::Future,
     marker::PhantomData,
@@ -54,7 +54,7 @@ impl<E, T: Reply> Future for Awaiting<E, T> {
 
     fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<T> {
         if let Some(effect) = self.effect.take() {
-            self.outbox.open(self.id, T::KIND, effect);
+            self.outbox.open(self.id, effect);
             self.polled = true;
             return Poll::Pending;
         }

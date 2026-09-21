@@ -1,20 +1,20 @@
 //! An outstanding request, by the kind of reply it takes.
 
-use super::menu::Kind;
-use crate::reply::ReplyHandle;
+use crate::reply::handle::ReplyHandle;
+use crate::reply::value::Kind;
 use alloc::{string::String, vec::Vec};
 
 /// One variant per entry of the menu; a host replies with the matching kind,
 /// and the host layer type-checks it here.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Pending {
-    /// Awaits [`Value::Bytes`](super::menu::Value::Bytes).
+    /// Awaits [`Value::Bytes`](crate::reply::value::Value::Bytes).
     Bytes(ReplyHandle<Vec<u8>>),
-    /// Awaits [`Value::Str`](super::menu::Value::Str).
+    /// Awaits [`Value::Str`](crate::reply::value::Value::Str).
     Str(ReplyHandle<String>),
-    /// Awaits [`Value::U64`](super::menu::Value::U64).
+    /// Awaits [`Value::U64`](crate::reply::value::Value::U64).
     U64(ReplyHandle<u64>),
-    /// Awaits [`Value::Unit`](super::menu::Value::Unit).
+    /// Awaits [`Value::Unit`](crate::reply::value::Value::Unit).
     Unit(ReplyHandle<()>),
 }
 

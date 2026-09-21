@@ -11,8 +11,8 @@ routine asks for _traits_ rather than effects, the same code is also a plain
 This crate is the mechanism. It is `no_std` + `alloc`.
 
 ```text
-  routine     Greeter<C: Clock + Console>: Run      asks for traits; knows nothing of hosts
-  context     impl Clock for TokioCtx  │ impl Clock for Ctx<E>
+  routine     Greeter<C: Sleep + Console>: Run      asks for traits; knows nothing of hosts
+  context     impl Sleep for TokioCtx  │ impl Sleep for Ctx<E>
               a real future            │ records an effect, waits for the reply
   host        tokio polls the task     │ a Driver polls; Python, JS, a test… replies by id
 ```

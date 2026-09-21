@@ -6,7 +6,7 @@
 //! waker drives it. No effect is built, no driver polls, no host loop
 //! interprets anything. The routine is the task.
 
-use routines::traits::{Clock, Counter, Directory, Input, Output};
+use routines::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
 use std::{
     io::{self, Write as _},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -20,8 +20,8 @@ use tokio::{
 /// A context whose waits are tokio futures.
 ///
 /// Generic over its line source `R`: stdin in `main`, a byte slice in tests,
-/// statically dispatched either way. `Output` writes to stdout; `Directory` is a fixed table; `Counter`
-/// is an atomic; `Clock` is `tokio::time::sleep`, so under a paused-clock
+/// statically dispatched either way. `WriteLine` writes to stdout; `Lookup` is a fixed table; `Count`
+/// is an atomic; `Sleep` is `tokio::time::sleep`, so under a paused-clock
 /// test it costs no wall time.
 pub(crate) struct TokioCtx<R> {
     /// `read_line` needs `&mut R`; the trait takes `&self` so that a routine
@@ -56,19 +56,19 @@ impl<R> std::fmt::Debug for TokioCtx<R> {
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> Clock for TokioCtx<R> {
+impl<R: AsyncBufRead + Send + Unpin> Sleep for TokioCtx<R> {
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> Counter for TokioCtx<R> {
+impl<R: AsyncBufRead + Send + Unpin> Count for TokioCtx<R> {
     async fn count(&self) -> u64 {
         self.greeted.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> Directory for TokioCtx<R> {
+impl<R: AsyncBufRead + Send + Unpin> Lookup for TokioCtx<R> {
     async fn lookup(&self, name: String) -> String {
         match name.as_str() {
             "alice" => "Hello",
@@ -80,7 +80,7 @@ impl<R: AsyncBufRead + Send + Unpin> Directory for TokioCtx<R> {
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> Input for TokioCtx<R> {
+impl<R: AsyncBufRead + Send + Unpin> ReadLine for TokioCtx<R> {
     /// The next line, or `quit` at end of input.
     async fn read_line(&self) -> String {
         let mut line = String::new();
@@ -93,8 +93,8 @@ impl<R: AsyncBufRead + Send + Unpin> Input for TokioCtx<R> {
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> Output for TokioCtx<R> {
-    /// `Output::write` is fire-and-forget by design, so a stdout error has
+impl<R: AsyncBufRead + Send + Unpin> WriteLine for TokioCtx<R> {
+    /// `WriteLine::write` is fire-and-forget by design, so a stdout error has
     /// nowhere to go. A context must not end the process on the routine's
     /// behalf; it reports once and carries on.
     fn write(&self, line: String) {

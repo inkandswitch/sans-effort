@@ -27,11 +27,11 @@ This is the library. The research that motivates it, with the alternatives built
 
 ```text
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ routine      Greeter<C: Clock + Directory + Input + Output>: Run     │  no_std
+  │ routine      Greeter<C: Sleep + Lookup + ReadLine + WriteLine>: Run  │  no_std
   │              owns the logic; asks for traits; knows nothing of        │
   │              effects, handles, drivers, or hosts                      │
   ├──────────────────────────────────────────────────────────────────────┤
-  │ context      impl Clock for TokioCtx    │  impl Clock for Ctx<E>      │
+  │ context      impl Sleep for TokioCtx    │  impl Sleep for Ctx<E>      │
   │              each call is a real future │  each call records an       │
   │                                         │  effect and suspends        │
   ├─────────────────────────────────────────┼────────────────────────────┤
@@ -46,12 +46,12 @@ The routine is the foundation and depends on nothing above it. The left column i
 ## The routine
 
 ```rust
-pub trait Clock     { async fn sleep(&self, d: Duration); }
-pub trait Directory { async fn lookup(&self, name: String) -> String; }
-pub trait Input     { async fn read_line(&self) -> String; }
-pub trait Output    { fn write(&self, line: String); }
+pub trait Sleep     { async fn sleep(&self, d: Duration); }
+pub trait Lookup    { async fn lookup(&self, name: String) -> String; }
+pub trait ReadLine  { async fn read_line(&self) -> String; }
+pub trait WriteLine { fn write(&self, line: String); }
 
-impl<C: Clock + Directory + Input + Output> Run for Greeter<C> {
+impl<C: Sleep + Lookup + ReadLine + WriteLine> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write("Who are you?".into());
         let name = self.ctx.read_line().await;
@@ -68,7 +68,7 @@ impl<C: Clock + Directory + Input + Output> Run for Greeter<C> {
 Natively, on tokio — no driver, no effects, tokio polls the task:
 
 ```rust
-impl Clock for TokioCtx {
+impl Sleep for TokioCtx {
     async fn sleep(&self, d: Duration) { tokio::time::sleep(d).await }
 }
 // …
@@ -78,13 +78,13 @@ tokio::spawn(Greeter::new(TokioCtx::new(stdin)).run());
 Behind a host — each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
 
 ```rust
-impl<E: From<Asked<Sleep>>> Clock for Ctx<E> {
+impl<E: From<Asked<Sleep>>> traits::Sleep for Ctx<E> {
     async fn sleep(&self, d: Duration) { self.outbox.request(Sleep(d)).await }
 }
 // …
 Driver::<Full>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());   // ok
-Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());  // E0277: Ctx<Quiet, _>: Directory
-Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ticker needs only Clock + Output
+Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());  // E0277: Ctx<Quiet>: Lookup
+Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ticker needs only Sleep + WriteLine
 ```
 
 `demo/` has all of this in full — the greeter, the ticker, both contexts, a C-ABI skin with a Python host, a wasm-bindgen skin with a JS host — and `nix develop` then `demo` runs the routine natively and behind both foreign hosts and checks the transcripts are byte-identical.

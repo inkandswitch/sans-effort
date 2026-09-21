@@ -5,7 +5,7 @@ use super::pending::Pending;
 /// An effect a host can receive.
 ///
 /// A host that cannot hold a Rust value — anything across an ABI — sees the
-/// effect with its [`ReplyHandle`](crate::reply::ReplyHandle) replaced by the request id. The handle
+/// effect with its [`ReplyHandle`](crate::reply::handle::ReplyHandle) replaced by the request id. The handle
 /// stays on this side as a [`Pending`], so the reply is still typed.
 /// [`View`](Self::View) is what every skin hands on: as Python objects, as
 /// Erlang terms, or, through [`Encode`](super::codec::Encode), as bytes.

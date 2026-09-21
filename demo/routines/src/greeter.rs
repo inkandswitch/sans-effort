@@ -2,7 +2,7 @@
 
 use crate::{
     PAUSE,
-    traits::{Clock, Counter, Directory, Input, Output},
+    traits::{Count, Lookup, ReadLine, Sleep, WriteLine},
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
@@ -11,18 +11,18 @@ use effect_routine::run::Run;
 /// Prompt, read a name, look up a greeting, pause, greet, count; repeat until
 /// the name is `quit`.
 #[derive(Debug)]
-pub struct Greeter<C: Clock + Counter + Directory + Input + Output> {
+pub struct Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine> {
     ctx: C,
 }
 
-impl<C: Clock + Counter + Directory + Input + Output> Greeter<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Greeter<C> {
     /// A greeter that does everything through `ctx`.
     pub const fn new(ctx: C) -> Self {
         Self { ctx }
     }
 }
 
-impl<C: Clock + Counter + Directory + Input + Output> Run for Greeter<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write(String::from("Who are you?"));
         let name = self.ctx.read_line().await;
@@ -45,8 +45,6 @@ impl<C: Clock + Counter + Directory + Input + Output> Run for Greeter<C> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
-
     use super::*;
     use crate::recording::{Call, greeting_for, transcript};
     use alloc::vec::Vec;
@@ -60,18 +58,22 @@ mod tests {
             .take_while(|n| n.as_str() != "quit")
             .enumerate()
         {
-            out.push(Call::Write("Who are you?".into()));
-            out.push(Call::ReadLine);
-            out.push(Call::Lookup(name.clone()));
-            out.push(Call::Sleep(PAUSE));
-            out.push(Call::Write(format!("{}, {name}!", greeting_for(name))));
-            out.push(Call::Count);
-            out.push(Call::Write(format!("(greeted {} so far)", i + 1)));
+            out.extend([
+                Call::Write("Who are you?".into()),
+                Call::ReadLine,
+                Call::Lookup(name.clone()),
+                Call::Sleep(PAUSE),
+                Call::Write(format!("{}, {name}!", greeting_for(name))),
+                Call::Count,
+                Call::Write(format!("(greeted {} so far)", i + 1)),
+            ]);
         }
 
-        out.push(Call::Write("Who are you?".into()));
-        out.push(Call::ReadLine);
-        out.push(Call::Write("Bye.".into()));
+        out.extend([
+            Call::Write("Who are you?".into()),
+            Call::ReadLine,
+            Call::Write("Bye.".into()),
+        ]);
         out
     }
 

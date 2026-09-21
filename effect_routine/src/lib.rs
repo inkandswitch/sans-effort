@@ -36,10 +36,10 @@
 //!
 //! ```text
 //!   ┌─────────────────────────────────────────────────────────────────┐
-//!   │ routine     Greeter<C: Clock + Directory + Console>: Run        │  no_std
+//!   │ routine     Greeter<C: Sleep + Lookup + Console>: Run           │  no_std
 //!   │             owns the logic; knows nothing of effects or hosts   │
 //!   ├─────────────────────────────────────────────────────────────────┤
-//!   │ context     impl Clock for TokioCtx   │ impl Clock for Ctx<E,O> │
+//!   │ context     impl Sleep for TokioCtx   │ impl Sleep for Ctx<E>   │
 //!   │             a real future             │ record an effect, wait  │
 //!   ├───────────────────────────────────────┼─────────────────────────┤
 //!   │ host        tokio polls the task      │ a Driver polls; Python, │
@@ -59,7 +59,7 @@
 //! - [`driver::outbox::Outbox`] is what a _reifying context_ writes into:
 //!   [`tell`](driver::outbox::Outbox::tell) an effect and move on, or
 //!   [`ask`](driver::outbox::Outbox::ask) one and await the reply.
-//! - [`reply::ReplyHandle`] is the typed, single-use capability to answer one
+//! - [`reply::handle::ReplyHandle`] is the typed, single-use capability to answer one
 //!   `ask`. It travels inside the effect to whoever performs it.
 //! - [`request::Request`] lets a wait be a value — `Lookup(name)` — so a
 //!   context can be generic over the host's vocabulary, and a host can offer

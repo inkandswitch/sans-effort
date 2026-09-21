@@ -2,7 +2,7 @@
 
 use crate::{
     PAUSE,
-    traits::{Clock, Counter, Directory, Input, Output},
+    traits::{Count, Lookup, ReadLine, Sleep, WriteLine},
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
@@ -16,18 +16,18 @@ use effect_routine::{join::join, run::Run};
 /// order — which is what the request ids on the wire are for. The routine
 /// cannot tell.
 #[derive(Debug)]
-pub struct Fanout<C: Clock + Counter + Directory + Input + Output> {
+pub struct Fanout<C: Count + Lookup + ReadLine + Sleep + WriteLine> {
     ctx: C,
 }
 
-impl<C: Clock + Counter + Directory + Input + Output> Fanout<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Fanout<C> {
     /// A fan-out greeter that does everything through `ctx`.
     pub const fn new(ctx: C) -> Self {
         Self { ctx }
     }
 }
 
-impl<C: Clock + Counter + Directory + Input + Output> Run for Fanout<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Fanout<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write(String::from("Who are you?"));
         let name = self.ctx.read_line().await;
@@ -44,8 +44,6 @@ impl<C: Clock + Counter + Directory + Input + Output> Run for Fanout<C> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
-
     use super::*;
     use crate::recording::{Call, greeting_for, transcript};
     use alloc::vec;

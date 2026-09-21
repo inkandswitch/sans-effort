@@ -20,7 +20,7 @@ note: required because it appears within the type `Local`
 note: required because it appears within the type `Ticker<Local>`
   --> src/ticker.rs
    |
-   | pub struct Ticker<C: Clock + Output> {
+   | pub struct Ticker<C: Sleep + WriteLine> {
    |            ^^^^^^
 note: required because it's used within this `async` block
   --> $WORKSPACE/effect_routine/src/run.rs

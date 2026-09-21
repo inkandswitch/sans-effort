@@ -5,24 +5,22 @@
 //! handed to anything that requires `Send`, because the compiler sees the
 //! `Rc` in the concrete future (`ui/not_send.rs`, checked with `trybuild`).
 
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
-
 use core::{cell::Cell, time::Duration};
 use effect_routine::{run::Run, testing::run_now};
 use routines::{
     ticker::Ticker,
-    traits::{Clock, Output},
+    traits::{Sleep, WriteLine},
 };
 use std::rc::Rc;
 
 /// A context nothing could ever send across a thread.
 struct Local(Rc<Cell<u32>>);
 
-impl Clock for Local {
+impl Sleep for Local {
     async fn sleep(&self, _: Duration) {}
 }
 
-impl Output for Local {
+impl WriteLine for Local {
     fn write(&self, _: String) {
         self.0.set(self.0.get() + 1);
     }

@@ -1,5 +1,6 @@
-//! The capabilities a context may offer. Each is one thing the greeter can
-//! do to, or wait on from, its environment.
+//! The capabilities a context may offer. One trait per verb, each one thing
+//! a routine can do to, or wait on from, its environment — and, under a
+//! reifying context, each one request type on the wire.
 //!
 //! Written as `async fn`. rustc warns that this leaves auto traits unstated,
 //! and it is right about what that costs: nothing generic over `C` can also
@@ -19,32 +20,32 @@
 use alloc::string::String;
 use core::time::Duration;
 
-/// Something that can wait for a duration.
-pub trait Clock {
+/// Wait for a duration.
+pub trait Sleep {
     /// Return after `duration` has passed.
     async fn sleep(&self, duration: Duration);
 }
 
-/// Something that counts greetings.
-pub trait Counter {
+/// Count a greeting.
+pub trait Count {
     /// One more greeting; how many so far, including this one.
     async fn count(&self) -> u64;
 }
 
-/// Something that knows which greeting suits a name.
-pub trait Directory {
+/// Look a name up.
+pub trait Lookup {
     /// The greeting word for `name`.
     async fn lookup(&self, name: String) -> String;
 }
 
-/// Something lines arrive from.
-pub trait Input {
+/// Read a line.
+pub trait ReadLine {
     /// The next line.
     async fn read_line(&self) -> String;
 }
 
-/// Somewhere to print. Fire-and-forget, so not `async`.
-pub trait Output {
+/// Write a line. Fire-and-forget, so not `async`.
+pub trait WriteLine {
     /// Show `line`.
     fn write(&self, line: String);
 }

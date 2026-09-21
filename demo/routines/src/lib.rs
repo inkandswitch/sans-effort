@@ -16,7 +16,7 @@
 //! else — no effect, no handle, no driver — and it is `no_std`.
 //!
 //! ```text
-//!   Greeter<C: Clock + Counter + Directory + Input + Output>: Run
+//!   Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine>: Run
 //!        │
 //!        ├── C = TokioCtx          (../tokio)   waits are tokio futures; tokio polls; no driver
 //!        ├── C = wire::Ctx<E>      (../wire)    waits record effects; a Driver polls; any host

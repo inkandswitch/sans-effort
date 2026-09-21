@@ -5,16 +5,13 @@
 //! until a host asks, so that a host keeping its own table of handles can
 //! forget them too.
 //!
-//! Values are stored as [`Value`] — the closed menu — not type-erased; the
-//! [`ReplyHandle<T>`]'s type says which variant to expect back. The menu is
-//! the wire's: every foreign host replies across an ABI that carries exactly
-//! these kinds, and the mailbox mirrors it.
+//! Values are stored as [`Value`] — the closed menu — not type-erased. The
+//! slot records no kind: only a [`ReplyHandle<T>`] minted for it can deliver,
+//! and that handle's `T` is the proof. The kind check a foreign host needs
+//! lives in the host layer, where an untyped id arrives.
 
 use super::sync::AtomicU64;
-use crate::{
-    reply::ReplyHandle,
-    wire::menu::{Kind, Value},
-};
+use crate::reply::{handle::ReplyHandle, value::Value};
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
@@ -34,7 +31,6 @@ pub(super) struct Mail {
 
 struct Slot {
     id: u64,
-    kind: Kind,
     value: Option<Value>,
 }
 
@@ -55,12 +51,8 @@ impl Mail {
         ReplyHandle::mint(self.driver, id)
     }
 
-    pub(super) fn open(&mut self, id: u64, kind: Kind) {
-        self.slots.push(Slot {
-            id,
-            kind,
-            value: None,
-        });
+    pub(super) fn open(&mut self, id: u64) {
+        self.slots.push(Slot { id, value: None });
     }
 
     fn position(&self, id: u64) -> Option<usize> {
@@ -83,13 +75,6 @@ impl Mail {
 
         match self.position(id).and_then(|at| self.slots.get_mut(at)) {
             Some(slot) => {
-                debug_assert_eq!(
-                    slot.kind,
-                    value.kind(),
-                    "ReplyHandle({driver}/{id}) opened a {:?} slot; a {:?} was delivered",
-                    slot.kind,
-                    value.kind()
-                );
                 slot.value = Some(value);
                 true
             }

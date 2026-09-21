@@ -6,7 +6,7 @@ byte for byte.
 
 ```
   routines/  the routines, one per module: greeter (the conversation), fanout (two
-             waits at once), ticker (needs only Clock + Output); traits.rs. no_std.
+             waits at once), ticker (needs only Sleep + WriteLine); traits.rs. no_std.
              Imports Run and join, nothing else.
              Tests: a Recording mock + testing::run_now — no driver, one poll.
 

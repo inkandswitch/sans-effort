@@ -23,7 +23,7 @@
 //! [`request`](crate::driver::outbox::Outbox::request) and
 //! [`notify`](crate::driver::outbox::Outbox::notify).
 
-use crate::{reply::ReplyHandle, wire::menu::Reply};
+use crate::reply::{Reply, handle::ReplyHandle};
 
 /// A request names the type of its reply.
 pub trait Request {

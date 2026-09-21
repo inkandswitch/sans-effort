@@ -2,7 +2,7 @@
 
 use crate::{
     PAUSE,
-    traits::{Clock, Output},
+    traits::{Sleep, WriteLine},
 };
 use alloc::format;
 use core::ops::ControlFlow;
@@ -12,25 +12,25 @@ use effect_routine::run::Run;
 /// up, or counts.
 ///
 /// The bound _is_ the permission. A `Ticker` cannot ask for input whatever
-/// its context could offer, and a context that offers only `Clock + Output`
+/// its context could offer, and a context that offers only `Sleep + WriteLine`
 /// can run a `Ticker` but not a [`Greeter`](crate::greeter::Greeter) —
 /// checked where it is built, and, under a reifying context with a
 /// host-chosen vocabulary, visible on the wire as tags that can never appear.
 /// See `greeter_wire::Quiet`.
 #[derive(Debug)]
-pub struct Ticker<C: Clock + Output> {
+pub struct Ticker<C: Sleep + WriteLine> {
     ctx: C,
     remaining: u32,
 }
 
-impl<C: Clock + Output> Ticker<C> {
+impl<C: Sleep + WriteLine> Ticker<C> {
     /// Tick `n` times through `ctx`.
     pub const fn new(ctx: C, n: u32) -> Self {
         Self { ctx, remaining: n }
     }
 }
 
-impl<C: Clock + Output> Run for Ticker<C> {
+impl<C: Sleep + WriteLine> Run for Ticker<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         if self.remaining == 0 {
             return ControlFlow::Break(());
@@ -45,8 +45,6 @@ impl<C: Clock + Output> Run for Ticker<C> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
-
     use super::*;
     use crate::recording::{Call, transcript};
 

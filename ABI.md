@@ -8,7 +8,7 @@ The shape: `new`, `start(handle) → effects`, then `reply(handle, record) → e
 |---------|----------|
 | Calls | `<prefix>_new() → u64`, `<prefix>_start(u64, out_ptr, out_len) → i32`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. A skin may export more constructors (`<prefix>_new_fanout()`, `<prefix>_new_ticker()`); all return the same handle type and answer to the same calls. |
 | Machine handles | `u64`, never `0`, never reused; a stale handle is `BAD_HANDLE`, not a fault. |
-| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `STALLED`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`). |
+| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `STALLED`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`). |
 | Out-buffers | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written. |
 | `start` | Valid once per handle; a second call is `BAD_INPUT`. Returns the effects recorded before the first wait. |
 | `reply` | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` — typed by reply kind, not by effect. Trailing bytes are `BAD_INPUT`. Returns the effects recorded before the next wait. |
@@ -29,7 +29,7 @@ Four kinds, and no more. A richer reply crosses as `bytes` and is decoded on the
 | `3` | `unit` | — | a sleep, an ack |
 | `4` | `bytes` | `u32 len` + bytes | anything else |
 
-Replying with the wrong kind for an id is `BAD_INPUT`, and the request stays outstanding, so the host may retry with the right kind.
+Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays outstanding, so the host may retry with the right kind. An id nothing awaits is `BAD_INPUT`.
 
 ## What is not in the ABI
 

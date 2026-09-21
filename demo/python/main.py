@@ -22,7 +22,7 @@ from pathlib import Path
 
 OK = AWAITING = 0
 COMPLETE, STALLED = 1, 2
-ERRORS = {-1: "BUSY", -2: "FINISHED", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT"}
+ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT"}
 
 # Reply records: kind, then request id, then payload.
 

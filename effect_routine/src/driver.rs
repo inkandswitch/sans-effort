@@ -55,7 +55,7 @@ mod mail;
 mod sync;
 
 use self::{outbox::Outbox, status::Status};
-use crate::{reply::ReplyHandle, wire::menu::Reply};
+use crate::reply::{Reply, handle::ReplyHandle};
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     future::Future,
@@ -173,7 +173,7 @@ impl<E> core::fmt::Debug for Driver<E> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
     use crate::run::Run;

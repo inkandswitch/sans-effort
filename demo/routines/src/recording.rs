@@ -8,7 +8,7 @@
 //! spawns, so nothing asks. Had the traits demanded `Send`, this mock could
 //! not exist.
 
-use crate::traits::{Clock, Counter, Directory, Input, Output};
+use crate::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
 use alloc::{
     collections::VecDeque,
     format,
@@ -67,13 +67,13 @@ impl Recording {
     }
 }
 
-impl Clock for Recording {
+impl Sleep for Recording {
     async fn sleep(&self, duration: Duration) {
         self.log(Call::Sleep(duration));
     }
 }
 
-impl Counter for Recording {
+impl Count for Recording {
     async fn count(&self) -> u64 {
         self.log(Call::Count);
         self.0.count.set(self.0.count.get() + 1);
@@ -81,14 +81,14 @@ impl Counter for Recording {
     }
 }
 
-impl Directory for Recording {
+impl Lookup for Recording {
     async fn lookup(&self, name: String) -> String {
         self.log(Call::Lookup(name.clone()));
         greeting_for(&name)
     }
 }
 
-impl Input for Recording {
+impl ReadLine for Recording {
     async fn read_line(&self) -> String {
         self.log(Call::ReadLine);
         self.0
@@ -99,7 +99,7 @@ impl Input for Recording {
     }
 }
 
-impl Output for Recording {
+impl WriteLine for Recording {
     fn write(&self, line: String) {
         self.log(Call::Write(line));
     }

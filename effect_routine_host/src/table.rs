@@ -10,9 +10,9 @@
 //! are never `0` and never reused, so a stale one is [`Error::BadHandle`]
 //! rather than a fault.
 
-use crate::{Error, Machine, Status};
+use crate::{error::Error, machine::Machine, status::Status};
 use effect_routine::{
-    driver::{Driver, outbox::Outbox},
+    driver::outbox::Outbox,
     wire::{codec::Encode, host_effect::HostEffect},
 };
 use std::{
@@ -67,7 +67,7 @@ where
     M: FnOnce(Outbox<E>) -> F,
 {
     let handle = NEXT.fetch_add(1, Ordering::Relaxed);
-    let machine: Boxed = Box::new(Machine::new(Driver::new(make)));
+    let machine: Boxed = Box::new(Machine::drive(make));
 
     with_table(|t| t.insert(handle, Arc::new(Mutex::new(machine))));
     handle
@@ -137,10 +137,14 @@ fn guarded<T>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+    #![expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests assert their preconditions"
+    )]
 
     use super::*;
-    use crate::tests::{Echo, Effect, reply_str_record};
+    use crate::fixtures::{Echo, Effect, reply_str_record};
     use effect_routine::{run::Run, wire::codec::Writer};
 
     #[test]
