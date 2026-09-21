@@ -8,15 +8,54 @@
 //! calling a method on a JS object the caller supplies, awaiting the returned
 //! `Promise` where the trait is `async`.
 //!
-//! ```text
-//!   JS:  await new Greeter({
-//!          readLine: () => …,           // string | Promise<string>
-//!          lookup:   (name) => …,       // string | Promise<string>
-//!          sleep:    (ms) => …,         // void   | Promise<void>
-//!          count:    () => …,           // number | Promise<number>
-//!          write:    (line) => …,       // void
-//!        }).run();
+//! # From JS
+//!
+//! The host is a plain object with five methods. Each may return its value
+//! directly or a `Promise` of it; the context awaits either. The simplest
+//! host is synchronous except where it genuinely waits:
+//!
+//! ```js
+//! import { Greeter } from "./pkg/greeter_wasm.js";
+//!
+//! const lines = ["alice", "bob"][Symbol.iterator]();
+//! let greeted = 0;
+//!
+//! await new Greeter({
+//!   readLine: () => lines.next().value ?? "quit",
+//!   lookup:   (name) => ({ alice: "Hello", bob: "Hi" })[name] ?? "Greetings",
+//!   sleep:    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+//!   count:    () => ++greeted,
+//!   write:    (line) => console.log(line),
+//! }).run();
 //! ```
+//!
+//! In a page, the same five methods reach the DOM, and `readLine` resolves
+//! when the user presses Enter:
+//!
+//! ```js
+//! import init, { Greeter } from "./pkg/greeter_wasm.js";   // --target web
+//! await init();
+//!
+//! const input = document.querySelector("#line");
+//! const output = document.querySelector("#transcript");
+//!
+//! const host = {
+//!   readLine: () => new Promise((resolve) => {
+//!     input.addEventListener("keydown", (e) => {
+//!       if (e.key === "Enter") { resolve(input.value); input.value = ""; }
+//!     }, { once: true });
+//!   }),
+//!   lookup:   async (name) => (await fetch(`/greeting/`)).text(),
+//!   sleep:    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+//!   count:    () => Number(localStorage.greeted = (Number(localStorage.greeted) || 0) + 1),
+//!   write:    (line) => output.append(line, document.createElement("br")),
+//! };
+//!
+//! await new Greeter(host).run();
+//! ```
+//!
+//! `Fanout` has the same constructor; its `run` awaits two host promises at
+//! once, so `lookup` and `count` are in flight together.
 //!
 //! Compare `../cdylib` and `../python`: there Python cannot poll a Rust
 //! future, so the routine runs behind a `Driver` and Python replies by id. A
