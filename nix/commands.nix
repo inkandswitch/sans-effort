@@ -5,7 +5,9 @@
   cmd,
 }: let
   cargo = "${pkgs.cargo}/bin/cargo";
+  node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
+  wasm-bindgen = "${pkgs.wasm-bindgen-cli}/bin/wasm-bindgen";
 in {
   "test:host" = cmd "Run tests and doc tests" ''
     set -e
@@ -45,22 +47,46 @@ in {
     ${cargo} test --workspace --all-features -- --nocapture
   '';
 
-  "demo" = cmd "Drive the greeter from Rust and from Python over the C ABI; transcripts must agree" ''
+  "demo:wasm" = cmd "Build the wasm-bindgen module and generate the JS glue into demo/js/pkg" ''
+    set -e
+    ${cargo} build -q -p greeter_wasm --release --target wasm32-unknown-unknown
+    mkdir -p demo/js/pkg
+    ${wasm-bindgen} --target nodejs --out-dir demo/js/pkg \
+      target/wasm32-unknown-unknown/release/greeter_wasm.wasm
+    echo "demo/js/pkg ready"
+  '';
+
+  "demo" = cmd "Drive the greeter from Rust, Python (C ABI), and JS (wasm-bindgen); transcripts must agree" ''
     set -e
 
-    echo "===> Building the cdylib..."
-    ${cargo} build -p greeter_cdylib
+    echo "===> Building the cdylib and the wasm module..."
+    ${cargo} build -q -p greeter_cdylib
+    demo:wasm
 
-    echo ""
-    echo "===> Rust host"
-    printf 'alice\nbob\nquit\n' | ${cargo} run -q -p greeter | tee /tmp/effect-routine-rust.txt
+    for variant in "" "--fanout"; do
+      if [ -z "$variant" ]; then
+        script='alice\nbob\nquit\n'
+      else
+        script='bob\ncarol\n'
+      fi
 
-    echo ""
-    echo "===> Python host"
-    ${python} demo/python/main.py | tee /tmp/effect-routine-python.txt
+      echo ""
+      echo "===> Rust host $variant"
+      printf "$script" | ${cargo} run -q -p greeter -- $variant | tee /tmp/effect-routine-rust.txt
 
-    echo ""
-    diff /tmp/effect-routine-rust.txt /tmp/effect-routine-python.txt && echo "Transcripts agree"
+      echo ""
+      echo "===> Python host $variant"
+      ${python} demo/python/main.py $variant | tee /tmp/effect-routine-python.txt
+
+      echo ""
+      echo "===> JS host $variant"
+      ${node} demo/js/main.mjs $variant | tee /tmp/effect-routine-js.txt
+
+      echo ""
+      diff /tmp/effect-routine-rust.txt /tmp/effect-routine-python.txt
+      diff /tmp/effect-routine-rust.txt /tmp/effect-routine-js.txt
+      echo "Transcripts agree $variant"
+    done
   '';
 
   "ci:quick" = cmd "Run quick CI checks (fmt, clippy, test)" ''
@@ -100,7 +126,7 @@ in {
     echo "===> [6/7] Checking licenses and advisories..."
     ${cargo} deny check
 
-    echo "===> [7/7] Running the demo..."
+    echo "===> [7/7] Running the demo (Rust, Python, JS)..."
     demo
 
     echo ""

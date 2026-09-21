@@ -1,0 +1,23 @@
+[package]
+name = "greeter_wasm"
+version = "0.1.0"
+description = "The greeter as a wasm-bindgen module: the generated class is the handle, typed getters replace the byte codec"
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+effect_routine = { workspace = true, features = ["std"] }
+effect_routine_host = { workspace = true }
+greeter = { version = "0.1.0", path = "../greeter" }
+wasm-bindgen = { workspace = true }
+
+[lints]
+workspace = true

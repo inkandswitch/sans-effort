@@ -76,6 +76,14 @@
           typos
         ];
 
+        # The demo's foreign hosts. `wasm-bindgen-cli` must match the `=` pin on
+        # the `wasm-bindgen` crate in Cargo.toml; bump both together.
+        demo-pkgs = with pkgs; [
+          nodejs
+          python3
+          wasm-bindgen-cli
+        ];
+
         # xdg-utils ships several binaries and sets no mainProgram; name the one
         # `rust.bench` opens reports with, so `lib.getExe` doesn't have to guess.
         xdg-open = pkgs.xdg-utils.overrideAttrs (old: {
@@ -151,6 +159,12 @@
           cargo-semver-checks
           typos
         ];
+
+        ci-demo-pkgs = with pkgs; [
+          nodejs
+          python3
+          wasm-bindgen-cli
+        ];
       in rec {
         devShells.default = pkgs.mkShell {
           name = "effect_routine_shell";
@@ -165,6 +179,7 @@
             ]
             ++ format-pkgs
             ++ cargo-installs
+            ++ demo-pkgs
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.clang
               pkgs.llvmPackages.libclang
@@ -185,7 +200,8 @@
               ci-rust-toolchain
               rustup-shim
             ]
-            ++ ci-cargo-installs;
+            ++ ci-cargo-installs
+            ++ ci-demo-pkgs;
         };
 
         formatter = pkgs.alejandra;

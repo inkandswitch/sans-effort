@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "demo/cdylib",
   "demo/greeter",
+  "demo/wasm",
   "effect_routine",
   "effect_routine_host",
 ]
@@ -32,6 +33,9 @@ spin = { version = "0.12", default-features = false, features = [
   "spin_mutex",
 ] }
 thiserror = { version = "2.0", default-features = false }
+# `=`: the crate and `wasm-bindgen-cli` must match exactly, and the CLI comes
+# from nixpkgs (`pkgs.wasm-bindgen-cli`). Bump both together.
+wasm-bindgen = "=0.2.121"
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }

@@ -14,8 +14,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The same routine, driven from Rust and from Python over the C ABI, must
-  # produce the same transcript. This is the ABI.md contract, exercised.
+  # The same routine, driven from Rust, from Python over the C ABI, and from
+  # JS over wasm-bindgen, must produce the same transcript. This is the
+  # ABI.md contract — and its wasm-bindgen counterpart — exercised.
   hosts-agree:
     runs-on: ubuntu-latest
     steps:
@@ -25,13 +26,28 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: true
+          target: wasm32-unknown-unknown
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
-      - name: Build the cdylib
-        run: cargo build -p greeter_cdylib
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install wasm-bindgen-cli
+        # Must match the `=` pin on the `wasm-bindgen` crate in Cargo.toml.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.121
+
+      - name: Build the cdylib and the wasm module
+        run: |
+          cargo build -p greeter_cdylib
+          cargo build -p greeter_wasm --release --target wasm32-unknown-unknown
+          wasm-bindgen --target nodejs --out-dir demo/js/pkg \
+            target/wasm32-unknown-unknown/release/greeter_wasm.wasm
 
       - name: Rust host
         run: |
@@ -43,8 +59,15 @@ jobs:
           python3 demo/python/main.py > python.txt
           python3 demo/python/main.py --fanout > python-fanout.txt
 
+      - name: JS host
+        run: |
+          node demo/js/main.mjs > js.txt
+          node demo/js/main.mjs --fanout > js-fanout.txt
+
       - name: Transcripts agree
         run: |
           diff rust.txt python.txt
+          diff rust.txt js.txt
           diff rust-fanout.txt python-fanout.txt
+          diff rust-fanout.txt js-fanout.txt
           cat rust.txt rust-fanout.txt

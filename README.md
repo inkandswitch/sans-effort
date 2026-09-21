@@ -83,7 +83,7 @@ while let Some(effect) = queue.pop_front() {
 }
 ```
 
-`demo/` has the full greeter — four kinds of wait, fan-out — with a Rust host, a C-ABI skin, and a Python host that produce byte-identical transcripts. `nix develop` then `demo` runs all three.
+`demo/` has the full greeter — four kinds of wait, fan-out — with a Rust host, a Python host over a C ABI, and a JS host over wasm-bindgen, all producing byte-identical transcripts. `nix develop` then `demo` runs all three.
 
 ## Crates
 
@@ -92,7 +92,7 @@ while let Some(effect) = queue.pop_front() {
 | [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Post`, `ReplyHandle`, `Driver`, `join`, the reply menu, and the `wire` traits             | `no_std` + `alloc` |
 | [`effect_routine_host`](effect_routine_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe`   | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                              | —                  |
-| [`demo/`](demo/)                              | The greeter, a Rust host, the C-ABI skin (the one crate with `unsafe`), and a Python host                       | —                  |
+| [`demo/`](demo/)                              | The greeter; a Rust host; the C-ABI skin (the one crate with `unsafe`) and a Python host over it; a wasm-bindgen skin and a JS host over that | —                  |
 
 ### Three styles, one mechanism
 
@@ -106,7 +106,7 @@ The library does not pick how you write the routine; the mechanism is the same f
 
 ### Not here, on purpose
 
-An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; `pyo3`/`rustler`/`wasm-bindgen` skins. Each is a natural next layer; none is needed to use what is here.
+An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; `pyo3`/`rustler` skins and a reusable wasm-bindgen layer (the demo has a hand-written one). Each is a natural next layer; none is needed to use what is here.
 
 ## Development
 
