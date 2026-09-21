@@ -1,0 +1,65 @@
+name: MSRV
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "flake.nix"
+      - "**/*.rs"
+      - ".github/workflows/msrv.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract MSRV from Cargo.toml
+        run: |
+          MSRV=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
+          test -n "$MSRV" || { echo "no workspace.package.rust-version in Cargo.toml"; exit 1; }
+          echo "MSRV=$MSRV" >> "$GITHUB_ENV"
+
+      - name: Check pins are in lockstep
+        # rust-version (Cargo.toml), channel (rust-toolchain.toml), and
+        # rustVersion (flake.nix) must agree, modulo the patch component.
+        run: |
+          CHANNEL=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+          FLAKE=$(sed -n 's/^ *rustVersion *= *"\([^"]*\)";.*/\1/p' flake.nix)
+          echo "Cargo.toml=$MSRV rust-toolchain.toml=$CHANNEL flake.nix=$FLAKE"
+          for v in "$CHANNEL" "$FLAKE"; do
+            case "$v" in
+              "$MSRV"|"$MSRV".*) ;;
+              *) echo "toolchain pin '$v' does not match MSRV '$MSRV'"; exit 1 ;;
+            esac
+          done
+
+      - name: Setup MSRV toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Bypass rust-toolchain.toml so this job tracks Cargo.toml alone.
+          override: true
+          toolchain: ${{ env.MSRV }}
+          target: wasm32-unknown-unknown, thumbv6m-none-eabi
+          cache: true
+
+      - name: Build (all features)
+        run: cargo +${{ env.MSRV }} build --workspace --all-features
+
+      - name: Check no_std (wasm32)
+        run: cargo +${{ env.MSRV }} check --workspace --no-default-features --target wasm32-unknown-unknown
+
+      - name: Test
+        run: cargo +${{ env.MSRV }} test --workspace --all-features

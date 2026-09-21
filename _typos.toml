@@ -1,0 +1,9 @@
+[files]
+extend-exclude = ["*.lock", "*.svg", ".ignore/", "target/"]
+
+[default]
+check-filename = true
+# Hex digests and base64 blobs
+extend-ignore-re = ["[0-9a-f]{32,}", "[A-Za-z0-9+/]{40,}={0,2}"]
+
+[default.extend-words]

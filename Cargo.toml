@@ -1,0 +1,70 @@
+[workspace]
+resolver = "3"
+members = [
+  "effect_routine",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/inkandswitch/effect-routine"
+authors = [
+  "Brooklyn Zelenka <hello@brooklynzelenka.com>",
+]
+
+[workspace.dependencies]
+# Internal crates
+effect_routine = { version = "0.1.0", path = "effect_routine", default-features = false }
+
+# External crates
+bolero = "0.13"
+thiserror = { version = "2.0", default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+[workspace.lints.rust]
+future_incompatible = { level = "warn", priority = -1 }
+let_underscore = { level = "warn", priority = -1 }
+missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2021_compatibility = { level = "warn", priority = -1 }
+
+rust_2018_idioms = { level = "deny", priority = -1 }
+unreachable_pub = "deny"
+unsafe_code = "forbid"
+unused_extern_crates = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+expect_used = "warn"
+fallible_impl_from = "warn"
+fn_params_excessive_bools = "warn"
+indexing_slicing = "warn"
+missing_const_for_fn = "warn"
+must_use_candidate = "warn"
+panic = "warn"
+todo = "warn"
+unneeded_field_pattern = "warn"
+unwrap_used = "warn"
+wildcard_enum_match_arm = "warn"
+
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+multiple_crate_versions = "allow" # various transitive deps
+pedantic = { level = "deny", priority = -1 }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+strip = "symbols"
+
+[profile.bench]
+codegen-units = 1
+debug = true
+lto = "thin"
+opt-level = 3
+strip = false

@@ -1,0 +1,26 @@
+[package]
+name = "effect_routine"
+version = "0.1.0"
+description = "Effect routines: host-driven async coroutines whose every wait is a typed effect"
+readme = "README.md"
+
+categories = ["asynchronous", "no-std"]
+keywords = ["async", "coroutine", "effects", "no_std", "sans-io"]
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+bolero = { workspace = true }
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true
