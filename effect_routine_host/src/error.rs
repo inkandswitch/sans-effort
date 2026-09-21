@@ -3,8 +3,8 @@
 use crate::code;
 use effect_routine::reply::value::Kind;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 /// Why a call failed. [`code`](Self::code) is its wire form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Error {
     /// Unknown or freed handle.
     #[error("unknown or freed handle")]

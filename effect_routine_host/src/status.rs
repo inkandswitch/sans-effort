@@ -3,8 +3,8 @@
 use crate::code;
 use effect_routine::driver::status::Status as DriveStatus;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// What one `start` or `reply` reports. [`code`](Self::code) is its wire form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
     /// At least one request awaits a reply.
     Awaiting,

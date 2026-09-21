@@ -2,7 +2,7 @@
 //!
 //! The routine is the unchanged `greeter` crate, under the reifying context
 //! from `greeter_wire`. This crate is the boundary:
-//! one JS class, [`Greeter`], whose `start()` runs the routine to its first
+//! one JS class, [`Greeter`](greeter::Greeter), whose `start()` runs the routine to its first
 //! wait and whose `reply*` methods deliver one answer by request id and run
 //! to the next, each returning the batch of effects emitted in between.
 //!
@@ -10,8 +10,8 @@
 //! a `u64` handle and a byte buffer and decodes it with a table it wrote
 //! itself. Here `wasm-bindgen` generates the class, the enum, and the typed
 //! getters, so there is no handle table and no codec — the
-//! [`Machine`] is held directly and its
-//! [`View`]s are converted to JS objects. What does not change
+//! [`Machine`](effect_routine_host::machine::Machine) is held directly and its
+//! [`View`](greeter_wire::View)s are converted to JS objects. What does not change
 //! is the contract: Rust never calls JS; the host owns the loop, the clock,
 //! and all IO; requests carry ids, and the host may reply in any order.
 //!

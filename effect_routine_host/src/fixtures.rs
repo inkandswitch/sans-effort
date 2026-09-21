@@ -82,7 +82,10 @@ impl<F: Future + Unpin> Future for PollOnce<F> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<F> {
-        #[expect(clippy::expect_used, reason = "a test fixture that is polled exactly once by construction")]
+        #[expect(
+            clippy::expect_used,
+            reason = "a test fixture that is polled exactly once by construction"
+        )]
         let mut inner = self.0.take().expect("polled once");
         drop(std::pin::Pin::new(&mut inner).poll(cx));
         std::task::Poll::Ready(inner)

@@ -11,12 +11,6 @@ pub struct Greeter {
     machine: Machine<Full>,
 }
 
-impl core::fmt::Debug for Greeter {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Greeter").finish_non_exhaustive()
-    }
-}
-
 #[wasm_bindgen]
 impl Greeter {
     /// Spawn a greeter. Nothing runs until `start`.
@@ -117,7 +111,7 @@ impl Greeter {
 
     fn present(
         &self,
-        result: Result<Vec<View>, effect_routine_host::Error>,
+        result: Result<Vec<View>, effect_routine_host::error::Error>,
     ) -> Result<Batch, JsError> {
         let views = result.map_err(|e| JsError::new(&e.to_string()))?;
 
@@ -132,6 +126,12 @@ impl Greeter {
 impl Default for Greeter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl core::fmt::Debug for Greeter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Greeter").finish_non_exhaustive()
     }
 }
 
