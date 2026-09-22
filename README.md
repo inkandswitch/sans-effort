@@ -134,6 +134,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 | [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `boundary`, `testing`                                                                        | `no_std` + `alloc` |
 | [`sans-effort-host`](sans-effort-host/) | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                               | `std`              |
 | [`ABI.md`](ABI.md)                      | The contract a foreign host assumes                                                                                                                                                      | —                  |
+| [`design/`](design/)                    | How it works and why: assumptions, the effects stdlib, actors, capabilities, cancellation                                                                                               | —                  |
 | [`demo/`](demo/)                        | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java | —                  |
 
 ### Next
