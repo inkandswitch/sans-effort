@@ -28,7 +28,7 @@ function host(script) {
     lookup: (name) => GREETINGS[name] ?? "Greetings",
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     count: () => ++greeted,
-    write: (line) => console.log(line),
+    writeLine: (line) => console.log(line),
   };
 }
 

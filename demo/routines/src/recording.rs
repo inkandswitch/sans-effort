@@ -100,7 +100,7 @@ impl ReadLine for Recording {
 }
 
 impl WriteLine for Recording {
-    fn write(&self, line: String) {
+    fn write_line(&self, line: String) {
         self.log(Call::Write(line));
     }
 }

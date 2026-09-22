@@ -37,7 +37,7 @@ impl<C: Sleep + WriteLine> Run for Ticker<C> {
         }
 
         self.remaining -= 1;
-        self.ctx.write(format!("tick ({} left)", self.remaining));
+        self.ctx.write_line(format!("tick ({} left)", self.remaining));
         self.ctx.sleep(PAUSE).await;
         ControlFlow::Continue(())
     }

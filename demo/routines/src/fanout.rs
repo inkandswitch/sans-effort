@@ -29,14 +29,14 @@ impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Fanout<C> {
 
 impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Fanout<C> {
     async fn step(&mut self) -> ControlFlow<()> {
-        self.ctx.write(String::from("Who are you?"));
+        self.ctx.write_line(String::from("Who are you?"));
         let name = self.ctx.read_line().await;
 
         let (greeting, n) = join(self.ctx.lookup(name.clone()), self.ctx.count()).await;
-        self.ctx.write(format!("{greeting}, {name}! (#{n})"));
+        self.ctx.write_line(format!("{greeting}, {name}! (#{n})"));
 
         let ((), farewell) = join(self.ctx.sleep(PAUSE), self.ctx.read_line()).await;
-        self.ctx.write(format!("Bye, {farewell}."));
+        self.ctx.write_line(format!("Bye, {farewell}."));
 
         ControlFlow::Break(())
     }

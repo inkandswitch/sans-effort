@@ -154,7 +154,7 @@ impl<E: From<Asked<ReadLine>>> traits::ReadLine for Ctx<E> {
 }
 
 impl<E: From<WriteLine>> traits::WriteLine for Ctx<E> {
-    fn write(&self, line: String) {
+    fn write_line(&self, line: String) {
         self.outbox.notify(WriteLine(line));
     }
 }
@@ -173,7 +173,7 @@ pub enum Full {
     /// Tag 4.
     Sleep(Asked<Sleep>),
     /// Tag 5.
-    Write(WriteLine),
+    WriteLine(WriteLine),
 }
 
 impl From<Asked<Count>> for Full {
@@ -202,7 +202,7 @@ impl From<Asked<Sleep>> for Full {
 
 impl From<WriteLine> for Full {
     fn from(write: WriteLine) -> Self {
-        Full::Write(write)
+        Full::WriteLine(write)
     }
 }
 
@@ -234,7 +234,7 @@ pub enum View {
         id: u64,
     },
     /// Tag 5.
-    Write {
+    WriteLine {
         /// What to show.
         text: String,
     },
@@ -272,7 +272,7 @@ impl HostEffect for Full {
                 },
                 Some(<()>::pending(reply)),
             ),
-            Full::Write(WriteLine(text)) => (View::Write { text }, None),
+            Full::WriteLine(WriteLine(text)) => (View::WriteLine { text }, None),
         }
     }
 }
@@ -298,7 +298,7 @@ impl Encode for View {
                 w.u64(*millis);
                 w.u64(*id);
             }
-            View::Write { text } => {
+            View::WriteLine { text } => {
                 w.u8(5);
                 w.str(text);
             }
@@ -316,7 +316,7 @@ pub enum Quiet {
     /// Tag 4.
     Sleep(Asked<Sleep>),
     /// Tag 5.
-    Write(WriteLine),
+    WriteLine(WriteLine),
 }
 
 impl From<Asked<Sleep>> for Quiet {
@@ -327,7 +327,7 @@ impl From<Asked<Sleep>> for Quiet {
 
 impl From<WriteLine> for Quiet {
     fn from(write: WriteLine) -> Self {
-        Quiet::Write(write)
+        Quiet::WriteLine(write)
     }
 }
 
@@ -337,7 +337,7 @@ impl HostEffect for Quiet {
     fn split(self) -> (View, Option<Pending>) {
         match self {
             Quiet::Sleep(asked) => Full::Sleep(asked).split(),
-            Quiet::Write(write) => Full::Write(write).split(),
+            Quiet::WriteLine(write) => Full::WriteLine(write).split(),
         }
     }
 }
@@ -389,8 +389,8 @@ mod tests {
 
         while let Some(effect) = queue.pop_front() {
             let more = match effect {
-                Full::Write(WriteLine(text)) => {
-                    seen.push(View::Write { text: text.clone() });
+                Full::WriteLine(WriteLine(text)) => {
+                    seen.push(View::WriteLine { text: text.clone() });
                     written.push(text);
                     continue;
                 }
@@ -471,7 +471,7 @@ mod tests {
                 | View::Lookup { id, .. }
                 | View::ReadLine { id }
                 | View::Sleep { id, .. } => Some(*id),
-                View::Write { .. } => None,
+                View::WriteLine { .. } => None,
             })
             .collect();
         assert_eq!(ids, [1, 2, 3, 4, 5]);
@@ -488,7 +488,7 @@ mod tests {
                 let mut written = Vec::new();
 
                 let [
-                    Full::Write(WriteLine(prompt)),
+                    Full::WriteLine(WriteLine(prompt)),
                     Full::ReadLine(Asked { reply: read, .. }),
                 ] = exactly(driver.start())
                 else {
@@ -519,7 +519,7 @@ mod tests {
                     third.extend(driver.reply(lookup, String::from("Hi")));
                 }
                 let [
-                    Full::Write(WriteLine(greeting)),
+                    Full::WriteLine(WriteLine(greeting)),
                     Full::Sleep(Asked { reply: sleep, .. }),
                     Full::ReadLine(Asked { reply: read, .. }),
                 ] = exactly(third)
@@ -538,7 +538,7 @@ mod tests {
                     assert!(fourth.is_empty());
                     fourth.extend(driver.reply(sleep, ()));
                 }
-                let [Full::Write(WriteLine(bye))] = exactly(fourth) else {
+                let [Full::WriteLine(WriteLine(bye))] = exactly(fourth) else {
                     panic!("last batch: bye");
                 };
                 written.push(bye);
@@ -557,7 +557,7 @@ mod tests {
 
         while let Some(effect) = queue.pop_front() {
             match effect {
-                Quiet::Write(WriteLine(text)) => written.push(text),
+                Quiet::WriteLine(WriteLine(text)) => written.push(text),
                 Quiet::Sleep(Asked { request, reply }) => {
                     assert_eq!(request, Sleep(PAUSE));
                     queue.extend(driver.reply(reply, ()));

@@ -25,7 +25,7 @@
 //!   lookup:   (name) => ({ alice: "Hello", bob: "Hi" })[name] ?? "Greetings",
 //!   sleep:    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 //!   count:    () => ++greeted,
-//!   write:    (line) => console.log(line),
+//!   writeLine: (line) => console.log(line),
 //! }).run();
 //! ```
 //!
@@ -48,7 +48,7 @@
 //!   lookup:   async (name) => (await fetch(`/greeting/`)).text(),
 //!   sleep:    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 //!   count:    () => Number(localStorage.greeted = (Number(localStorage.greeted) || 0) + 1),
-//!   write:    (line) => output.append(line, document.createElement("br")),
+//!   writeLine: (line) => output.append(line, document.createElement("br")),
 //! };
 //!
 //! await new Greeter(host).run();

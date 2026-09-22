@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
-    /// An object with `readLine`, `lookup`, `sleep`, `count`, and `write`.
+    /// An object with `readLine`, `lookup`, `sleep`, `count`, and `writeLine`.
     /// `Host` to JS; the `Js` prefix is the Rust side's, as with the classes.
     #[wasm_bindgen(js_name = Host)]
     pub type JsHost;
@@ -32,6 +32,6 @@ extern "C" {
     pub fn count(this: &JsHost) -> JsValue;
 
     /// Show `line`.
-    #[wasm_bindgen(method)]
-    pub fn write(this: &JsHost, line: &str);
+    #[wasm_bindgen(method, js_name = writeLine)]
+    pub fn write_line(this: &JsHost, line: &str);
 }

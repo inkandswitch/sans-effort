@@ -24,20 +24,20 @@ impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Greeter<C> {
 
 impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
-        self.ctx.write(String::from("Who are you?"));
+        self.ctx.write_line(String::from("Who are you?"));
         let name = self.ctx.read_line().await;
 
         if name == "quit" {
-            self.ctx.write(String::from("Bye."));
+            self.ctx.write_line(String::from("Bye."));
             return ControlFlow::Break(());
         }
 
         let greeting = self.ctx.lookup(name.clone()).await;
         self.ctx.sleep(PAUSE).await;
-        self.ctx.write(format!("{greeting}, {name}!"));
+        self.ctx.write_line(format!("{greeting}, {name}!"));
 
         let n = self.ctx.count().await;
-        self.ctx.write(format!("(greeted {n} so far)"));
+        self.ctx.write_line(format!("(greeted {n} so far)"));
 
         ControlFlow::Continue(())
     }

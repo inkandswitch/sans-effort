@@ -16,7 +16,7 @@ impl Sleep for Local {
 }
 
 impl WriteLine for Local {
-    fn write(&self, _: String) {}
+    fn write_line(&self, _: String) {}
 }
 
 fn spawn<F: core::future::Future + Send + 'static>(_: F) {}

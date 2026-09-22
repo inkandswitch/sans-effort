@@ -68,8 +68,8 @@ impl ReadLine for JsCtx {
 }
 
 impl WriteLine for JsCtx {
-    fn write(&self, line: String) {
-        self.host.write(&line);
+    fn write_line(&self, line: String) {
+        self.host.write_line(&line);
     }
 }
 

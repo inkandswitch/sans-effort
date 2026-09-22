@@ -47,5 +47,5 @@ pub trait ReadLine {
 /// Write a line. Fire-and-forget, so not `async`.
 pub trait WriteLine {
     /// Show `line`.
-    fn write(&self, line: String);
+    fn write_line(&self, line: String);
 }

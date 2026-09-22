@@ -94,10 +94,10 @@ impl<R: AsyncBufRead + Send + Unpin> ReadLine for TokioCtx<R> {
 }
 
 impl<R: AsyncBufRead + Send + Unpin> WriteLine for TokioCtx<R> {
-    /// `WriteLine::write` is fire-and-forget by design, so a stdout error has
+    /// `WriteLine::write_line` is fire-and-forget by design, so a stdout error has
     /// nowhere to go. A context must not end the process on the routine's
     /// behalf; it reports once and carries on.
-    fn write(&self, line: String) {
+    fn write_line(&self, line: String) {
         if self.stdout_failed.load(Ordering::Relaxed) {
             return;
         }

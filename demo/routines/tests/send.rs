@@ -21,7 +21,7 @@ impl Sleep for Local {
 }
 
 impl WriteLine for Local {
-    fn write(&self, _: String) {
+    fn write_line(&self, _: String) {
         self.0.set(self.0.get() + 1);
     }
 }
