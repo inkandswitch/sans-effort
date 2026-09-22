@@ -34,7 +34,7 @@ use sans_effort::{driver::{Driver, outbox::Outbox}, request::{Asked, Request}, r
 
 trait Console {
     async fn read_line(&self) -> String;
-    fn write(&self, line: String);
+    fn write_line(&self, line: String);
 }
 
 struct Greeter<C: Console>(C);
@@ -42,32 +42,32 @@ struct Greeter<C: Console>(C);
 impl<C: Console> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         let name = self.0.read_line().await;
-        self.0.write(format!("Hello, {name}!"));
+        self.0.write_line(format!("Hello, {name}!"));
         ControlFlow::Break(())
     }
 }
 
 // A reifying context: each call becomes a request the host answers by id.
 struct ReadLine;
-struct Write(String);
+struct WriteLine(String);
 impl Request for ReadLine { type Reply = String; }
 
 struct Ctx<E>(Outbox<E>);
 
-impl<E: From<Asked<ReadLine>> + From<Write>> Console for Ctx<E> {
+impl<E: From<Asked<ReadLine>> + From<WriteLine>> Console for Ctx<E> {
     async fn read_line(&self) -> String { self.0.request(ReadLine).await }
-    fn write(&self, line: String) { self.0.notify(Write(line)); }
+    fn write_line(&self, line: String) { self.0.notify(WriteLine(line)); }
 }
 
-enum Effect { ReadLine(Asked<ReadLine>), Write(Write) }
+enum Effect { ReadLine(Asked<ReadLine>), WriteLine(WriteLine) }
 impl From<Asked<ReadLine>> for Effect { fn from(a: Asked<ReadLine>) -> Self { Effect::ReadLine(a) } }
-impl From<Write> for Effect { fn from(w: Write) -> Self { Effect::Write(w) } }
+impl From<WriteLine> for Effect { fn from(w: WriteLine) -> Self { Effect::WriteLine(w) } }
 
 let mut driver = Driver::<Effect>::new(|outbox| Greeter(Ctx(outbox)).run());
 for effect in driver.start() {
     if let Effect::ReadLine(Asked { reply, .. }) = effect {
         for effect in driver.reply(reply, "bob".into()) {
-            if let Effect::Write(Write(text)) = effect {
+            if let Effect::WriteLine(WriteLine(text)) = effect {
                 assert_eq!(text, "Hello, bob!");
             }
         }

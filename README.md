@@ -94,8 +94,8 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
     │                                        │
     │  start()                               │
     │───────────────────────────────────────▶│  runs until it needs input:
-    │                                        │  tells Write, asks ReadLine·1
-    │  [Write, ReadLine·1]   AWAITING        │
+    │                                        │  tells WriteLine, asks ReadLine·1
+    │  [WriteLine, ReadLine·1]  AWAITING     │
     │◀───────────────────────────────────────│
     │                                        │
     │  reply(1, "bob")                       │
@@ -104,8 +104,8 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
     │◀───────────────────────────────────────│
     │                                        │
     │  reply(2, "Hello")                     │
-    │───────────────────────────────────────▶│  resumes; tells Write, returns
-    │  [Write]               COMPLETE        │
+    │───────────────────────────────────────▶│  resumes; tells WriteLine, returns
+    │  [WriteLine]           COMPLETE        │
     │◀───────────────────────────────────────│
     │                                        ┴
 ```

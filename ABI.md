@@ -36,7 +36,7 @@ Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays ou
 And therefore lives with each routine:
 
 - _The tag table_ — which `u8` means which effect, what fields follow it, and which reply kind answers it. The wire crate's `Encode` impl is the source of truth; `demo/boundary` documents its five tags on the `View` enum.
-- _The world_ — what performing an effect means: where `Write` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
+- _The world_ — what performing an effect means: where `WriteLine` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
 - _The host loop_ — the host's own; `demo/python/main.py` and `demo/java/Main.java` are one each, in ~40 lines.
 
 ## A conversation
@@ -45,13 +45,13 @@ The greeter in `demo/`, driven from start to `quit`:
 
 ```text
 host → start(h)
-     ← 05 "Who are you?" · 03 id=1               AWAITING     Write, ReadLine·1
+     ← 05 "Who are you?" · 03 id=1               AWAITING     WriteLine, ReadLine·1
 host → reply(h, [01 id=1 "alice"])                       str
      ← 02 "alice" id=2                           AWAITING     Lookup·2
 host → reply(h, [01 id=2 "Hello"])                       str
      ← 04 millis=50 id=3                         AWAITING     Sleep·3
 host → reply(h, [03 id=3])                               unit
-     ← 05 "Hello, alice!" · 01 id=4              AWAITING     Write, Count·4
+     ← 05 "Hello, alice!" · 01 id=4              AWAITING     WriteLine, Count·4
 host → reply(h, [02 id=4 1])                             u64
      ← 05 "(greeted 1 so far)" · 05 "Who are you?" · 03 id=5
                                                  AWAITING

@@ -11,8 +11,8 @@
 //!     │                                        │
 //!     │  start()                               │
 //!     │───────────────────────────────────────▶│  runs until it needs input:
-//!     │                                        │  tells Write, asks ReadLine·1
-//!     │  [Write, ReadLine·1]   AWAITING        │
+//!     │                                        │  tells WriteLine, asks ReadLine·1
+//!     │  [WriteLine, ReadLine·1]  AWAITING     │
 //!     │◀───────────────────────────────────────│
 //!     │                                        │
 //!     │  reply(1, "bob")                       │
@@ -21,8 +21,8 @@
 //!     │◀───────────────────────────────────────│
 //!     │                                        │
 //!     │  reply(2, "Hello")                     │
-//!     │───────────────────────────────────────▶│  resumes; tells Write, returns
-//!     │  [Write]               COMPLETE        │
+//!     │───────────────────────────────────────▶│  resumes; tells WriteLine, returns
+//!     │  [WriteLine]           COMPLETE        │
 //!     │◀───────────────────────────────────────│
 //!     │                                        ┴
 //! ```
@@ -84,7 +84,7 @@
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;
-//!     fn write(&self, line: String);
+//!     fn write_line(&self, line: String);
 //! }
 //!
 //! struct Greeter<C: Console> {
@@ -93,9 +93,9 @@
 //!
 //! impl<C: Console> Run for Greeter<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
-//!         self.ctx.write("Who are you?".into());
+//!         self.ctx.write_line("Who are you?".into());
 //!         let name = self.ctx.read_line().await;
-//!         self.ctx.write(format!("Hello, {name}!"));
+//!         self.ctx.write_line(format!("Hello, {name}!"));
 //!         ControlFlow::Break(())
 //!     }
 //! }
@@ -111,13 +111,13 @@
 //! ```
 //! # use core::ops::ControlFlow;
 //! # use sans_effort::run::Run;
-//! # trait Console { async fn read_line(&self) -> String; fn write(&self, line: String); }
+//! # trait Console { async fn read_line(&self) -> String; fn write_line(&self, line: String); }
 //! # struct Greeter<C: Console> { ctx: C }
 //! # impl<C: Console> Run for Greeter<C> {
 //! #     async fn step(&mut self) -> ControlFlow<()> {
-//! #         self.ctx.write("Who are you?".into());
+//! #         self.ctx.write_line("Who are you?".into());
 //! #         let name = self.ctx.read_line().await;
-//! #         self.ctx.write(format!("Hello, {name}!"));
+//! #         self.ctx.write_line(format!("Hello, {name}!"));
 //! #         ControlFlow::Break(())
 //! #     }
 //! # }
@@ -125,7 +125,7 @@
 //!
 //! // The host vocabulary: one struct per wait, one per message.
 //! struct ReadLine;
-//! struct Write(String);
+//! struct WriteLine(String);
 //!
 //! impl Request for ReadLine {
 //!     type Reply = String;
@@ -136,28 +136,28 @@
 //!     outbox: Outbox<E>,
 //! }
 //!
-//! impl<E: From<Asked<ReadLine>> + From<Write>> Console for Ctx<E> {
+//! impl<E: From<Asked<ReadLine>> + From<WriteLine>> Console for Ctx<E> {
 //!     async fn read_line(&self) -> String {
 //!         self.outbox.request(ReadLine).await
 //!     }
 //!
-//!     fn write(&self, line: String) {
-//!         self.outbox.notify(Write(line));
+//!     fn write_line(&self, line: String) {
+//!         self.outbox.notify(WriteLine(line));
 //!     }
 //! }
 //!
 //! // A host's vocabulary, and the two `From` impls that admit it.
 //! enum Effect {
 //!     ReadLine(Asked<ReadLine>),
-//!     Write(Write),
+//!     WriteLine(WriteLine),
 //! }
 //!
 //! impl From<Asked<ReadLine>> for Effect {
 //!     fn from(asked: Asked<ReadLine>) -> Self { Effect::ReadLine(asked) }
 //! }
 //!
-//! impl From<Write> for Effect {
-//!     fn from(write: Write) -> Self { Effect::Write(write) }
+//! impl From<WriteLine> for Effect {
+//!     fn from(write: WriteLine) -> Self { Effect::WriteLine(write) }
 //! }
 //!
 //! // Driving it from Rust: match on the effects, reply through the handles.
@@ -170,7 +170,7 @@
 //!
 //! while let Some(effect) = queue.pop_front() {
 //!     match effect {
-//!         Effect::Write(Write(text)) => written.push(text),
+//!         Effect::WriteLine(WriteLine(text)) => written.push(text),
 //!         Effect::ReadLine(Asked { reply, .. }) => {
 //!             queue.extend(driver.reply(reply, "bob".into()));
 //!         }

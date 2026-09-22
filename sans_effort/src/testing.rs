@@ -11,7 +11,7 @@
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;
-//!     fn write(&self, line: String);
+//!     fn write_line(&self, line: String);
 //! }
 //!
 //! struct Greeter<C: Console>(C);
@@ -19,7 +19,7 @@
 //! impl<C: Console> Run for Greeter<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         let name = self.0.read_line().await;
-//!         self.0.write(format!("Hello, {name}!"));
+//!         self.0.write_line(format!("Hello, {name}!"));
 //!         ControlFlow::Break(())
 //!     }
 //! }
@@ -29,7 +29,7 @@
 //!
 //! impl Console for &Mock {
 //!     async fn read_line(&self) -> String { "bob".into() }
-//!     fn write(&self, line: String) { self.0.borrow_mut().push(line); }
+//!     fn write_line(&self, line: String) { self.0.borrow_mut().push(line); }
 //! }
 //!
 //! let mock = Mock(RefCell::new(Vec::new()));
