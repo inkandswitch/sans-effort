@@ -14,7 +14,8 @@
 //!   [`reply`](machine::Machine::reply) return `Vec<E::View>`, the effects with their
 //!   handles replaced by ids. It owns the outstanding-request table and the
 //!   kind check. Bindings that speak the host language's own types —
-//!   wasm-bindgen, `PyO3`, Rustler — hold one directly.
+//!   wasm-bindgen, `PyO3`, Rustler — hold one directly, and reply through
+//!   its concrete `reply_str`, `reply_u64`, `reply_unit`, or `reply_bytes`.
 //! - [`encoded::Encoded`] is the _byte_ layer over it, with the same two
 //!   calls: decode one reply record, call the typed method, encode the views.
 //!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` binding

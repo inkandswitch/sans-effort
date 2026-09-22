@@ -2,11 +2,11 @@
 //! [`Encoded`](crate::encoded::Encoded).
 
 use crate::{error::Error, status::Status};
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use core::{future::Future, marker::PhantomData};
 use sans_effort::{
     boundary::{host_effect::HostEffect, pending::Pending},
-    driver::{Driver, outbox::Outbox},
+    driver::{Driver, outbox::Outbox, step::Step},
     reply::{Reply, handle::ReplyHandle},
 };
 
@@ -26,6 +26,10 @@ pub struct Machine<E> {
     /// more than looking at two entries. Wide fan-out would want a sorted
     /// `Vec` with binary search.
     pending: Vec<(u64, Pending)>,
+    /// The highest request id shown to the host. Ids are issued per driver,
+    /// increasing, so an unmatched id at or below this was issued and is
+    /// stale; one above it never existed.
+    highest_shown: u64,
     started: bool,
     _effect: PhantomData<E>,
 }
@@ -37,6 +41,7 @@ impl<E: HostEffect> Machine<E> {
         Self {
             driver,
             pending: Vec::new(),
+            highest_shown: 0,
             started: false,
             _effect: PhantomData,
         }
@@ -63,12 +68,12 @@ impl<E: HostEffect> Machine<E> {
     ///
     /// [`Error::Finished`] if the routine has completed;
     /// [`Error::BadInput`] if already started.
-    pub fn start(&mut self) -> Result<Vec<E::View>, Error> {
+    pub fn start(&mut self) -> Result<Step<E::View>, Error> {
         self.start_shown().map(views)
     }
 
     /// As [`start`](Self::start), marking which effects await a reply.
-    pub(crate) fn start_shown(&mut self) -> Result<Vec<Shown<E::View>>, Error> {
+    pub(crate) fn start_shown(&mut self) -> Result<Step<Shown<E::View>>, Error> {
         if self.driver.is_finished() {
             return Err(Error::Finished);
         }
@@ -94,7 +99,7 @@ impl<E: HostEffect> Machine<E> {
     /// [`Error::Finished`] if the routine has completed; [`Error::BadInput`]
     /// if nothing awaits `id`; [`Error::WrongKind`] if `id` awaits another
     /// kind — the handle is kept, so the host may retry with the right one.
-    pub fn reply<T: Reply>(&mut self, id: u64, value: T) -> Result<Vec<E::View>, Error> {
+    pub fn reply<T: Reply>(&mut self, id: u64, value: T) -> Result<Step<E::View>, Error> {
         self.reply_shown(id, value).map(views)
     }
 
@@ -103,7 +108,7 @@ impl<E: HostEffect> Machine<E> {
         &mut self,
         id: u64,
         value: T,
-    ) -> Result<Vec<Shown<E::View>>, Error> {
+    ) -> Result<Step<Shown<E::View>>, Error> {
         match T::from_pending(self.take(id)?) {
             Ok(reply) => Ok(self.deliver(reply, value)),
             Err(pending) => {
@@ -116,6 +121,46 @@ impl<E: HostEffect> Machine<E> {
                 })
             }
         }
+    }
+
+    /// [`reply`](Self::reply) with a `str`, for bindings that cannot call a
+    /// generic method (`PyO3`, Rustler).
+    ///
+    /// # Errors
+    ///
+    /// As [`reply`](Self::reply).
+    pub fn reply_str(&mut self, id: u64, value: String) -> Result<Step<E::View>, Error> {
+        self.reply(id, value)
+    }
+
+    /// [`reply`](Self::reply) with a `u64`, for bindings that cannot call a
+    /// generic method.
+    ///
+    /// # Errors
+    ///
+    /// As [`reply`](Self::reply).
+    pub fn reply_u64(&mut self, id: u64, value: u64) -> Result<Step<E::View>, Error> {
+        self.reply(id, value)
+    }
+
+    /// [`reply`](Self::reply) with `unit`, for bindings that cannot call a
+    /// generic method.
+    ///
+    /// # Errors
+    ///
+    /// As [`reply`](Self::reply).
+    pub fn reply_unit(&mut self, id: u64) -> Result<Step<E::View>, Error> {
+        self.reply(id, ())
+    }
+
+    /// [`reply`](Self::reply) with `bytes`, for bindings that cannot call a
+    /// generic method.
+    ///
+    /// # Errors
+    ///
+    /// As [`reply`](Self::reply).
+    pub fn reply_bytes(&mut self, id: u64, value: Vec<u8>) -> Result<Step<E::View>, Error> {
+        self.reply(id, value)
     }
 
     /// What the last poll reported.
@@ -133,13 +178,15 @@ impl<E: HostEffect> Machine<E> {
     /// Split a batch into what the host sees and the handles we keep — and
     /// forget the handles of requests the routine dropped unanswered, so this
     /// table tracks the driver's rather than growing past it.
-    fn show(&mut self, effects: Vec<E>) -> Vec<Shown<E::View>> {
+    fn show(&mut self, step: Step<E>) -> Step<Shown<E::View>> {
+        let (effects, closed) = step.into_parts();
         let shown = effects
             .into_iter()
             .map(|effect| {
                 let (view, pending) = effect.split();
                 let awaits = pending.is_some();
                 if let Some(p) = pending {
+                    self.highest_shown = self.highest_shown.max(p.id());
                     self.pending.push((p.id(), p));
                 }
                 Shown { view, awaits }
@@ -148,11 +195,11 @@ impl<E: HostEffect> Machine<E> {
 
         // After inserting: a request polled and dropped in the same step is
         // both in this batch and already closed.
-        for id in self.driver.closed() {
-            self.pending.retain(|(i, _)| *i != id);
+        for id in &closed {
+            self.pending.retain(|(i, _)| i != id);
         }
 
-        shown
+        Step::new(shown, closed)
     }
 
     fn take(&mut self, id: u64) -> Result<Pending, Error> {
@@ -160,15 +207,14 @@ impl<E: HostEffect> Machine<E> {
             return Err(Error::Finished);
         }
 
-        let at = self
-            .pending
-            .iter()
-            .position(|(i, _)| *i == id)
-            .ok_or(Error::BadInput)?;
-        Ok(self.pending.swap_remove(at).1)
+        match self.pending.iter().position(|(i, _)| *i == id) {
+            Some(at) => Ok(self.pending.swap_remove(at).1),
+            None if id != 0 && id <= self.highest_shown => Err(Error::Stale { id }),
+            None => Err(Error::BadInput),
+        }
     }
 
-    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<Shown<E::View>> {
+    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<Shown<E::View>> {
         let effects = self.driver.reply(reply, value);
         self.show(effects)
     }
@@ -190,8 +236,8 @@ pub(crate) struct Shown<V> {
     pub(crate) awaits: bool,
 }
 
-fn views<V>(shown: Vec<Shown<V>>) -> Vec<V> {
-    shown.into_iter().map(|s| s.view).collect()
+fn views<V>(step: Step<Shown<V>>) -> Step<V> {
+    step.map(|s| s.view)
 }
 
 #[cfg(test)]
@@ -199,13 +245,13 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
-    use crate::fixtures::{Echo, Impatient, View};
+    use crate::fixtures::{Both, Echo, Holds, Impatient, View};
     use sans_effort::{reply::kind::Kind, run::Run};
 
     #[test]
     fn typed_layer() {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
-        assert_eq!(m.start().expect("start"), [View::Ask(1)]);
+        assert_eq!(m.start().expect("start").effects(), [View::Ask(1)]);
         assert_eq!(m.start(), Err(Error::BadInput), "start twice");
         assert_eq!(
             m.reply(1, 7u64),
@@ -217,7 +263,7 @@ mod tests {
             "wrong kind: named, and the handle kept"
         );
         assert_eq!(
-            m.reply(1, String::from("hi")).expect("reply"),
+            m.reply(1, String::from("hi")).expect("reply").effects(),
             [View::Say("hi".into())]
         );
         assert_eq!(m.status(), Status::Complete);
@@ -227,18 +273,49 @@ mod tests {
     #[test]
     fn dropped_requests_are_forgotten() {
         let mut m = Machine::from_routine(|outbox| Impatient(outbox).run());
-        let views = m.start().expect("start");
-        assert_eq!(views, [View::Ask(1), View::Ask(2)], "abandoned, then live");
+        let step = m.start().expect("start");
+        assert_eq!(
+            step.effects(),
+            [View::Ask(1), View::Ask(2)],
+            "abandoned, then live"
+        );
+        assert_eq!(step.closed(), [1], "the abandoned one is reported closed");
         assert_eq!(
             m.pending.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
             [2],
             "the abandoned request's handle was dropped with the request"
         );
-        assert_eq!(m.reply(1, String::from("late")), Err(Error::BadInput));
         assert_eq!(
-            m.reply(2, String::from("kept")).expect("reply"),
+            m.reply(1, String::from("late")),
+            Err(Error::Stale { id: 1 }),
+            "a late reply to an abandoned id is stale, not a host bug"
+        );
+        assert_eq!(
+            m.reply(99, String::from("?")),
+            Err(Error::BadInput),
+            "an id never issued is a host bug"
+        );
+        assert_eq!(
+            m.reply(2, String::from("kept")).expect("reply").effects(),
             [View::Say("kept".into())]
         );
         assert_eq!(m.status(), Status::Complete);
+    }
+
+    #[test]
+    fn a_second_reply_to_an_answered_id_is_stale() {
+        let mut m = Machine::from_routine(|outbox| Both(outbox).run());
+        drop(m.start().expect("start"));
+        drop(m.reply(1, String::from("a")).expect("reply 1"));
+        assert_eq!(m.reply(1, String::from("a")), Err(Error::Stale { id: 1 }));
+    }
+
+    #[test]
+    fn completion_closes_what_the_routine_still_held() {
+        let mut m = Machine::from_routine(|outbox| Holds(outbox).run());
+        let step = m.start().expect("start");
+        assert_eq!(m.status(), Status::Complete);
+        assert_eq!(step.effects(), [View::Ask(1), View::Say("done".into())]);
+        assert_eq!(step.closed(), [1], "held until return, then closed");
     }
 }

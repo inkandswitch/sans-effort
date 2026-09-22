@@ -106,7 +106,17 @@ The simple cases cost nothing: core implements `Encode` and `Decode` for `String
 
 The capabilities style is the _tagless-final_ style with the representation fixed to `impl Future`. The traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one — it recovers the initial, tagged encoding (the vocabulary enum). A smaller vocabulary is a smaller algebra. This is why the effects style (a routine emitting a tagged enum) and the capabilities style share one mechanism: initial and final encodings convert into each other.
 
+## Fallible where the world can fail
+
+A trait returns `Result` exactly when its effect can fail for reasons outside the routine. `read_line` can: input ends, or the stream breaks. Today the demo fakes end of input by answering `"quit"`, which is a protocol hidden in a string. `sleep` cannot fail in any way a routine could act on, so it stays infallible.
+
+```rust
+pub trait ReadLine { async fn read_line(&self) -> Result<String, ReadLineError>; }
+pub trait Sleep    { async fn sleep(&self, d: Duration); }
+```
+
+Each module has its own small error enum, marked `#[non_exhaustive]` so a new failure is not a breaking change. On the wire a fallible reply crosses as `bytes`. Core fixes one encoding for `Result<T, E>` and `Option<T>` — a `0` or `1` tag, then the value — so every host writes them the same way.
+
 ## Open questions
 
-- Should stdlib traits return `Result` (`read_line() -> Result<String, ConsoleError>`)? Changing this after release is exactly the churn the crate split absorbs, but it is still cheaper to decide first.
 - Which modules beyond `time`, `console`, and `actor`: random numbers? logging? A file system?

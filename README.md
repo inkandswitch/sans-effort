@@ -124,14 +124,14 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 
 - _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `start`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
 - _Typed replies._ Every awaiting effect carries a `ReplyHandle<T>`: the typed, single-use capability to answer it. A Rust host replies through the handle, infallibly; a foreign host replies by id, and the host layer checks the kind.
-- _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits and a host may reply in any order.
+- _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits — or `select` the first of them — and a host may reply in any order. A request the routine abandons is reported to the host, which may stop the work.
 - _`no_std` core._ The mechanism, the routine, and its boundary crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
 
 ## Crates
 
 | Crate                                   | Purpose                                                                                                                                                                                  | Target             |
 |-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
-| [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `boundary`, `testing`                                                                        | `no_std` + `alloc` |
+| [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                        | `no_std` + `alloc` |
 | [`sans-effort-host`](sans-effort-host/) | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                               | `std`              |
 | [`ABI.md`](ABI.md)                      | The contract a foreign host assumes                                                                                                                                                      | —                  |
 | [`design/`](design/)                    | How it works and why: assumptions, the effects stdlib, actors, capabilities, cancellation                                                                                               | —                  |

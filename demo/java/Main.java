@@ -2,8 +2,17 @@
 ///
 /// Java, like Python, has no executor that can poll a Rust future, so it takes
 /// the host's role: `start`, then `reply` by request id until `COMPLETE`. This
-/// file is `ABI.md` as ~150 lines of Java: downcall handles for the five
-/// exports, a little-endian codec, the greeter's tag table, and the loop.
+/// file is `ABI.md` as ~200 lines of Java: downcall handles for the exports, a
+/// little-endian codec, the greeter's tag table, and the loop.
+///
+/// Where the Python host performs each effect before replying, this one is
+/// shaped like a production host: every ask runs on its own virtual thread,
+/// completions come back through a queue, and one driver thread makes every
+/// call into the library (the ABI allows one caller per handle at a time).
+/// Replies therefore arrive in whatever order the effects finish, and a
+/// closed frame cancels the effect's thread. The transcript must still match
+/// every other host's byte for byte.
+///
 /// Compare `../js/main.mjs`, where the event loop is an executor and the same
 /// routine runs natively.
 ///
@@ -17,15 +26,18 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Main {
     // ---- ABI.md, as code --------------------------------------------------
 
     static final byte ABI_VERSION = 0;
-    static final int FRAME_TELL = 1, FRAME_ASK = 2;
+    static final int FRAME_TELL = 1, FRAME_ASK = 2, FRAME_CLOSED = 3;
     static final int AWAITING = 0, COMPLETE = 1, STALLED = 2;
     static final Map<Integer, String> ERRORS = Map.of(
-        -1, "BUSY", -2, "FINISHED", -3, "WRONG_KIND", -4, "PANICKED", -5, "BAD_HANDLE", -6, "BAD_INPUT");
+        -1, "BUSY", -2, "FINISHED", -3, "WRONG_KIND", -4, "PANICKED", -5, "BAD_HANDLE", -6, "BAD_INPUT",
+        -7, "MALFORMED", -8, "STALE");
 
     /** Reply records: kind, then request id, then payload. */
     static byte[] replyStr(long id, String s) {
@@ -152,6 +164,10 @@ public class Main {
         List<Frame> fs = frames(data);
         for (int n = 0; n < fs.size(); n++) {
             Frame f = fs.get(n);
+            if (f.kind() == FRAME_CLOSED) {
+                out.add(new Effect("closed", new Reader(f.payload()).u64(), null, 0, null));
+                continue;
+            }
             if (f.kind() != FRAME_TELL && f.kind() != FRAME_ASK) continue; // reserved: safe to skip
             Reader r = new Reader(f.payload());
             int tag = r.u8();
@@ -178,23 +194,62 @@ public class Main {
 
     static final Map<String, String> GREETINGS = Map.of("alice", "Hello", "bob", "Hi", "carol", "Hey");
 
-    static void drive(Library lib, long handle, List<String> script) throws Throwable {
-        Iterator<String> lines = script.iterator();
-        long greeted = 0;
-        Deque<Effect> queue = new ArrayDeque<>(decode(lib.start(handle)));
+    /** A finished effect: the id it answers and the reply record for it. */
+    record Completion(long id, byte[] record) {}
 
-        while (!queue.isEmpty()) {
-            Effect e = queue.poll();
-            byte[] record;
-            switch (e.kind()) {
-                case "write_line" -> { System.out.println(e.text()); continue; }
-                case "read_line" -> record = replyStr(e.id(), lines.hasNext() ? lines.next() : "quit");
-                case "lookup" -> record = replyStr(e.id(), GREETINGS.getOrDefault(e.name(), "Greetings"));
-                case "sleep" -> { Thread.sleep(e.millis()); record = replyUnit(e.id()); }
-                case "count" -> record = replyU64(e.id(), ++greeted);
-                default -> throw new IllegalStateException(e.kind());
+    /** Performs asks concurrently; the driver thread alone talks to the library. */
+    static final class Host implements AutoCloseable {
+        final Iterator<String> lines;
+        final AtomicLong greeted = new AtomicLong();
+        final ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        final BlockingQueue<Completion> done = new LinkedBlockingQueue<>();
+        final Map<Long, Future<?>> inFlight = new HashMap<>();
+
+        Host(List<String> script) { lines = script.iterator(); }
+
+        /** Tells run here, in order; each ask starts on its own thread; closed ids are cancelled. */
+        void dispatch(List<Effect> effects) {
+            for (Effect e : effects) {
+                switch (e.kind()) {
+                    case "write_line" -> System.out.println(e.text());
+                    case "closed" -> {
+                        Future<?> work = inFlight.remove(e.id());
+                        if (work != null) work.cancel(true);
+                    }
+                    default -> inFlight.put(e.id(), pool.submit(() -> {
+                        done.put(new Completion(e.id(), perform(e)));
+                        return null;
+                    }));
+                }
             }
-            queue.addAll(decode(lib.reply(handle, record)));
+        }
+
+        byte[] perform(Effect e) throws InterruptedException {
+            return switch (e.kind()) {
+                case "read_line" -> {
+                    synchronized (lines) { yield replyStr(e.id(), lines.hasNext() ? lines.next() : "quit"); }
+                }
+                case "lookup" -> replyStr(e.id(), GREETINGS.getOrDefault(e.name(), "Greetings"));
+                case "sleep" -> { Thread.sleep(e.millis()); yield replyUnit(e.id()); }
+                case "count" -> replyU64(e.id(), greeted.incrementAndGet());
+                default -> throw new IllegalStateException(e.kind());
+            };
+        }
+
+        @Override
+        public void close() { pool.close(); }
+    }
+
+    static void drive(Library lib, long handle, List<String> script) throws Throwable {
+        try (Host host = new Host(script)) {
+            host.dispatch(decode(lib.start(handle)));
+
+            while (!host.inFlight.isEmpty()) {
+                Completion c = host.done.take();
+                // Closed while in flight: the routine no longer wants it, and a reply would be STALE.
+                if (host.inFlight.remove(c.id()) == null) continue;
+                host.dispatch(decode(lib.reply(handle, c.record())));
+            }
         }
 
         if (lib.status != COMPLETE) throw new IllegalStateException("routine ended with status " + lib.status);

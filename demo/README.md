@@ -19,8 +19,11 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
 
   cdylib/    the C-ABI binding over sans-effort-host: abi_version/new/start/reply/
              free/buf_free, three unsafe blocks, no mechanism. The only crate allowing unsafe.
-  python/    a ctypes host that speaks ABI.md with a byte buffer and no library.
+  python/    a ctypes host that speaks ABI.md with a byte buffer and no library;
+             the smallest loop: perform each effect, then reply.
   java/      a Panama (java.lang.foreign) host: the same ABI, downcalls only, no JNI.
+             Shaped like a production host: asks run on virtual threads, replies
+             arrive as effects finish, closed frames cancel, one driver thread calls in.
 
   wasm/      the second native path. JsCtx implements the traits by calling a JS
              object the caller supplies, awaiting Promises; the event loop is the

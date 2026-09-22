@@ -5,7 +5,8 @@
 //! _steppable_ thing with sans-io's host API: [`start`](Driver::start) returns
 //! the effects recorded before the first wait; each
 //! [`reply`](Driver::reply) delivers one answer and returns the effects
-//! recorded before the next.
+//! recorded before the next. Both return a [`Step`], which also carries the
+//! ids of any requests the routine abandoned.
 //!
 //! An [`Outbox`] serves every wait the same way: mint a [`ReplyHandle`], build
 //! the effect around it, return an [`Awaiting`](awaiting::Awaiting) future that _holds_ the
@@ -15,7 +16,8 @@
 //! The host replies through the handle, which puts the value in the slot; on
 //! the next poll the future finds it and the routine continues. A future
 //! dropped before its first poll emitted nothing; one dropped after closes its
-//! slot, and a late reply is discarded.
+//! slot, its id is reported in the step's [`closed`](Step::closed), and a late
+//! reply is discarded.
 //!
 //! ```text
 //!   routine                         outbox                              host
@@ -50,13 +52,14 @@
 pub mod awaiting;
 pub mod outbox;
 pub mod status;
+pub mod step;
 
 mod mail;
 mod sync;
 
-use self::{outbox::Outbox, status::Status};
+use self::{outbox::Outbox, status::Status, step::Step};
 use crate::reply::{Reply, handle::ReplyHandle};
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 use core::{
     future::Future,
     pin::Pin,
@@ -98,8 +101,8 @@ impl<E> Driver<E> {
     }
 
     /// Begin: poll once and return the effects recorded before the first
-    /// wait. Valid once; a second call is a no-op returning nothing.
-    pub fn start(&mut self) -> Vec<E> {
+    /// wait. Valid once; a second call is a no-op returning an empty step.
+    pub fn start(&mut self) -> Step<E> {
         self.poll()
     }
 
@@ -108,26 +111,21 @@ impl<E> Driver<E> {
     ///
     /// Infallible. The handle is proof that this driver minted a request of
     /// this type; if the routine has since dropped that request — the losing
-    /// arm of a `select`, say — the value is discarded and nothing is
-    /// returned, because the routine moved on without it.
+    /// arm of a [`select`](crate::select::select), say — the value is
+    /// discarded and the step is empty, because the routine moved on without
+    /// it.
     ///
     /// # Panics
     ///
     /// If the handle was minted by another driver. That is a host bug, and it
     /// is reported as one rather than delivered to whichever slot of this
     /// driver shares the id.
-    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<E> {
+    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
         if self.outbox.deliver(reply, value.into_value()) {
             self.poll()
         } else {
-            Vec::new()
+            Step::default()
         }
-    }
-
-    /// Ids of requests the routine dropped unanswered since the last call —
-    /// so a host keeping handles of its own can drop them too.
-    pub fn closed(&mut self) -> Vec<u64> {
-        self.outbox.take_closed()
     }
 
     /// What the last poll reported.
@@ -142,9 +140,9 @@ impl<E> Driver<E> {
         self.future.is_none()
     }
 
-    fn poll(&mut self) -> Vec<E> {
+    fn poll(&mut self) -> Step<E> {
         let Some(future) = self.future.as_mut() else {
-            return Vec::new();
+            return Step::default();
         };
 
         let poll = future
@@ -155,10 +153,11 @@ impl<E> Driver<E> {
         self.status = Status::classify(poll, outstanding);
 
         if poll.is_ready() {
+            // Anything the routine still held is dropped with it, and closes.
             self.future = None;
         }
 
-        effects
+        Step::new(effects, self.outbox.take_closed())
     }
 }
 
@@ -211,7 +210,7 @@ mod tests {
     }
 
     /// What was said, and the handles in the batch.
-    fn split(effects: Vec<Effect>) -> (Vec<String>, Vec<ReplyHandle<String>>) {
+    fn split(effects: Step<Effect>) -> (Vec<String>, Vec<ReplyHandle<String>>) {
         let mut said = Vec::new();
         let mut handles = Vec::new();
 
@@ -310,7 +309,13 @@ mod tests {
     fn unpolled_requests_emit_nothing_and_abandoned_ones_discard_late_replies() {
         let mut driver = Driver::new(|outbox| Impatient(outbox).run());
 
-        let (_, handles) = split(driver.start());
+        let step = driver.start();
+        assert_eq!(
+            step.closed(),
+            [2],
+            "the abandoned request is reported closed, in the step that dropped it"
+        );
+        let (_, handles) = split(step);
         let [abandoned, live]: [ReplyHandle<String>; 2] = handles
             .try_into()
             .expect("the polled-then-dropped and the live request were recorded; the never-polled one was not");
@@ -318,11 +323,6 @@ mod tests {
             (abandoned.id(), live.id()),
             (2, 3),
             "ids are minted at ask time, even for the unpolled one"
-        );
-        assert_eq!(
-            driver.closed(),
-            [2],
-            "the abandoned request is reported closed"
         );
 
         assert!(driver.reply(abandoned, String::from("lost")).is_empty());
@@ -405,7 +405,7 @@ mod tests {
         drop(b.start());
 
         // Both drivers minted id 1; the handle knows whose it is.
-        b.reply(one(handles), String::from("misrouted"));
+        drop(b.reply(one(handles), String::from("misrouted")));
     }
 
     #[test]

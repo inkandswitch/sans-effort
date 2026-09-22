@@ -19,6 +19,9 @@ pub const FRAME_TELL: u8 = 1;
 /// A frame holding an effect that awaits a reply. A host must refuse to
 /// continue on one whose tag it does not know: nobody else will answer it.
 pub const FRAME_ASK: u8 = 2;
+/// A frame holding one `u64` request id the routine no longer needs a reply
+/// to. The host may stop that work; a late reply is refused as [`STALE`].
+pub const FRAME_CLOSED: u8 = 3;
 
 /// Success, for calls that carry no status (`free`).
 pub const OK: i32 = 0;
@@ -41,8 +44,13 @@ pub const WRONG_KIND: i32 = -3;
 pub const PANICKED: i32 = -4;
 /// Unknown or freed handle.
 pub const BAD_HANDLE: i32 = -5;
-/// Malformed input, a second `start`, or an id nothing awaits.
+/// A second `start`, or a reply to an id that was never issued.
 pub const BAD_INPUT: i32 = -6;
+/// A reply record that does not parse: a bug in the host's encoder.
+pub const MALFORMED: i32 = -7;
+/// A reply to an id that was issued but is no longer awaited: already
+/// answered, or abandoned by the routine. Harmless; nothing changed.
+pub const STALE: i32 = -8;
 
 /// The wire code of a call that has no [`Status`](crate::status::Status): [`OK`] or the
 /// error's code.

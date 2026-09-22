@@ -8,25 +8,28 @@ The shape: `abi_version` once, then `new`, `start(handle) → effects`, then `re
 |---------|----------|
 | Calls | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_start(u64, out_ptr, out_len) → i32`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. A binding may export more constructors, with or without an in-buffer of encoded arguments (`<prefix>_new_ticker()`, `<prefix>_new_greeter(in_ptr, in_len)`); all return the same handle type and answer to the same calls. |
 | Machine handles | `u64`, never `0`, never reused; a stale handle is `BAD_HANDLE`, not a fault. |
-| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `STALLED`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`). |
+| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `STALLED`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`, `-7` `MALFORMED`, `-8` `STALE`). `BAD_INPUT` is a second `start` or an id never issued; `MALFORMED` a reply record that does not parse; `STALE` a reply to an id that was issued but is no longer awaited — answered already, or closed — and is harmless. |
 | Out-buffers | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written. |
 | `start` | Valid once per handle; a second call is `BAD_INPUT`. Returns the effects recorded before the first wait. |
-| `reply` | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` — typed by reply kind, not by effect. Trailing bytes are `BAD_INPUT`. Returns the effects recorded before the next wait. |
+| `reply` | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` — typed by reply kind, not by effect. Trailing bytes are `MALFORMED`. Returns the effects recorded before the next wait. |
 | Effects | Little-endian; `str` and `bytes` are `u32 len` + payload. One frame per effect, frames concatenated: `u8 kind · u32 len · payload`, where the payload is the routine's record — one `u8` tag, its fields, and, for an ask, its `u64` request id last. See [Frames](#frames). |
-| Request ids | Per machine, from `1`, increasing. Any number may be outstanding at once, and the host may reply in any order. An id the routine has abandoned is `BAD_INPUT`. |
+| Request ids | Per machine, from `1`, increasing. Any number may be outstanding at once, and the host may reply in any order. An id the routine has abandoned is reported in a closed frame; a reply to it is `STALE`. |
 | Upcalls | None. The host calls in; the routine never calls out. No callback is registered, no host value is held on the Rust side. |
 | Threading | Any thread, one at a time per handle: two threads driving one handle get `BUSY`, not a race. A host may pool, and a machine's calls migrate between threads. |
-| Panics | A routine that panics is removed; the call returns `PANICKED` and every later call on that handle is `BAD_HANDLE`. The process is not aborted. |
+| Panics | A routine that panics is removed; the call returns `PANICKED` and every later call on that handle is `BAD_HANDLE`. The process is not aborted. Every request it had outstanding is closed, without a closed frame; so is every request of a machine that is freed. |
 
 ## Frames
 
-Each effect crosses as one frame: `u8 kind · u32 len · payload`. The payload is the routine's own record, laid out as its tag table says; the frame around it is the ABI's, so a host can split a batch into records without knowing any tag table.
+Each effect, and each closed request, crosses as one frame: `u8 kind · u32 len · payload`. An effect's payload is the routine's own record, laid out as its tag table says; the frame around it is the ABI's, so a host can split a batch into records without knowing any tag table.
 
-| Frame kind | Holds                                                     | A host that does not know the payload's tag… |
-|------------|-----------------------------------------------------------|----------------------------------------------|
-| `1` tell   | an effect that awaits no reply                            | skips it                                     |
-| `2` ask    | an effect that awaits a reply; its payload ends with the request id | refuses to continue: nobody else will answer it |
-| other      | reserved for records a later revision adds                | skips the whole frame                        |
+| Frame kind | Holds                                                                                          | The host…                                                                              |
+|------------|------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| `1` tell   | an effect that awaits no reply                                                                 | performs it; skips it if it does not know the tag                                      |
+| `2` ask    | an effect that awaits a reply; its payload ends with the request id                            | performs it and replies; refuses to continue if it does not know the tag — nobody else will answer |
+| `3` closed | one `u64` request id the routine abandoned: a race's losing branch, or anything outstanding at completion | may stop that work; a reply to it is `STALE`                                           |
+| other      | reserved for records a later revision adds                                                     | skips the frame                                                                        |
+
+Closed frames follow the step's other frames. A closed id means the routine no longer needs the reply, not that the effect did not happen: the host may stop the work, but the effect may already be under way.
 
 A host should check that parsing a payload used exactly `len` bytes. A mismatch means its copy of the tag table disagrees with the routine's, and it is caught at the record where it happens rather than corrupting everything after it.
 
@@ -47,7 +50,7 @@ Four kinds, and no more. A richer reply crosses as `bytes` and is decoded on the
 | `3` | `unit` | — | a sleep, an ack |
 | `4` | `bytes` | `u32 len` + bytes | anything else |
 
-Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays outstanding, so the host may retry with the right kind. An id nothing awaits is `BAD_INPUT`.
+Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays outstanding, so the host may retry with the right kind. A reply to an id no longer awaited is `STALE`; to an id never issued, `BAD_INPUT`.
 
 ## What is not in the ABI
 
@@ -55,7 +58,7 @@ And therefore lives with each routine:
 
 - _The tag table_ — which `u8` means which effect, what fields follow it, and which reply kind answers it. The boundary crate's `Encode` impl is the source of truth; `demo/boundary` documents its five tags on the `View` enum.
 - _The world_ — what performing an effect means: where `WriteLine` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
-- _The host loop_ — the host's own; `demo/python/main.py` and `demo/java/Main.java` are one each, in ~40 lines.
+- _The host loop_ — the host's own. `demo/python/main.py` is the smallest: it performs each effect, then replies. `demo/java/Main.java` is shaped like a production host: each ask on its own virtual thread, replies in whatever order the effects finish, closed frames cancel the thread, and one driver thread makes every call.
 
 ## A conversation
 

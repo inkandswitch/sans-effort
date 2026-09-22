@@ -21,10 +21,10 @@ from pathlib import Path
 # ---- ABI.md, as code ------------------------------------------------------
 
 ABI_VERSION = 0
-FRAME_TELL, FRAME_ASK = 1, 2
+FRAME_TELL, FRAME_ASK, FRAME_CLOSED = 1, 2, 3
 OK = AWAITING = 0
 COMPLETE, STALLED = 1, 2
-ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT"}
+ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT", -7: "MALFORMED", -8: "STALE"}
 
 # Reply records: kind, then request id, then payload.
 
@@ -153,6 +153,9 @@ def decode(data: bytes) -> list[dict]:
     """Frames → dicts with a `kind`, its fields, and an `id` if awaiting."""
     effects = []
     for n, (frame, payload) in enumerate(frames(data)):
+        if frame == FRAME_CLOSED:
+            effects.append({"kind": "closed", "id": Reader(payload).u64()})
+            continue
         if frame not in (FRAME_TELL, FRAME_ASK):
             continue  # a reserved frame kind: a newer binding's record, safe to skip
         r = Reader(payload)
@@ -190,6 +193,8 @@ def drive(lib: Library, handle: int, script: list[str]) -> list[str]:
 
     while queue:
         e = queue.popleft()
+        if e["kind"] == "closed":
+            continue  # nothing to cancel: this host performs each effect before replying
         if e["kind"] == "write_line":
             written.append(e["text"])
             print(e["text"])

@@ -106,6 +106,18 @@ impl Run for Impatient {
     }
 }
 
+/// Polls a request, keeps it unanswered, says "done", and returns: the
+/// request is dropped with the routine and closes on completion.
+pub(crate) struct Holds(pub(crate) Outbox<Effect>);
+
+impl Run for Holds {
+    async fn step(&mut self) -> ControlFlow<()> {
+        let _held = PollOnce(Some(self.0.ask(Effect::Ask))).await;
+        self.0.tell(Effect::Say(String::from("done")));
+        ControlFlow::Break(())
+    }
+}
+
 /// What the byte layer emits for these views: one frame each, `FRAME_ASK`
 /// for an `Ask`, `FRAME_TELL` for a `Say`.
 pub(crate) fn framed(views: &[View]) -> Vec<u8> {
@@ -117,6 +129,14 @@ pub(crate) fn framed(views: &[View]) -> Vec<u8> {
         });
         w.bytes(&view.to_bytes());
     }
+    w.finish()
+}
+
+/// A closed frame for `id`, as the byte layer emits it after the effects.
+pub(crate) fn closed_frame(id: u64) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u8(crate::code::FRAME_CLOSED);
+    w.bytes(&id.to_le_bytes());
     w.finish()
 }
 

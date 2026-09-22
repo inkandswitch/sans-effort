@@ -3,7 +3,7 @@
 > [!NOTE]
 > _Status:_ the host, routine, and target assumptions hold today. The address-space and actor assumptions describe planned work (see [`actors`](actors.md) and [`capabilities`](capabilities.md)).
 
-This document lists what `sans-effort` assumes about its environment. Things the implementation _enforces_ — one thread per handle at a time (`BUSY`), replies of the right kind (`WRONG_KIND`), no reply to an abandoned id (`BAD_INPUT`), `Send` checked where a routine is built — are not assumptions and are not listed. What is listed can be violated, and says what happens if it is.
+This document lists what `sans-effort` assumes about its environment. Things the implementation _enforces_ — one thread per handle at a time (`BUSY`), replies of the right kind (`WRONG_KIND`), no reply to an abandoned or answered id (`STALE`), a well-formed reply record (`MALFORMED`), `Send` checked where a routine is built — are not assumptions and are not listed. What is listed can be violated, and says what happens if it is.
 
 ## Hosts
 

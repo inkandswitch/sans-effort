@@ -1,7 +1,7 @@
 # Cancellation
 
 > [!NOTE]
-> _Status:_ planned. Abandoning a request works today inside Rust; telling a foreign host does not exist yet.
+> _Status:_ implemented: `select`, closed frames, `Step`, and the `MALFORMED`/`STALE` codes. The Java demo host cancels on closed frames, but no demo routine races yet; the actor demos' receive-with-timeout will be the first to produce them end to end.
 
 ## `select`
 
@@ -21,15 +21,15 @@ Under tokio that is the whole story: dropping the losing future cancels it.
 Both branches record their effects before either completes, so the host sees `[(Receive, 4), (Sleep, 5)]`. When the message arrives, the `Sleep` future is dropped. The mechanism has handled this from the start:
 
 - dropping a polled request closes its slot;
-- `Driver::closed()` reports the id;
+- the id is reported in the step's `closed`;
 - the host layer's `Machine` forgets its reply handle;
 - a late reply to that id is `BAD_INPUT`.
 
 `select` is the first routine shape that exercises this. `join` never drops anything, so until now the path was covered only by a unit test.
 
-## The gap
+## The gap this closed
 
-Nothing tells a _foreign_ host. `Machine` uses `closed()` only to tidy its own table. Python never learns that id 5 was abandoned, so it keeps its thirty-second timer, replies when it fires, and gets `BAD_INPUT`. That is harmless for a timer and wasteful for anything that costs something — a network request the host should cancel, a file it is still reading.
+Before closed frames, nothing told a _foreign_ host. `Machine` used the closed ids only to tidy its own table. Python never learned that id 5 was abandoned, so it kept its thirty-second timer, replied when it fired, and got `BAD_INPUT`. That was harmless for a timer and wasteful for anything that costs something — a network request the host should cancel, a file it is still reading.
 
 ```mermaid
 sequenceDiagram
@@ -43,9 +43,9 @@ sequenceDiagram
     Note over H: cancel the timer for 5
 ```
 
-## Proposal: a closed frame
+## Closed frames
 
-Report abandoned ids in the effects stream, so each call returns what the routine recorded _and_ what it gave up on. Every effect already crosses as a frame — `u8 kind · u32 len · payload` — so a closed record is one more frame kind:
+Abandoned ids are reported in the effects stream, so each call returns what the routine recorded _and_ what it gave up on. Every effect already crosses as a frame — `u8 kind · u32 len · payload` — so a closed record is one more frame kind:
 
 ```text
   kind 3 · len 8 · u64 id        "the routine no longer needs a reply to id"
@@ -53,7 +53,7 @@ Report abandoned ids in the effects stream, so each call returns what the routin
 
 It belongs to the ABI, not to any routine's vocabulary, so no tag is taken from anyone. A host written before closed frames existed skips them, as it skips every frame kind it does not know; it simply never cancels early.
 
-Earlier drafts considered a reserved tag `0` inside the effect records, a trailer after them, or a separate `<prefix>_closed` call. Frames make all three unnecessary.
+The design considered a reserved tag `0` inside the effect records, a trailer after them, or a separate `<prefix>_closed` call. Frames make all three unnecessary.
 
 Precedent: Cap'n Proto's RPC protocol has a `Finish` message — "the caller no longer needs this answer" — that lets the callee cancel. Here the routine is the caller and the host the callee, so a closed frame is exactly `Finish`: the routine telling the host it no longer needs the answer.
 
@@ -77,10 +77,10 @@ A routine that completes, panics, or is freed with requests still outstanding ha
 
 A tell has no id and no reply, so there is nothing to close.
 
-## Open questions
+## Decisions along the way
 
-- _Rust hosts can still forget._ The closed frame fixes foreign hosts. A Rust host using `Driver` directly must still call `closed()` separately. Returning effects and closed ids together from `start` and `reply` would make forgetting impossible, but it changes the mechanism's API.
-- _Distinct codes for refused replies._ Today a malformed record, a late reply, and a host bug are all `BAD_INPUT`. Splitting them — `MALFORMED` for a record that does not parse, `STALE` for an id that was issued but is no longer awaited — would let even a host that ignores closed frames classify late replies. `STALE` needs no memory beyond the highest id shown to the host.
+- _Closed ids travel with their step._ `Driver::start` and `reply` return a `Step`: the effects and the ids abandoned while producing them. It iterates over the effects, so a host with nothing to cancel uses it like the `Vec` it replaced; a host that cares reads `closed()`. The ids can no longer drift apart from the step that closed them.
+- _Refused replies say why._ `BAD_INPUT` is now only a second `start` or an id never issued. `MALFORMED` is a reply record that does not parse. `STALE` is a reply to an id that was issued but is no longer awaited — answered, or closed — so even a host that ignores closed frames can tell a late reply from a bug. `STALE` needs no memory beyond the highest id shown to the host.
 
 ## ABI revision
 

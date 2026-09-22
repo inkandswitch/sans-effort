@@ -6,20 +6,24 @@
 //! ([`FRAME_TELL`] or [`FRAME_ASK`]), a `u32` length, and the view's
 //! bytes as the routine's [`Encode`] impl writes them. The length lets a host
 //! skip a tell it does not understand and check that it parsed each record
-//! exactly. This is what a C-ABI or `erl_nif` binding calls, and what the
+//! exactly. After the effects, one [`FRAME_CLOSED`] per request the routine
+//! abandoned, holding its id. This is what a C-ABI or `erl_nif` binding calls, and what the
 //! [`table`](crate::table) holds.
 
 mod input;
 
 use self::input::Input;
 use crate::{
-    code::{FRAME_ASK, FRAME_TELL},
+    code::{FRAME_ASK, FRAME_CLOSED, FRAME_TELL},
     error::Error,
     machine::{Machine, Shown},
     status::Status,
 };
 use alloc::vec::Vec;
-use sans_effort::boundary::{codec::Encode, codec::Writer, host_effect::HostEffect};
+use sans_effort::{
+    boundary::{codec::Encode, codec::Writer, host_effect::HostEffect},
+    driver::step::Step,
+};
 
 /// A machine seen through bytes.
 pub struct Encoded<E>(Machine<E>);
@@ -75,12 +79,17 @@ impl<E> core::fmt::Debug for Encoded<E> {
     }
 }
 
-/// One frame per effect: kind, `u32` length, the view's own bytes.
-fn encode<V: Encode>(shown: &[Shown<V>]) -> Vec<u8> {
+/// One frame per effect — kind, `u32` length, the view's own bytes — then one
+/// closed frame per abandoned id.
+fn encode<V: Encode>(step: &Step<Shown<V>>) -> Vec<u8> {
     let mut w = Writer::new();
-    for Shown { view, awaits } in shown {
+    for Shown { view, awaits } in step.effects() {
         w.u8(if *awaits { FRAME_ASK } else { FRAME_TELL });
         w.bytes(&view.to_bytes());
+    }
+    for id in step.closed() {
+        w.u8(FRAME_CLOSED);
+        w.bytes(&id.to_bytes());
     }
     w.finish()
 }
@@ -90,7 +99,9 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
-    use crate::fixtures::{Both, Echo, View, framed, reply_str_record};
+    use crate::fixtures::{
+        Both, Echo, Holds, Impatient, View, closed_frame, framed, reply_str_record,
+    };
     use alloc::string::String;
     use sans_effort::{boundary::codec::DecodeError, run::Run};
 
@@ -120,19 +131,26 @@ mod tests {
     }
 
     #[test]
-    fn malformed_input_is_bad_input_never_a_panic() {
+    fn arbitrary_input_is_refused_with_a_code_never_a_panic() {
+        use crate::code::{BAD_INPUT, MALFORMED, STALE, WRONG_KIND};
+
         bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
             let mut m = encoded(|outbox| Echo(outbox).run());
             m.start().expect("start");
-            // Any input is refused with a code, or is a well-formed record:
-            // for id 1 of kind str it completes; of another kind it is
-            // `WRONG_KIND`; anything else is `BAD_INPUT`.
+            // A well-formed str record for id 1 completes the routine.
+            // Anything else is refused: unparsable is `MALFORMED`, another
+            // kind for id 1 is `WRONG_KIND`, id 0 or an id never issued is
+            // `BAD_INPUT`. Nothing here was answered or abandoned, so never
+            // `STALE`.
             match m.reply(bytes) {
                 Ok((_, status)) => assert_eq!(status, Status::Complete),
-                Err(e) => assert!(
-                    [crate::code::BAD_INPUT, crate::code::WRONG_KIND].contains(&e.code()),
-                    "{e}"
-                ),
+                Err(e) => {
+                    assert!(
+                        [BAD_INPUT, MALFORMED, WRONG_KIND].contains(&e.code()),
+                        "{e}"
+                    );
+                    assert_ne!(e.code(), STALE);
+                }
             }
         });
     }
@@ -164,6 +182,44 @@ mod tests {
         assert_eq!(status, Status::Awaiting);
         assert_eq!(bytes, framed(&[View::Ask(1)]));
         assert_eq!(m.start(), Err(Error::BadInput), "start twice");
+    }
+
+    #[test]
+    fn abandoned_requests_follow_the_effects_as_closed_frames() {
+        let mut m = encoded(|outbox| Impatient(outbox).run());
+        let (bytes, status) = m.start().expect("start");
+        assert_eq!(status, Status::Awaiting);
+        let mut want = framed(&[View::Ask(1), View::Ask(2)]);
+        want.extend(closed_frame(1));
+        assert_eq!(bytes, want);
+
+        assert_eq!(
+            m.reply(&reply_str_record(1, "late")),
+            Err(Error::Stale { id: 1 }),
+            "the host was told; its late reply is stale"
+        );
+    }
+
+    #[test]
+    fn completion_closes_what_is_still_held() {
+        let mut m = encoded(|outbox| Holds(outbox).run());
+        let (bytes, status) = m.start().expect("start");
+        assert_eq!(status, Status::Complete);
+        let mut want = framed(&[View::Ask(1), View::Say(String::from("done"))]);
+        want.extend(closed_frame(1));
+        assert_eq!(bytes, want);
+    }
+
+    #[test]
+    fn a_closed_frame_is_kind_length_id() {
+        assert_eq!(
+            closed_frame(5),
+            [
+                3, // FRAME_CLOSED
+                8, 0, 0, 0, // payload length
+                5, 0, 0, 0, 0, 0, 0, 0, // the id
+            ]
+        );
     }
 
     /// The frame format, spelled out byte by byte rather than through the

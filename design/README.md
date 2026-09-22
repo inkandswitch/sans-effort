@@ -12,7 +12,7 @@ Some documents describe what exists and some describe what is planned. Each one 
 | [`effects`](effects.md)           | planned           | A standard library of capabilities: `sans-effort-effects`, `sans-effort-tokio` |
 | [`actors`](actors.md)             | planned           | Messaging, spawning, and the host as the scheduler                             |
 | [`capabilities`](capabilities.md) | planned           | Object-capability discipline within a process, given an honest host            |
-| [`cancellation`](cancellation.md) | planned           | `select`, abandoned requests, and telling the host                             |
+| [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
 
 ## Layers
 

@@ -574,7 +574,8 @@ mod tests {
     }
 
     /// A batch of exactly `N` effects, or a test failure.
-    fn exactly<const N: usize>(effects: Vec<Full>) -> [Full; N] {
+    fn exactly<const N: usize, S: Into<Vec<Full>>>(effects: S) -> [Full; N] {
+        let effects = effects.into();
         let len = effects.len();
         effects
             .try_into()

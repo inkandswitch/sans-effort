@@ -84,6 +84,10 @@
 //! - [`driver::Driver`] turns a routine into something a host can resume:
 //!   [`start`](driver::Driver::start), then [`reply`](driver::Driver::reply)
 //!   with each handle the effects hand back, until it is finished.
+//!   Each call returns a [`Step`](driver::step::Step): the effects, and the
+//!   ids of any requests the routine abandoned.
+//! - [`join::join`] awaits two waits at once, and [`select::select`] the
+//!   first of two; the loser is abandoned and reported closed.
 //! - [`boundary`] is what an effect type implements to be shown to a host
 //!   that cannot hold a Rust value: [`HostEffect`](boundary::host_effect::HostEffect)
 //!   (handles → ids), [`Encode`](boundary::codec::Encode) (the codec), and
@@ -244,4 +248,5 @@ pub mod join;
 pub mod reply;
 pub mod request;
 pub mod run;
+pub mod select;
 pub mod testing;
