@@ -94,7 +94,6 @@ lto = "fat"
 opt-level = 3
 
 # Close to release, but thin LTO: benches are rebuilt often.
-
 [profile.bench]
 codegen-units = 1
 debug = true
