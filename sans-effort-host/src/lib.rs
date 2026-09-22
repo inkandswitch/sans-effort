@@ -1,5 +1,5 @@
-//! The host side of a routine, for hosts that cannot hold a Rust value —
-//! minus the C ABI.
+//! The host side of a routine, for FFI hosts that cannot hold a Rust value —
+//! minus the C ABI itself.
 //!
 //! `abi_version()`, then `new(routine) → handle`, `start(handle) → effects`,
 //! `reply(handle, record) → effects`, `free(handle)`. A reply record is

@@ -1,16 +1,27 @@
 # sans-effort
 
-> Host-driven async coroutines whose every wait is a typed effect
+> _sans-io, without all the effort_
 
-A routine is an ordinary `async fn` whose waits are answered by whoever drives it: no waker, no executor, one `Box::pin` at the boundary. It is a sans-io state machine the compiler writes for you — and because the routine asks for _traits_ rather than effects, the same code is also a plain `async fn` that tokio runs natively with no driver at all.
+Write ordinary, direct-style Rust (`async fn`, `.await`, loops, `?`) and run it two ways:
+
+1. Call it from Rust as normal: on `tokio` it is a plain future at native speed, with no driver.
+2. Drive it from an FFI host language through a sans-io interface: every wait becomes a typed effect that the host answers by id, so the host owns I/O, time, and scheduling — which routine resumes, in what order replies arrive, whether the clock is real or virtual — and the output is typically byte-identical to the native run.
+
+The routine asks for traits, not effects, and cannot tell which way it is running. The compiler writes the state machine; the only `Pin` is one `Box::pin` at an FFI boundary, if and when there is one.
 
 This crate is the mechanism. It is `no_std` + `alloc`.
 
 ```text
-  routine     Greeter<C: Sleep + Console>: Run              asks for traits; knows nothing of hosts
-  context     impl Sleep for TokioCtx          │ impl Sleep for Ctx<E>
-              a real future                    │ records an effect, waits for the reply
-  host        tokio or the JS event loop polls │ a Driver polls; Python, Java, a test… replies by id
+  ┌───────────────────────────────────────┬───────────────────────────┐
+  │ host        tokio or the JS event     │  a Driver polls; Python,  │
+  │             loop polls — no driver    │  Java, a test… performs   │
+  ├───────────────────────────────────────┼───────────────────────────┤
+  │ context     impl Sleep for TokioCtx   │  impl Sleep for Ctx<E>    │
+  │             a real future             │  records an effect, waits │
+  ├───────────────────────────────────────┴───────────────────────────┤
+  │ routine     Greeter<C: Sleep + Lookup + Console>: Run             │  no_std
+  │             owns the logic; knows nothing of effects or hosts     │
+  └───────────────────────────────────────────────────────────────────┘
 ```
 
 ## What is here
@@ -75,7 +86,7 @@ for effect in driver.start() {
 }
 ```
 
-A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
+A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. An FFI host cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
 
 ## Features
 

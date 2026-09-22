@@ -1,56 +1,70 @@
-//! Host-driven async coroutines whose every wait is a typed effect.
+//! Direct-style async Rust, run natively or driven from an FFI host.
+//!
+//! _sans-io, without all the effort._ Write an ordinary `async fn` — loops,
+//! `?`, `.await` — and run it two ways:
+//!
+//! 1. Call it from Rust as normal: on tokio it is a plain future at native
+//!    speed, with no driver.
+//! 2. Drive it from an FFI host language through a sans-io interface: every
+//!    wait becomes a typed effect that the host answers by id, so the host
+//!    owns I/O, time, and scheduling — which routine resumes, in what order
+//!    replies arrive, whether the clock is real or virtual — and the output
+//!    is typically byte-identical to the native run.
 //!
 //! An _effect routine_ — the unit this crate runs; "routine" from here on —
-//! is a coroutine written in direct style as an ordinary `async fn`, whose
-//! every wait is a typed effect answered by whoever drives it. The routine
-//! has no waker, no executor, and one `Box::pin` at the boundary; a host
-//! resumes it one wait at a time and supplies the answers. It is a sans-io
-//! state machine that the compiler writes for you.
+//! is such an `async fn`: every wait is a typed effect answered by whoever
+//! drives it. It asks for traits, not effects, and cannot tell which way it
+//! is running. The compiler writes the state machine; the only `Pin` is one
+//! `Box::pin` at an FFI boundary, if and when there is one.
 //!
 //! ```text
 //!   host                                    routine
-//!     │                                        │
-//!     │  start()                               │
-//!     │───────────────────────────────────────▶│  runs until it needs input:
-//!     │                                        │  tells WriteLine, asks ReadLine·1
-//!     │  [WriteLine, ReadLine·1]  AWAITING     │
-//!     │◀───────────────────────────────────────│
-//!     │                                        │
-//!     │  reply(1, "bob")                       │
-//!     │───────────────────────────────────────▶│  resumes; asks Lookup·2
-//!     │  [Lookup·2]            AWAITING        │
-//!     │◀───────────────────────────────────────│
-//!     │                                        │
-//!     │  reply(2, "Hello")                     │
-//!     │───────────────────────────────────────▶│  resumes; tells WriteLine, returns
-//!     │  [WriteLine]           COMPLETE        │
-//!     │◀───────────────────────────────────────│
-//!     │                                        ┴
+//!     │                                         │
+//!     │  start()                                │
+//!     │────────────────────────────────────────▶│ run until input needed
+//!     │                                         │
+//!     │        [WriteLine, (ReadLine, 1)]       │
+//!     │◀────────────────────────────────────────┊
+//!     │                                         ┊ AWAITING
+//!     │             reply(1, "bob")             ┊
+//!     │────────────────────────────────────────▶┊
+//!     │                                         │
+//!     │              [(Lookup, 2)]              │
+//!     │◀────────────────────────────────────────┊
+//!     │                                         ┊ AWAITING
+//!     │            reply(2, "Hello")            ┊
+//!     │────────────────────────────────────────▶┊
+//!     │                                         │
+//!     │  [WriteLine]                            │
+//!     │◀────────────────────────────────────────│ COMPLETE
+//!     │                                         ┴
 //! ```
 //!
 //! # Three layers
 //!
-//! The routine asks for _traits_ and never sees an effect. A _context_
-//! implements those traits, and decides what each call does: a real future
-//! on a runtime, or an effect recorded for a host. The _host_ is whoever
-//! polls — tokio, or a foreign program over a [`Driver`](driver::Driver).
+//! The _host_ is whoever polls — tokio, or an FFI host language over a
+//! [`Driver`](driver::Driver). A _context_ implements the routine's traits
+//! and decides what each call does: a real future on a runtime, or an effect
+//! recorded for a host. The _routine_ asks for traits and never sees an
+//! effect.
 //!
 //! ```text
-//!   ┌─────────────────────────────────────────────────────────────────┐
-//!   │ routine     Greeter<C: Sleep + Lookup + Console>: Run           │  no_std
-//!   │             owns the logic; knows nothing of effects or hosts   │
-//!   ├─────────────────────────────────────────────────────────────────┤
-//!   │ context     impl Sleep for TokioCtx   │ impl Sleep for Ctx<E>   │
-//!   │             a real future             │ record an effect, wait  │
-//!   ├───────────────────────────────────────┼─────────────────────────┤
-//!   │ host        tokio or the JS event     │ a Driver polls; Python, │
-//!   │             loop polls — no driver    │ Java, a test… performs  │
-//!   └───────────────────────────────────────┴─────────────────────────┘
+//!   ┌───────────────────────────────────────┬───────────────────────────┐
+//!   │ host        tokio or the JS event     │  a Driver polls; Python,  │
+//!   │             loop polls — no driver    │  Java, a test… performs   │
+//!   ├───────────────────────────────────────┼───────────────────────────┤
+//!   │ context     impl Sleep for TokioCtx   │  impl Sleep for Ctx<E>    │
+//!   │             a real future             │  records an effect, waits │
+//!   ├───────────────────────────────────────┴───────────────────────────┤
+//!   │ routine     Greeter<C: Sleep + Lookup + Console>: Run             │  no_std
+//!   │             owns the logic; knows nothing of effects or hosts     │
+//!   └───────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! The left column is why you write the routine this way: it is also a plain
-//! `async fn`, usable at native speed by code that has never heard of this
-//! crate. The right column is what this crate provides.
+//! The routine is the foundation and depends on nothing above it. The native
+//! path is why you write it this way: the routine is also a plain `async fn`,
+//! usable at native speed by code that has never heard of this crate. The
+//! driven path is what this crate provides.
 //!
 //! # The pieces
 //!
