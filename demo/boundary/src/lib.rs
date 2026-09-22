@@ -344,7 +344,7 @@ impl HostEffect for Quiet {
 
 #[cfg(test)]
 mod tests {
-    //! The wire's test story: the same routine, through a `Driver`, read off
+    //! The boundary crate's test story: the same routine, through a `Driver`, read off
     //! as data. Where `greeter`'s tests assert on what a mock recorded, these
     //! assert on the effects a host would see — the thing the wire exists to
     //! carry.

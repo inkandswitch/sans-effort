@@ -20,10 +20,10 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 | `run::Run` | The shape of a routine: `step` (one loop iteration) and `run` (until it breaks) |
 | `driver::Driver` | Turns a routine into something a host can drive: `start()`, then `reply(handle, value)` until finished |
 | `driver::outbox::Outbox` | What a reifying context writes into: `tell` an effect, or `ask` and await the reply |
-| `reply::ReplyHandle<T>` | The typed, single-use capability to answer one `ask`. Unforgeable; infallible to reply through |
+| `reply::{ReplyHandle<T>, Reply}` | The typed, single-use capability to answer one `ask` — unforgeable, infallible to reply through — and the sealed four-kind menu (`str`, `u64`, `unit`, `bytes`) it accepts |
 | `request::{Request, Asked}` | Waits as values, so a context is generic over the host's vocabulary and a host can offer a routine less than everything |
 | `join::join` | Two waits at once — the reason request ids exist |
-| `wire` | The four-kind reply menu, and the traits (`HostEffect`, `Encode`) an effect type implements to cross to a host that cannot hold a Rust value |
+| `boundary` | What an effect type implements to cross to a host that cannot hold a Rust value: `HostEffect` (handles → ids), `Encode` (the codec), `Pending` |
 | `testing::run_now` | Run a routine against a mock whose every future is ready, in one poll, with no driver |
 
 ## A routine, and a Rust host
