@@ -1,7 +1,7 @@
 [package]
 name = "sans_effort_host"
 version = "0.1.0"
-description = "Everything a foreign host needs to step effect routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
+description = "Everything a foreign host needs to step sans_effort routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
 readme = "README.md"
 
 categories = ["asynchronous", "external-ffi-bindings"]

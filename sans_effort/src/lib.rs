@@ -1,6 +1,7 @@
-//! Effect routines: host-driven async coroutines.
+//! Host-driven async coroutines whose every wait is a typed effect.
 //!
-//! An _effect routine_ is a coroutine written in direct style as an ordinary
+//! An _effect routine_ — the unit this crate runs; "routine" from here on —
+//! is a coroutine written in direct style as an ordinary
 //! `async fn`, whose every wait is a typed effect answered by whoever drives
 //! it. The routine has no waker, no executor, and one `Box::pin` at the
 //! boundary; a host resumes it one wait at a time and supplies the answers.

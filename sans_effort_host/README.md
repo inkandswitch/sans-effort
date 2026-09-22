@@ -1,6 +1,6 @@
 # sans_effort_host
 
-> The host side of an effect routine, for hosts that cannot hold a Rust value
+> The host side of a routine, for hosts that cannot hold a Rust value
 
 A Rust host drives a routine through `sans_effort::driver::Driver`, replying through typed `ReplyHandle`s. A host in another language has neither the handle nor the type: it has a `u64` request id and some bytes. This crate is the layer between — safe Rust, over owned types, with `unsafe_code = "forbid"`. The application adds the `extern "C"` (or wasm-bindgen, or `erl_nif`) skin: one wrapper per function, each a line plus the `unsafe` needed to touch foreign memory.
 

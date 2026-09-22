@@ -2,7 +2,7 @@
 
 > Host-driven async coroutines whose every wait is a typed effect
 
-An _effect routine_ is an ordinary `async fn` whose waits are answered by whoever drives it: no waker, no executor, one `Box::pin` at the boundary. It is a sans-io state machine the compiler writes for you — and because the routine asks for _traits_ rather than effects, the same code is also a plain `async fn` that tokio runs natively with no driver at all.
+A routine is an ordinary `async fn` whose waits are answered by whoever drives it: no waker, no executor, one `Box::pin` at the boundary. It is a sans-io state machine the compiler writes for you — and because the routine asks for _traits_ rather than effects, the same code is also a plain `async fn` that tokio runs natively with no driver at all.
 
 This crate is the mechanism. It is `no_std` + `alloc`.
 

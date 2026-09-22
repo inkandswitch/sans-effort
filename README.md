@@ -4,13 +4,13 @@
 
 [![CI](https://github.com/inkandswitch/sans_effort/actions/workflows/test-host.yml/badge.svg)](https://github.com/inkandswitch/sans_effort/actions/workflows/test-host.yml) [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT) [![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/sans_effort)
 
-An _effect routine_ is a coroutine written in direct style as an ordinary `async fn`, whose every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you — and because the routine asks for _traits_ rather than effects, the very same code is also a plain `async fn` that tokio runs at native speed with no driver at all.
+`sans_effort` lets you write a coroutine in direct style as an ordinary `async fn`, where every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you — and because the routine asks for _traits_ rather than effects, the very same code is also a plain `async fn` that tokio runs at native speed with no driver at all.
 
 This is the library. The research that motivates it, with the alternatives built out and measured, lives in [`effect-routines-exploration`][exploration]:
 
 | If you want                                  | Read                                          |
 |----------------------------------------------|-----------------------------------------------|
-| To write an effect routine today             | [_How to Write Effect Routines_][guide] (PDF) |
+| To write one today                           | [_How to Write Effect Routines_][guide] (PDF) |
 | The argument, and the counter-argument       | [`analysis/README.md`][analysis]              |
 | The same program in six styles, side by side | [`compare/`][compare]                         |
 | What it costs per step, per host             | [`hosts/bench/`][bench]                       |
