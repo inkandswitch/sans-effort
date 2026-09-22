@@ -1,0 +1,35 @@
+[package]
+name = "sans_effort_host"
+version = "0.1.0"
+description = "Everything a foreign host needs to step effect routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
+readme = "README.md"
+
+categories = ["asynchronous", "external-ffi-bindings"]
+keywords = ["async", "coroutine", "effects", "ffi", "sans-io"]
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sans_effort = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = ["std"]
+## The process-wide handle table (`table`), which needs `HashMap`, a
+## `static Mutex`, and `catch_unwind` for panic isolation. Without it the crate
+## is `no_std` + `alloc`: the typed `Machine` and byte-level `Encoded`, for a
+## skin that keeps its own statics.
+std = ["sans_effort/std"]
+## Forwarded to `sans_effort`: the lock for a `no_std` build. Exactly as
+## there, at least one of `std` and `spin` must be enabled.
+spin = ["sans_effort/spin"]
+
+[dev-dependencies]
+bolero = { workspace = true }
+
+[lints]
+workspace = true

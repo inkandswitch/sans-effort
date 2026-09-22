@@ -1,8 +1,11 @@
 {
-  description = "effect-routine — host-driven async coroutines whose every wait is a typed effect";
+  description = "sans_effort — host-driven async coroutines whose every wait is a typed effect";
 
   inputs = {
     nixpkgs.url = "nixpkgs/nixos-26.05";
+    # Only for `wasm-bindgen-cli`, which stable lags on and which must match
+    # the crate version exactly.
+    unstable-nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
 
     command-utils.url = "git+https://tangled.org/expede.wtf/nix-command-utils";
     flake-utils.url = "github:numtide/flake-utils";
@@ -19,6 +22,7 @@
     flake-utils,
     nixpkgs,
     rust-overlay,
+    unstable-nixpkgs,
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -29,6 +33,8 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+
+        unstable = import unstable-nixpkgs {inherit system;};
 
         # Keep in lockstep with `rust-version` in Cargo.toml and rust-toolchain.toml.
         rustVersion = "1.91.0";
@@ -60,20 +66,26 @@
 
         format-pkgs = with pkgs; [
           alejandra
-          nixpkgs-fmt
           taplo
         ];
 
         cargo-installs = with pkgs; [
           cargo-criterion
           cargo-deny
-          cargo-expand
           cargo-hack
           cargo-nextest
           cargo-semver-checks
-          cargo-sort
           cargo-watch
           typos
+        ];
+
+        # The demo's foreign hosts. `wasm-bindgen-cli` must match the `=` pin on
+        # the `wasm-bindgen` crate in Cargo.toml; bump both together.
+        demo-pkgs = [
+          pkgs.jdk25 # java.lang.foreign is final from 22
+          pkgs.nodejs
+          pkgs.python3
+          unstable.wasm-bindgen-cli
         ];
 
         # xdg-utils ships several binaries and sets no mainProgram; name the one
@@ -90,6 +102,7 @@
         # Project-specific commands
         projectCommands = import ./nix/commands.nix {
           inherit pkgs system cmd;
+          wasm-bindgen-cli = unstable.wasm-bindgen-cli;
         };
 
         command_menu = command-utils.commands.${system} [
@@ -151,9 +164,11 @@
           cargo-semver-checks
           typos
         ];
+
+        ci-demo-pkgs = demo-pkgs;
       in rec {
         devShells.default = pkgs.mkShell {
-          name = "effect_routine_shell";
+          name = "sans_effort_shell";
 
           # `command_menu` is already a flat list (menu + command scripts).
           nativeBuildInputs =
@@ -165,6 +180,7 @@
             ]
             ++ format-pkgs
             ++ cargo-installs
+            ++ demo-pkgs
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.clang
               pkgs.llvmPackages.libclang
@@ -178,14 +194,15 @@
         };
 
         devShells.ci = pkgs.mkShell {
-          name = "effect_routine_ci";
+          name = "sans_effort_ci";
 
           nativeBuildInputs =
             [
               ci-rust-toolchain
               rustup-shim
             ]
-            ++ ci-cargo-installs;
+            ++ ci-cargo-installs
+            ++ ci-demo-pkgs;
         };
 
         formatter = pkgs.alejandra;

@@ -1,0 +1,52 @@
+error[E0277]: `Rc<Cell<u32>>` cannot be sent between threads safely
+  --> tests/ui/not_send.rs:25:11
+   |
+25 |     spawn(Ticker::new(Local(Rc::new(Cell::new(0))), 3).run());
+   |     ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<Cell<u32>>` cannot be sent between threads safely
+   |     |
+   |     required by a bound introduced by this call
+   |
+  ::: $WORKSPACE/sans_effort/src/run.rs
+   |
+   |     fn run(mut self) -> impl Future<Output = ()>
+   |                         ------------------------ within this `impl Future<Output = ()>`
+   |
+   = help: within `impl Future<Output = ()>`, the trait `Send` is not implemented for `Rc<Cell<u32>>`
+note: required because it appears within the type `Local`
+  --> tests/ui/not_send.rs:12:8
+   |
+12 | struct Local(Rc<Cell<u32>>);
+   |        ^^^^^
+note: required because it appears within the type `Ticker<Local>`
+  --> src/ticker.rs
+   |
+   | pub struct Ticker<C: Sleep + WriteLine> {
+   |            ^^^^^^
+note: required because it's used within this `async` block
+  --> $WORKSPACE/sans_effort/src/run.rs
+   |
+   |         async move { while self.step().await.is_continue() {} }
+   |         ^^^^^^^^^^
+note: required by a bound in `spawn`
+  --> tests/ui/not_send.rs:22:36
+   |
+22 | fn spawn<F: core::future::Future + Send + 'static>(_: F) {}
+   |                                    ^^^^ required by this bound in `spawn`
+
+error: future cannot be sent between threads safely
+  --> tests/ui/not_send.rs:25:11
+   |
+25 |     spawn(Ticker::new(Local(Rc::new(Cell::new(0))), 3).run());
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ future created by async block is not `Send`
+   |
+   = help: within `Local`, the trait `Sync` is not implemented for `Rc<Cell<u32>>`
+note: captured value is not `Send` because `&` references cannot be sent unless their referent is `Sync`
+  --> tests/ui/not_send.rs:15:20
+   |
+15 |     async fn sleep(&self, _: Duration) {}
+   |                    ^^^^^ has type `&Local` which is not `Send`, because `Local` is not `Sync`
+note: required by a bound in `spawn`
+  --> tests/ui/not_send.rs:22:36
+   |
+22 | fn spawn<F: core::future::Future + Send + 'static>(_: F) {}
+   |                                    ^^^^ required by this bound in `spawn`

@@ -30,6 +30,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Clippy (wasm32 target)
+        # The host clippy above never sees `#[wasm_bindgen]` code paths that are
+        # cfg'd for wasm32, so lint the module against its real target too.
+        run: cargo clippy -p greeter_wasm --target wasm32-unknown-unknown -- -D warnings
+
       - name: Docs
         env:
           RUSTDOCFLAGS: -D warnings

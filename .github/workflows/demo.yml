@@ -1,0 +1,87 @@
+name: Demo
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The same routine — native on tokio, native on Node, driven from Python and
+  # from Java over the C ABI — must produce the same transcript. Two runtimes
+  # that can poll it, two hosts that cannot; ABI.md exercised twice over.
+  hosts-agree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          target: wasm32-unknown-unknown
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Install wasm-bindgen-cli
+        # Must match the `=` pin on the `wasm-bindgen` crate in Cargo.toml.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.127
+
+      - name: Build the cdylib and the wasm module
+        run: |
+          cargo build -p greeter_cdylib
+          cargo build -p greeter_wasm --release --target wasm32-unknown-unknown
+          wasm-bindgen --target nodejs --out-dir demo/js/pkg \
+            target/wasm32-unknown-unknown/release/greeter_wasm.wasm
+
+      - name: Native host (tokio, no driver)
+        run: |
+          printf 'alice\nbob\nquit\n' | cargo run -q -p greeter_tokio > rust.txt
+          printf 'bob\ncarol\n' | cargo run -q -p greeter_tokio -- --fanout > rust-fanout.txt
+
+      - name: Python host
+        run: |
+          python3 demo/python/main.py > python.txt
+          python3 demo/python/main.py --fanout > python-fanout.txt
+          python3 demo/python/main.py --ticker
+
+      - name: JS host (native)
+        run: |
+          node demo/js/main.mjs > js.txt
+          node demo/js/main.mjs --fanout > js-fanout.txt
+
+      - name: Java host (Panama, C ABI)
+        run: |
+          java --enable-native-access=ALL-UNNAMED demo/java/Main.java > java.txt
+          java --enable-native-access=ALL-UNNAMED demo/java/Main.java --fanout > java-fanout.txt
+          java --enable-native-access=ALL-UNNAMED demo/java/Main.java --ticker
+
+      - name: Transcripts agree
+        run: |
+          diff rust.txt python.txt
+          diff rust.txt js.txt
+          diff rust-fanout.txt python-fanout.txt
+          diff rust-fanout.txt js-fanout.txt
+          diff rust.txt java.txt
+          diff rust-fanout.txt java-fanout.txt
+          cat rust.txt rust-fanout.txt

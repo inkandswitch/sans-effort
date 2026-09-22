@@ -1,26 +1,55 @@
 [workspace]
 resolver = "3"
 members = [
-  "effect_routine",
+  "demo/cdylib",
+  "demo/routines",
+  "demo/tokio",
+  "demo/wasm",
+  "demo/boundary",
+  "sans_effort",
+  "sans_effort_host",
 ]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/inkandswitch/effect-routine"
-authors = [
-  "Brooklyn Zelenka <hello@brooklynzelenka.com>",
-]
+repository = "https://github.com/inkandswitch/sans_effort"
+authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]
 
 [workspace.dependencies]
 # Internal crates
-effect_routine = { version = "0.1.0", path = "effect_routine", default-features = false }
+sans_effort = { version = "0.1.0", path = "sans_effort", default-features = false }
+sans_effort_host = { version = "0.1.0", path = "sans_effort_host" }
 
 # External crates
 bolero = "0.13"
+portable-atomic = { version = "1", default-features = false, features = [
+  "fallback",
+] }
+portable-atomic-util = { version = "0.2", default-features = false, features = [
+  "alloc",
+] }
+spin = { version = "0.12", default-features = false, features = [
+  "mutex",
+  "spin_mutex",
+] }
 thiserror = { version = "2.0", default-features = false }
-tracing = { version = "0.1", default-features = false }
+trybuild = "1"
+tokio = { version = "1", default-features = false, features = [
+  "io-std",
+  "io-util",
+  "macros",
+  "rt-multi-thread",
+  "sync",
+  "time",
+] }
+# `=`: the crate and `wasm-bindgen-cli` must match exactly, and the CLI comes
+# from nixpkgs-unstable (`unstable.wasm-bindgen-cli` in flake.nix). Bump both together.
+wasm-bindgen = "=0.2.127"
+# Released in lockstep with wasm-bindgen; each pins it exactly.
+js-sys = "=0.3.104"
+wasm-bindgen-futures = "=0.4.77"
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
@@ -52,19 +81,22 @@ wildcard_enum_match_arm = "warn"
 
 all = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
-multiple_crate_versions = "allow" # various transitive deps
+multiple_crate_versions = "allow"            # various transitive deps
 pedantic = { level = "deny", priority = -1 }
 
+# A library workspace, not an embedded one: optimise for speed, keep
+# unwinding (the host crate's panic isolation depends on it), keep symbols.
+# Fat LTO: the per-step cost lives in cross-crate inlining (routine → context
+# → driver), and a release build is a one-off.
 [profile.release]
 codegen-units = 1
 lto = "fat"
-opt-level = "z"
-panic = "abort"
-strip = "symbols"
+opt-level = 3
+
+# Close to release, but thin LTO: benches are rebuilt often.
 
 [profile.bench]
 codegen-units = 1
 debug = true
 lto = "thin"
 opt-level = 3
-strip = false
