@@ -1,5 +1,6 @@
 //! Test routines and a host vocabulary shared by the crate's tests.
 
+use alloc::{format, string::String, vec::Vec};
 use core::{future::Future, ops::ControlFlow};
 use sans_effort::{
     boundary::{
@@ -87,8 +88,8 @@ impl<F: Future + Unpin> Future for PollOnce<F> {
             reason = "a test fixture that is polled exactly once by construction"
         )]
         let mut inner = self.0.take().expect("polled once");
-        drop(std::pin::Pin::new(&mut inner).poll(cx));
-        std::task::Poll::Ready(inner)
+        drop(core::pin::Pin::new(&mut inner).poll(cx));
+        core::task::Poll::Ready(inner)
     }
 }
 

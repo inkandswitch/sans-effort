@@ -2,13 +2,13 @@
 //! [`Encoded`](crate::encoded::Encoded).
 
 use crate::{error::Error, status::Status};
+use alloc::vec::Vec;
+use core::{future::Future, marker::PhantomData};
 use sans_effort::{
     boundary::{host_effect::HostEffect, pending::Pending},
     driver::{Driver, outbox::Outbox},
     reply::{Reply, handle::ReplyHandle},
 };
-use alloc::vec::Vec;
-use core::{future::Future, marker::PhantomData};
 
 /// A driver plus the requests it has outstanding, keyed by id: the typed
 /// layer.

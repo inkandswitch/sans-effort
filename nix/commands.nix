@@ -36,8 +36,8 @@ in {
     ${cargo} hack check -p sans_effort --feature-powerset --at-least-one-of std,spin
 
     echo ""
-    echo "===> Checking sans_effort (wasm32-unknown-unknown)..."
-    ${cargo} check -p sans_effort --no-default-features --features spin --target wasm32-unknown-unknown
+    echo "===> Checking sans_effort and sans_effort_host without std (wasm32-unknown-unknown)..."
+    ${cargo} check -p sans_effort -p sans_effort_host --no-default-features --features sans_effort/spin --target wasm32-unknown-unknown
 
     echo ""
     echo "===> Checking sans_effort (thumbv6m-none-eabi, critical-section)..."
