@@ -15,7 +15,8 @@ extern "C" {
     #[wasm_bindgen(js_name = Host)]
     pub type JsHost;
 
-    /// The next line of input. `string`, or a `Promise` of one.
+    /// The next line of input: a `string`, or a `Promise` of one; anything
+    /// else (`null` at end of input) closes the input.
     #[wasm_bindgen(method, js_name = readLine)]
     pub fn read_line(this: &JsHost) -> JsValue;
 

@@ -12,6 +12,7 @@ rust-version.workspace = true
 
 [dependencies]
 sans-effort = { workspace = true }
+sans-effort-effects = { workspace = true }
 
 [dev-dependencies]
 bolero = { workspace = true }

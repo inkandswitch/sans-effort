@@ -12,6 +12,7 @@ rust-version.workspace = true
 
 [dependencies]
 sans-effort = { workspace = true }
+sans-effort-effects = { workspace = true }
 routines = { version = "0.1.0", path = "../routines" }
 
 [dev-dependencies]

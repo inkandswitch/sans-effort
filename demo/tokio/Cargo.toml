@@ -12,6 +12,7 @@ rust-version.workspace = true
 
 [dependencies]
 sans-effort = { workspace = true, features = ["std"] }
+sans-effort-effects = { workspace = true, features = ["std"] }
 routines = { version = "0.1.0", path = "../routines" }
 tokio = { workspace = true }
 

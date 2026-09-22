@@ -27,7 +27,7 @@ const lines = ["alice", "bob"][Symbol.iterator]();
 let greeted = 0;
 
 await new Greeter({
-  readLine: () => lines.next().value ?? "quit",       // string | Promise<string>
+  readLine: () => lines.next().value ?? null,         // string | Promise<string>; null: end of input
   lookup:   (name) => GREETINGS[name] ?? "Greetings", // string | Promise<string>
   sleep:    (ms) => new Promise((r) => setTimeout(r, ms)),
   count:    () => ++greeted,                          // number | Promise<number>
@@ -35,7 +35,7 @@ await new Greeter({
 }).run();
 ```
 
-Every method may return its value or a `Promise` of it. `readLine` returning anything but a string ends the conversation. The generated `pkg/greeter_wasm.d.ts` has the exact types.
+Every method may return its value or a `Promise` of it. `readLine` returning anything but a string closes the input: the routine sees `ReadLineError::Closed`. The generated `pkg/greeter_wasm.d.ts` has the exact types.
 
 ## Why not a `Machine` here?
 

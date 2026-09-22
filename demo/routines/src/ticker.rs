@@ -1,12 +1,10 @@
 //! A routine that needs less than the greeter.
 
-use crate::{
-    PAUSE,
-    traits::{Sleep, WriteLine},
-};
+use crate::PAUSE;
 use alloc::format;
 use core::ops::ControlFlow;
 use sans_effort::run::Run;
+use sans_effort_effects::{console::WriteLine, time::Sleep};
 
 /// Ticks `n` times, pausing between, and never reads a line, looks anything
 /// up, or counts.

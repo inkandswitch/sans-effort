@@ -2,14 +2,18 @@
 
 use crate::{
     PAUSE,
-    traits::{Count, Lookup, ReadLine, Sleep, WriteLine},
+    traits::{Count, Lookup},
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
 use sans_effort::run::Run;
+use sans_effort_effects::{
+    console::{ReadLine, WriteLine},
+    time::Sleep,
+};
 
 /// Prompt, read a name, look up a greeting, pause, greet, count; repeat until
-/// the name is `quit`.
+/// the name is `quit` or the input ends.
 #[derive(Debug)]
 pub struct Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine> {
     ctx: C,
@@ -25,12 +29,13 @@ impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Greeter<C> {
 impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write_line(String::from("Who are you?"));
-        let name = self.ctx.read_line().await;
-
-        if name == "quit" {
-            self.ctx.write_line(String::from("Bye."));
-            return ControlFlow::Break(());
-        }
+        let name = match self.ctx.read_line().await {
+            Ok(name) if name != "quit" => name,
+            Ok(_) | Err(_) => {
+                self.ctx.write_line(String::from("Bye."));
+                return ControlFlow::Break(());
+            }
+        };
 
         let greeting = self.ctx.lookup(name.clone()).await;
         self.ctx.sleep(PAUSE).await;

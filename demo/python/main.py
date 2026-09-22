@@ -6,7 +6,7 @@ table (which byte means which effect) is the one thing that is the program's
 rather than the ABI's, and it is `TAGS` below.
 
     cargo build -p greeter_cdylib
-    python3 demo/python/main.py            # alice, bob, quit
+    python3 demo/python/main.py            # alice, bob, then end of input
     python3 demo/python/main.py --fanout   # two waits per batch
     python3 demo/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
 """
@@ -149,6 +149,16 @@ class Library:
 TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line"}
 
 
+def read_line_reply(id_: int, line: str | None) -> bytes:
+    """`read_line` is fallible, so it is answered with bytes: an encoded
+    `Result<String, ReadLineError>` — `00 · str` for a line, `01 · 00` once
+    the input is closed."""
+    if line is None:
+        return reply_bytes(id_, b"\x01\x00")
+    b = line.encode()
+    return reply_bytes(id_, b"\x00" + struct.pack("<I", len(b)) + b)
+
+
 def decode(data: bytes) -> list[dict]:
     """Frames → dicts with a `kind`, its fields, and an `id` if awaiting."""
     effects = []
@@ -200,7 +210,7 @@ def drive(lib: Library, handle: int, script: list[str]) -> list[str]:
             print(e["text"])
             continue
         if e["kind"] == "read_line":
-            record = reply_str(e["id"], next(lines, "quit"))
+            record = read_line_reply(e["id"], next(lines, None))
         elif e["kind"] == "lookup":
             record = reply_str(e["id"], GREETINGS.get(e["name"], "Greetings"))
         elif e["kind"] == "sleep":

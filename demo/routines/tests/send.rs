@@ -6,11 +6,9 @@
 //! `Rc` in the concrete future (`ui/not_send.rs`, checked with `trybuild`).
 
 use core::{cell::Cell, time::Duration};
-use routines::{
-    ticker::Ticker,
-    traits::{Sleep, WriteLine},
-};
+use routines::ticker::Ticker;
 use sans_effort::{run::Run, testing::run_now};
+use sans_effort_effects::{console::WriteLine, time::Sleep};
 use std::rc::Rc;
 
 /// A context nothing could ever send across a thread.

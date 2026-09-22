@@ -202,6 +202,7 @@ dependencies = [
  "bolero",
  "routines",
  "sans-effort",
+ "sans-effort-effects",
 ]
 
 [[package]]
@@ -211,6 +212,7 @@ dependencies = [
  "greeter_boundary",
  "routines",
  "sans-effort",
+ "sans-effort-effects",
  "sans-effort-host",
 ]
 
@@ -220,6 +222,7 @@ version = "0.1.0"
 dependencies = [
  "routines",
  "sans-effort",
+ "sans-effort-effects",
  "tokio",
 ]
 
@@ -230,6 +233,7 @@ dependencies = [
  "js-sys",
  "routines",
  "sans-effort",
+ "sans-effort-effects",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -408,6 +412,7 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "sans-effort",
+ "sans-effort-effects",
  "trybuild",
 ]
 
@@ -425,6 +430,15 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "spin",
+ "thiserror",
+]
+
+[[package]]
+name = "sans-effort-effects"
+version = "0.1.0"
+dependencies = [
+ "bolero",
+ "sans-effort",
  "thiserror",
 ]
 

@@ -3,10 +3,8 @@
 
 use core::{cell::Cell, time::Duration};
 use sans_effort::run::Run;
-use routines::{
-    ticker::Ticker,
-    traits::{Sleep, WriteLine},
-};
+use routines::ticker::Ticker;
+use sans_effort_effects::{console::WriteLine, time::Sleep};
 use std::rc::Rc;
 
 struct Local(Rc<Cell<u32>>);

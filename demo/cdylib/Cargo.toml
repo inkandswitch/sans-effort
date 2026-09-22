@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sans-effort = { workspace = true, features = ["std"] }
+sans-effort-effects = { workspace = true }
 sans-effort-host = { workspace = true }
 greeter_boundary = { version = "0.1.0", path = "../boundary" }
 routines = { version = "0.1.0", path = "../routines" }

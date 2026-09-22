@@ -62,12 +62,12 @@ And therefore lives with each routine:
 
 ## A conversation
 
-The greeter in `demo/`, driven from start to `quit`. Each frame is written `tell[…]` or `ask[…]`, with its length left out:
+The greeter in `demo/`, driven from start to the end of its input. Each frame is written `tell[…]` or `ask[…]`, with its length left out. `ReadLine` is fallible, so its replies are `bytes` holding an encoded `Result` — `⟨00 "alice"⟩` is `Ok("alice")`, `⟨01 00⟩` is `Err(Closed)`:
 
 ```text
 host → start(h)
      ← tell[05 "Who are you?"] · ask[03 id=1]        AWAITING     WriteLine, ReadLine·1
-host → reply(h, [01 id=1 "alice"])                       str
+host → reply(h, [04 id=1 ⟨00 "alice"⟩])                  bytes: Ok("alice")
      ← ask[02 "alice" id=2]                          AWAITING     Lookup·2
 host → reply(h, [01 id=2 "Hello"])                       str
      ← ask[04 millis=50 id=3]                        AWAITING     Sleep·3
@@ -76,7 +76,7 @@ host → reply(h, [03 id=3])                               unit
 host → reply(h, [02 id=4 1])                             u64
      ← tell[05 "(greeted 1 so far)"] · tell[05 "Who are you?"] · ask[03 id=5]
                                                      AWAITING
-host → reply(h, [01 id=5 "quit"])                        str
+host → reply(h, [04 id=5 ⟨01 00⟩])                       bytes: Err(Closed)
      ← tell[05 "Bye."]                               COMPLETE
 host → free(h)                                       OK
 ```

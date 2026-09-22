@@ -12,7 +12,9 @@
 //! A message type implements both, field by field:
 //!
 //! ```
-//! use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
+//! use sans_effort::boundary::codec::{
+//!     Decode, DecodeError, Encode, Reader, Writer,
+//! };
 //!
 //! #[derive(Debug, PartialEq)]
 //! enum Counter {
@@ -44,7 +46,10 @@
 //!
 //! let bytes = Counter::Incr(3).to_bytes();
 //! assert_eq!(Counter::from_bytes(&bytes), Ok(Counter::Incr(3)));
-//! assert_eq!(Counter::from_bytes(&[7]), Err(DecodeError::UnknownTag { tag: 7 }));
+//! assert_eq!(
+//!     Counter::from_bytes(&[7]),
+//!     Err(DecodeError::UnknownTag { tag: 7 }),
+//! );
 //! ```
 
 use alloc::{string::String, vec::Vec};
@@ -252,6 +257,14 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// A reference encodes as what it points to, so `Result<&str, E>` or
+/// `Option<&[u8]>` can be written without an owned copy.
+impl<T: Encode + ?Sized> Encode for &T {
+    fn encode(&self, w: &mut Writer) {
+        (**self).encode(w);
+    }
+}
+
 impl Encode for u8 {
     fn encode(&self, w: &mut Writer) {
         w.u8(*self);
@@ -334,6 +347,57 @@ impl Decode for Vec<u8> {
     }
 }
 
+/// `Ok` is tag `0` then the value; `Err` is tag `1` then the error. A fallible
+/// reply crosses as `bytes` in this shape, so every host writes it the same
+/// way.
+impl<T: Encode, E: Encode> Encode for Result<T, E> {
+    fn encode(&self, w: &mut Writer) {
+        match self {
+            Ok(value) => {
+                w.u8(0);
+                value.encode(w);
+            }
+            Err(error) => {
+                w.u8(1);
+                error.encode(w);
+            }
+        }
+    }
+}
+
+impl<T: Decode, E: Decode> Decode for Result<T, E> {
+    fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        match r.u8()? {
+            0 => Ok(Ok(T::decode(r)?)),
+            1 => Ok(Err(E::decode(r)?)),
+            tag => Err(DecodeError::UnknownTag { tag }),
+        }
+    }
+}
+
+/// `None` is tag `0`; `Some` is tag `1` then the value.
+impl<T: Encode> Encode for Option<T> {
+    fn encode(&self, w: &mut Writer) {
+        match self {
+            None => w.u8(0),
+            Some(value) => {
+                w.u8(1);
+                value.encode(w);
+            }
+        }
+    }
+}
+
+impl<T: Decode> Decode for Option<T> {
+    fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        match r.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(T::decode(r)?)),
+            tag => Err(DecodeError::UnknownTag { tag }),
+        }
+    }
+}
+
 /// Why bytes could not be decoded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum DecodeError {
@@ -409,6 +473,39 @@ mod tests {
                 round_trips(e);
                 round_trips(&());
             });
+    }
+
+    #[test]
+    fn results_and_options_round_trip() {
+        bolero::check!()
+            .with_type::<(
+                Result<String, u64>,
+                Option<Vec<u8>>,
+                Option<Result<u32, String>>,
+            )>()
+            .for_each(|(a, b, c)| {
+                round_trips(a);
+                round_trips(b);
+                round_trips(c);
+                prefixes_are_truncated(a);
+                prefixes_are_truncated(b);
+            });
+    }
+
+    #[test]
+    fn result_and_option_tags() {
+        assert_eq!(Ok::<(), ()>(()).to_bytes(), [0]);
+        assert_eq!(Err::<(), ()>(()).to_bytes(), [1]);
+        assert_eq!(None::<()>.to_bytes(), [0]);
+        assert_eq!(Some(()).to_bytes(), [1]);
+        assert_eq!(
+            Result::<(), ()>::from_bytes(&[2]),
+            Err(DecodeError::UnknownTag { tag: 2 })
+        );
+        assert_eq!(
+            Option::<()>::from_bytes(&[2]),
+            Err(DecodeError::UnknownTag { tag: 2 })
+        );
     }
 
     #[test]

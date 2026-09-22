@@ -24,7 +24,7 @@ function host(script) {
   let greeted = 0;
 
   return {
-    readLine: () => lines.next().value ?? "quit",
+    readLine: () => lines.next().value ?? null, // null: end of input
     lookup: (name) => GREETINGS[name] ?? "Greetings",
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     count: () => ++greeted,

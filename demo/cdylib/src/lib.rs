@@ -10,9 +10,10 @@
 //! `ABI.md` at the repository root is the contract; `../python/main.py` is a
 //! host that speaks it with a byte buffer and no library.
 
-use greeter_boundary::{Ctx, Full, Quiet};
+use greeter_boundary::{Full, Quiet};
 use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
 use sans_effort::run::Run;
+use sans_effort_effects::Ctx;
 use sans_effort_host::{
     code::{ABI_VERSION, code_of},
     error::Error,

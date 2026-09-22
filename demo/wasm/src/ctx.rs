@@ -9,7 +9,11 @@
 use crate::host::JsHost;
 use core::time::Duration;
 use js_sys::Promise;
-use routines::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
+use routines::traits::{Count, Lookup};
+use sans_effort_effects::{
+    console::{ReadLine, ReadLineError, WriteLine},
+    time::Sleep,
+};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
@@ -57,13 +61,13 @@ impl Lookup for JsCtx {
 }
 
 impl ReadLine for JsCtx {
-    /// A host returning a non-string (`undefined` at end of input, say) ends
-    /// the conversation.
-    async fn read_line(&self) -> String {
+    /// A host returning a non-string (`null` or `undefined` at end of input)
+    /// closes the input.
+    async fn read_line(&self) -> Result<String, ReadLineError> {
         settle(self.host.read_line())
             .await
             .as_string()
-            .unwrap_or_else(|| String::from("quit"))
+            .ok_or(ReadLineError::Closed)
     }
 }
 

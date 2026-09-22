@@ -1,39 +1,54 @@
-//! The greeter's reifying context and host vocabularies: its side of the boundary.
+//! The greeter's host vocabularies: its side of the boundary.
 //!
 //! `Greeter<Ctx<E>>` is the same routine as under `greeter_tokio`; only
-//! the context differs. The routines are the `routines` crate. [`Ctx`] serves every wait by recording a request that
-//! carries a [`ReplyHandle`](sans_effort::reply::handle::ReplyHandle) and suspending; a host replies by id. This crate
-//! is what only the routine's author can write — which requests exist, how
-//! the five traits map onto them, how a host sees them — and nothing else.
+//! the context differs. The routines are the `routines` crate; the context,
+//! [`Ctx`](sans_effort_effects::Ctx), and the `Sleep`, `ReadLine`, and
+//! `WriteLine` effects are `sans-effort-effects`, the standard library.
+//! `Ctx` serves every wait by recording a request that carries a
+//! [`ReplyHandle`](sans_effort::reply::handle::ReplyHandle) and suspending; a
+//! host replies by id. The demo's own capabilities, `Count` and `Lookup`,
+//! carry their effects and `Ctx` impls with their traits in `routines`. This
+//! crate is the rest of what only the routine's author can write — the
+//! vocabularies a host may offer, and how a host sees them — and nothing
+//! else.
 //! Stepping, the handle table, and the type check on replies are
 //! `sans-effort-host`; the `extern "C"` surface is the _binding_ over both,
 //! in `../cdylib`. (`../wasm` needs neither: JS is a runtime host.)
 //!
 //! ```text
-//!   routines   Greeter<C>: Run   ──▶   this crate   Ctx<E> · Full · View · Encode   ──▶   sans-effort-host
-//!                                                                                                  │
-//!                                                                     ┌────────────────────────────┴──────────┐
-//!                                                                  cdylib  greeter_* (C ABI)          wasm  Greeter class
+//!   routines               Greeter<C>: Run; Count, Lookup
+//!                          (with their effects and Ctx impls)
+//!                                     │
+//!   sans-effort-effects    Ctx<E>; Sleep, ReadLine, WriteLine
+//!                          (with their effects)
+//!                                     │
+//!                                     ▼
+//!   this crate             Full · Quiet · View · Encode
+//!                                     │
+//!                                     ▼
+//!   sans-effort-host  ──▶  cdylib (C ABI)
 //! ```
 //!
 //! # The host chooses the vocabulary
 //!
-//! Each wait is a request struct ([`Lookup`], [`ReadLine`], …) naming its
-//! reply type through [`Request`]. [`Ctx`] implements each of the greeter's
+//! Each wait is a request struct (`Lookup`, `ReadLine`, …) naming its
+//! reply type through `Request`. `Ctx` implements each of the greeter's
 //! traits for _any_ `E` that can carry the corresponding request —
 //! `E: From<Asked<Lookup>>` — so a host defines `E` and meets each bound
 //! with a `From` impl. [`Full`] carries all five; [`Quiet`] carries only
-//! `Sleep` and `Write`.
+//! `Sleep` and `WriteLine`.
 //!
-//! That is attenuation, checked where the routine is built and visible on the
-//! wire: `Ctx<Quiet>` does not implement `traits::Lookup`, so a `Greeter` cannot
-//! be spawned under it, while a `Ticker` can — and a host driving a `Quiet`
-//! machine knows from the type alone that tags 1–3 can never appear.
+//! That is attenuation, checked where the routine is built and visible on
+//! the wire: `Ctx<Quiet>` does not implement `traits::Lookup`, so a
+//! `Greeter` cannot be spawned under it, while a `Ticker` can — and a host
+//! driving a `Quiet` machine knows from the type alone that tags 1–3 can
+//! never appear.
 //!
 //! ```compile_fail,E0277
 //! use sans_effort::{driver::Driver, run::Run};
 //! use routines::greeter::Greeter;
-//! use greeter_boundary::{Ctx, Quiet};
+//! use greeter_boundary::Quiet;
+//! use sans_effort_effects::Ctx;
 //!
 //! // error[E0277]: the trait bound `Ctx<Quiet>: Lookup` is not satisfied
 //! let _ = Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());
@@ -43,13 +58,16 @@
 //!
 //! Little-endian; `str` is `u32 len` + UTF-8. One record per effect, which
 //! the host layer wraps in a frame (`ABI.md` §Frames); an awaiting effect's
-//! record ends with its `u64` request id. This table is the payload only:
+//! record ends with its `u64` request id. This table is the payload only.
+//! `ReadLine` is fallible, so its reply is `bytes` holding an encoded
+//! `Result<String, ReadLineError>`: `00 · str` for a line, `01 · 00` at the
+//! end of input, `01 · 01` if the input failed.
 //!
 //! | tag | effect                   | reply with |
 //! |-----|--------------------------|------------|
 //! | 1   | `Count · id`             | `2 id u64` |
 //! | 2   | `Lookup(str) · id`       | `1 id str` |
-//! | 3   | `ReadLine · id`          | `1 id str` |
+//! | 3   | `ReadLine · id`          | `4 id bytes` |
 //! | 4   | `Sleep(u64 millis) · id` | `3 id`     |
 //! | 5   | `WriteLine(str)`         | —          |
 
@@ -57,108 +75,21 @@
 
 extern crate alloc;
 
-use alloc::string::String;
-use core::time::Duration;
-use routines::traits;
+use alloc::{string::String, vec::Vec};
+use routines::traits::effect::{Count, Lookup};
 use sans_effort::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
         pending::Pending,
     },
-    driver::outbox::Outbox,
     reply::Reply,
-    request::{Asked, Request},
+    request::Asked,
 };
-
-// ---- requests: one per awaited capability, plus the one message ----------
-
-/// How many greetings so far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Count;
-
-/// The greeting word for a name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Lookup(pub String);
-
-/// The next line of input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReadLine;
-
-/// Wake after a duration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Sleep(pub Duration);
-
-/// Show a line. Fire-and-forget; not a [`Request`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WriteLine(pub String);
-
-impl Request for Count {
-    type Reply = u64;
-}
-
-impl Request for Lookup {
-    type Reply = String;
-}
-
-impl Request for ReadLine {
-    type Reply = String;
-}
-
-impl Request for Sleep {
-    type Reply = ();
-}
-
-// ---- the reifying context -------------------------------------------------
-
-/// A context that serves every wait by asking the host.
-///
-/// Generic over the host's vocabulary `E`. Each trait impl below holds
-/// exactly when `E` can carry that trait's request, so the set of traits
-/// `Ctx<E>` implements _is_ the set of capabilities the host has agreed to
-/// provide.
-#[derive(Debug)]
-pub struct Ctx<E> {
-    outbox: Outbox<E>,
-}
-
-impl<E> Ctx<E> {
-    /// A context writing into `outbox`.
-    #[must_use]
-    pub const fn new(outbox: Outbox<E>) -> Self {
-        Self { outbox }
-    }
-}
-
-impl<E: From<Asked<Sleep>>> traits::Sleep for Ctx<E> {
-    async fn sleep(&self, duration: Duration) {
-        self.outbox.request(Sleep(duration)).await;
-    }
-}
-
-impl<E: From<Asked<Count>>> traits::Count for Ctx<E> {
-    async fn count(&self) -> u64 {
-        self.outbox.request(Count).await
-    }
-}
-
-impl<E: From<Asked<Lookup>>> traits::Lookup for Ctx<E> {
-    async fn lookup(&self, name: String) -> String {
-        self.outbox.request(Lookup(name)).await
-    }
-}
-
-impl<E: From<Asked<ReadLine>>> traits::ReadLine for Ctx<E> {
-    async fn read_line(&self) -> String {
-        self.outbox.request(ReadLine).await
-    }
-}
-
-impl<E: From<WriteLine>> traits::WriteLine for Ctx<E> {
-    fn write_line(&self, line: String) {
-        self.outbox.notify(WriteLine(line));
-    }
-}
+use sans_effort_effects::{
+    console::effect::{ReadLine, WriteLine},
+    time::effect::Sleep,
+};
 
 // ---- Full: a host that offers everything ----------------------------------
 
@@ -261,14 +192,14 @@ impl HostEffect for Full {
             ),
             Full::ReadLine(Asked { reply, .. }) => (
                 View::ReadLine { id: reply.id() },
-                Some(String::pending(reply)),
+                Some(Vec::<u8>::pending(reply)),
             ),
             Full::Sleep(Asked {
-                request: Sleep(after),
+                request: sleep,
                 reply,
             }) => (
                 View::Sleep {
-                    millis: u64::try_from(after.as_millis()).unwrap_or(u64::MAX),
+                    millis: sleep.millis(),
                     id: reply.id(),
                 },
                 Some(<()>::pending(reply)),
@@ -345,10 +276,10 @@ impl HostEffect for Quiet {
 
 #[cfg(test)]
 mod tests {
-    //! The boundary crate's test story: the same routine, through a `Driver`, read off
-    //! as data. Where `greeter`'s tests assert on what a mock recorded, these
-    //! assert on the effects a host would see — the thing the wire exists to
-    //! carry.
+    //! The boundary crate's test story: the same routine, through a
+    //! `Driver`, read off as data. Where `greeter`'s tests assert on what a
+    //! mock recorded, these assert on the effects a host would see — the
+    //! thing the wire exists to carry.
 
     #![expect(
         clippy::expect_used,
@@ -363,9 +294,10 @@ mod tests {
     use core::future::Future;
     use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
     use sans_effort::{
-        driver::{Driver, status::Status},
+        driver::{Driver, outbox::Outbox, status::Status},
         run::Run,
     };
+    use sans_effort_effects::{Ctx, console::ReadLineError};
 
     fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
         Greeter::new(Ctx::new(outbox)).run()
@@ -382,7 +314,7 @@ mod tests {
     /// A scripted host: answers every request at once, records what it was
     /// shown, and returns what the routine wrote.
     fn transcript(mut driver: Driver<Full>, script: &[&str]) -> (Vec<View>, Vec<String>) {
-        let mut lines = script.iter().map(|s| String::from(*s));
+        let mut lines = script.iter().copied();
         let mut seen = Vec::new();
         let mut written = Vec::new();
         let mut greeted = 0;
@@ -397,8 +329,8 @@ mod tests {
                 }
                 Full::ReadLine(Asked { reply, .. }) => {
                     seen.push(View::ReadLine { id: reply.id() });
-                    let line = lines.next().unwrap_or_else(|| String::from("quit"));
-                    driver.reply(reply, line)
+                    let line = lines.next().ok_or(ReadLineError::Closed);
+                    driver.reply(reply, ReadLine::reply(line))
                 }
                 Full::Lookup(Asked {
                     request: Lookup(name),
@@ -503,7 +435,7 @@ mod tests {
                         reply: lookup,
                     }),
                     Full::Count(Asked { reply: count, .. }),
-                ] = exactly(driver.reply(read, String::from("bob")))
+                ] = exactly(driver.reply(read, ReadLine::reply(Ok("bob"))))
                 else {
                     panic!("second batch: lookup + count");
                 };
@@ -533,9 +465,9 @@ mod tests {
                 if *sleep_first {
                     fourth.extend(driver.reply(sleep, ()));
                     assert!(fourth.is_empty());
-                    fourth.extend(driver.reply(read, String::from("carol")));
+                    fourth.extend(driver.reply(read, ReadLine::reply(Ok("carol"))));
                 } else {
-                    fourth.extend(driver.reply(read, String::from("carol")));
+                    fourth.extend(driver.reply(read, ReadLine::reply(Ok("carol"))));
                     assert!(fourth.is_empty());
                     fourth.extend(driver.reply(sleep, ()));
                 }

@@ -6,7 +6,11 @@
 //! waker drives it. No effect is built, no driver polls, no host loop
 //! interprets anything. The routine is the task.
 
-use routines::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
+use routines::traits::{Count, Lookup};
+use sans_effort_effects::{
+    console::{ReadLine, ReadLineError, WriteLine},
+    time::Sleep,
+};
 use std::{
     io::{self, Write as _},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -20,9 +24,9 @@ use tokio::{
 /// A context whose waits are tokio futures.
 ///
 /// Generic over its line source `R`: stdin in `main`, a byte slice in tests,
-/// statically dispatched either way. `WriteLine` writes to stdout; `Lookup` is a fixed table; `Count`
-/// is an atomic; `Sleep` is `tokio::time::sleep`, so under a paused-clock
-/// test it costs no wall time.
+/// statically dispatched either way. `WriteLine` writes to stdout; `Lookup`
+/// is a fixed table; `Count` is an atomic; `Sleep` is `tokio::time::sleep`,
+/// so under a paused-clock test it costs no wall time.
 pub(crate) struct TokioCtx<R> {
     /// `read_line` needs `&mut R`; the trait takes `&self` so that a routine
     /// can `join` two waits on one context. Something must bridge the two,
@@ -33,7 +37,7 @@ pub(crate) struct TokioCtx<R> {
     lines: Mutex<R>,
     greeted: AtomicU64,
     /// Set once stdout has failed, so the failure is reported once and the
-    /// routine is left to finish on its own (it reads EOF and quits).
+    /// routine is left to finish on its own (its input closes and it ends).
     stdout_failed: AtomicBool,
 }
 
@@ -81,22 +85,23 @@ impl<R: AsyncBufRead + Send + Unpin> Lookup for TokioCtx<R> {
 }
 
 impl<R: AsyncBufRead + Send + Unpin> ReadLine for TokioCtx<R> {
-    /// The next line, or `quit` at end of input.
-    async fn read_line(&self) -> String {
+    /// The next line; `Closed` at end of input, `Failed` on a read error.
+    async fn read_line(&self) -> Result<String, ReadLineError> {
         let mut line = String::new();
         let read = self.lines.lock().await.read_line(&mut line).await;
 
         match read {
-            Ok(0) | Err(_) => String::from("quit"),
-            Ok(_) => line.trim_end().to_owned(),
+            Ok(0) => Err(ReadLineError::Closed),
+            Ok(_) => Ok(line.trim_end().to_owned()),
+            Err(_) => Err(ReadLineError::Failed),
         }
     }
 }
 
 impl<R: AsyncBufRead + Send + Unpin> WriteLine for TokioCtx<R> {
-    /// `WriteLine::write_line` is fire-and-forget by design, so a stdout error has
-    /// nowhere to go. A context must not end the process on the routine's
-    /// behalf; it reports once and carries on.
+    /// `WriteLine::write_line` is fire-and-forget by design, so a stdout
+    /// error has nowhere to go. A context must not end the process on the
+    /// routine's behalf; it reports once and carries on.
     fn write_line(&self, line: String) {
         if self.stdout_failed.load(Ordering::Relaxed) {
             return;

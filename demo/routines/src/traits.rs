@@ -1,6 +1,15 @@
-//! The capabilities a context may offer. One trait per verb, each one thing
-//! a routine can do to, or wait on from, its environment — and, under a
-//! reifying context, each one request type on the wire.
+//! The demo's own capabilities. `Count` and `Lookup` are specific to the
+//! greeter; `Sleep`, `ReadLine`, and `WriteLine` come from
+//! `sans-effort-effects`, the standard library, because nearly every routine
+//! wants them. One trait per verb, each one thing a routine can do to, or
+//! wait on from, its environment.
+//!
+//! Laid out like a module of the standard library: each trait, its effect
+//! (in [`effect`]), and its impl for the reifying
+//! [`Ctx`] live together. They must: the orphan
+//! rule allows `impl Count for Ctx<E>` only in the crate that defines `Count`
+//! or the one that defines `Ctx`. The routines themselves (`greeter`,
+//! `fanout`, `ticker`) use only the traits.
 //!
 //! Written as `async fn`. rustc warns that this leaves auto traits unstated,
 //! and it is right about what that costs: nothing generic over `C` can also
@@ -17,14 +26,11 @@
     reason = "spawn sites are always concrete (tokio::spawn, Driver::new), so Send is inferred there; a bound here would forbid !Send contexts such as the Rc-based test mock"
 )]
 
-use alloc::string::String;
-use core::time::Duration;
+pub mod effect;
 
-/// Wait for a duration.
-pub trait Sleep {
-    /// Return after `duration` has passed.
-    async fn sleep(&self, duration: Duration);
-}
+use alloc::string::String;
+use sans_effort::request::Asked;
+use sans_effort_effects::Ctx;
 
 /// Count a greeting.
 pub trait Count {
@@ -38,14 +44,14 @@ pub trait Lookup {
     async fn lookup(&self, name: String) -> String;
 }
 
-/// Read a line.
-pub trait ReadLine {
-    /// The next line.
-    async fn read_line(&self) -> String;
+impl<E: From<Asked<effect::Count>>> Count for Ctx<E> {
+    async fn count(&self) -> u64 {
+        self.request(effect::Count).await
+    }
 }
 
-/// Write a line. Fire-and-forget, so not `async`.
-pub trait WriteLine {
-    /// Show `line`.
-    fn write_line(&self, line: String);
+impl<E: From<Asked<effect::Lookup>>> Lookup for Ctx<E> {
+    async fn lookup(&self, name: String) -> String {
+        self.request(effect::Lookup(name)).await
+    }
 }

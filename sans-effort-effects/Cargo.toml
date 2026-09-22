@@ -1,0 +1,35 @@
+[package]
+name = "sans-effort-effects"
+version = "0.1.0"
+description = "A standard library of capabilities for sans-effort routines: the traits, their effects, and the reifying context, written once"
+readme = "README.md"
+
+categories = ["asynchronous", "no-std"]
+keywords = ["async", "capabilities", "effects", "no_std", "sans-io"]
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sans-effort = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+bolero = { workspace = true }
+sans-effort = { workspace = true, features = ["std"] }
+
+[features]
+default = ["std"]
+## Forwarded to `sans-effort`: the driver's lock is `std::sync::Mutex`.
+## A crate that only names the traits — a routine — should depend with
+## `default-features = false` and leave the choice to the binary.
+std = ["sans-effort/std"]
+## Forwarded to `sans-effort`: the lock for a `no_std` build. At least one of
+## `std` and `spin` must be enabled somewhere in the build.
+spin = ["sans-effort/spin"]
+
+[lints]
+workspace = true

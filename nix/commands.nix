@@ -34,11 +34,12 @@ in {
     echo ""
     echo "===> Checking every feature combination builds (or is refused on purpose)..."
     ${cargo} hack check -p sans-effort --feature-powerset --at-least-one-of std,spin
+    ${cargo} hack check -p sans-effort-effects --feature-powerset --at-least-one-of std,spin
     ${cargo} hack check -p sans-effort-host --feature-powerset --at-least-one-of std,spin
 
     echo ""
-    echo "===> Checking sans-effort and sans-effort-host without std (wasm32-unknown-unknown)..."
-    ${cargo} check -p sans-effort -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
+    echo "===> Checking sans-effort, sans-effort-effects, and sans-effort-host without std (wasm32-unknown-unknown)..."
+    ${cargo} check -p sans-effort -p sans-effort-effects -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
 
     echo ""
     echo "===> Checking sans-effort (thumbv6m-none-eabi, critical-section)..."

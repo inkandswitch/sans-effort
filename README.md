@@ -48,15 +48,16 @@ The routine is the foundation and depends on nothing above it. The native path i
 ## The routine
 
 ```rust
-pub trait Sleep     { async fn sleep(&self, d: Duration); }
-pub trait Lookup    { async fn lookup(&self, name: String) -> String; }
-pub trait ReadLine  { async fn read_line(&self) -> String; }
-pub trait WriteLine { fn write_line(&self, line: String); }
+use sans_effort_effects::{console::{ReadLine, WriteLine}, time::Sleep};  // the standard library
+
+pub trait Lookup { async fn lookup(&self, name: String) -> String; }      // the application's own
 
 impl<C: Sleep + Lookup + ReadLine + WriteLine> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write_line("Who are you?".into());
-        let name = self.ctx.read_line().await;
+        let Ok(name) = self.ctx.read_line().await else {                  // input can end
+            return ControlFlow::Break(());
+        };
         let greeting = self.ctx.lookup(name.clone()).await;
         self.ctx.sleep(PAUSE).await;
         self.ctx.write_line(format!("{greeting}, {name}!"));
@@ -80,8 +81,9 @@ tokio::spawn(Greeter::new(TokioCtx::new(stdin)).run());
 Behind a host — each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
 
 ```rust
-impl<E: From<Asked<Sleep>>> traits::Sleep for Ctx<E> {
-    async fn sleep(&self, d: Duration) { self.outbox.request(Sleep(d)).await }
+// in sans-effort-effects, written once for every application:
+impl<E: From<Asked<effect::Sleep>>> Sleep for Ctx<E> {
+    async fn sleep(&self, d: Duration) { self.request(effect::Sleep(d)).await }
 }
 // …
 Driver::<Full>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());   // ok
@@ -132,6 +134,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 | Crate                                   | Purpose                                                                                                                                                                                  | Target             |
 |-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
 | [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                        | `no_std` + `alloc` |
+| [`sans-effort-effects`](sans-effort-effects/) | A standard library of capabilities: `time` (`Sleep`) and `console` (`ReadLine`, `WriteLine`) — the traits, their effects, and the reifying `Ctx<E>`, written once | `no_std` + `alloc` |
 | [`sans-effort-host`](sans-effort-host/) | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                               | `std`              |
 | [`ABI.md`](ABI.md)                      | The contract a foreign host assumes                                                                                                                                                      | —                  |
 | [`design/`](design/)                    | How it works and why: assumptions, the effects stdlib, actors, capabilities, cancellation                                                                                               | —                  |
@@ -139,7 +142,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 
 ### Next
 
-A standard library of common capabilities — `Sleep`, console I/O, and actors (`Post`, `Receive`, `Spawn`) — as `sans-effort-effects`, with the reifying context shipped once and a native tokio context beside it; a derive for the `View`/`Encode` restatement. The demo grows routines that spawn and message each other, with each host's loop as the scheduler.
+Actors in the standard library (`Post`, `Receive`, `Spawn`), and a native tokio context beside it as `sans-effort-tokio`; a derive for the `View`/`Encode` restatement. The demo grows routines that spawn and message each other, with each host's loop as the scheduler.
 
 ### Not here, on purpose
 

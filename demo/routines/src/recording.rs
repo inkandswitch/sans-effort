@@ -8,19 +8,17 @@
 //! spawns, so nothing asks. Had the traits demanded `Send`, this mock could
 //! not exist.
 
-use crate::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
-use alloc::{
-    collections::VecDeque,
-    format,
-    rc::Rc,
-    string::{String, ToString},
-    vec::Vec,
-};
+use crate::traits::{Count, Lookup};
+use alloc::{collections::VecDeque, format, rc::Rc, string::String, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
     time::Duration,
 };
 use sans_effort::{run::Run, testing::run_now};
+use sans_effort_effects::{
+    console::{ReadLine, ReadLineError, WriteLine},
+    time::Sleep,
+};
 
 /// What a routine did to its context, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,13 +87,14 @@ impl Lookup for Recording {
 }
 
 impl ReadLine for Recording {
-    async fn read_line(&self) -> String {
+    /// The next scripted line, or `Closed` once the script runs out.
+    async fn read_line(&self) -> Result<String, ReadLineError> {
         self.log(Call::ReadLine);
         self.0
             .lines
             .borrow_mut()
             .pop_front()
-            .unwrap_or_else(|| "quit".to_string())
+            .ok_or(ReadLineError::Closed)
     }
 }
 

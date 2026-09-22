@@ -56,6 +56,11 @@ public class Main {
             .put((byte) 3).putLong(id).array();
     }
 
+    static byte[] replyBytes(long id, byte[] b) {
+        return ByteBuffer.allocate(1 + 8 + 4 + b.length).order(ByteOrder.LITTLE_ENDIAN)
+            .put((byte) 4).putLong(id).putInt(b.length).put(b).array();
+    }
+
     /** Little-endian records; `str` is u32 length + UTF-8. */
     static final class Reader {
         final ByteBuffer buf;
@@ -148,6 +153,18 @@ public class Main {
 
     record Effect(String kind, long id, String name, long millis, String text) {}
 
+    /**
+     * `read_line` is fallible, so it is answered with bytes: an encoded
+     * `Result<String, ReadLineError>` — `00 · str` for a line, `01 · 00`
+     * once the input is closed.
+     */
+    static byte[] readLineReply(long id, String line) {
+        if (line == null) return replyBytes(id, new byte[] {1, 0});
+        byte[] b = line.getBytes(StandardCharsets.UTF_8);
+        return replyBytes(id, ByteBuffer.allocate(1 + 4 + b.length).order(ByteOrder.LITTLE_ENDIAN)
+            .put((byte) 0).putInt(b.length).put(b).array());
+    }
+
     /** One effect frame: its kind (tell, ask, or reserved) and the view's bytes. */
     record Frame(int kind, byte[] payload) {}
 
@@ -227,7 +244,7 @@ public class Main {
         byte[] perform(Effect e) throws InterruptedException {
             return switch (e.kind()) {
                 case "read_line" -> {
-                    synchronized (lines) { yield replyStr(e.id(), lines.hasNext() ? lines.next() : "quit"); }
+                    synchronized (lines) { yield readLineReply(e.id(), lines.hasNext() ? lines.next() : null); }
                 }
                 case "lookup" -> replyStr(e.id(), GREETINGS.getOrDefault(e.name(), "Greetings"));
                 case "sleep" -> { Thread.sleep(e.millis()); yield replyUnit(e.id()); }
