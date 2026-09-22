@@ -6,21 +6,21 @@ members = [
   "demo/tokio",
   "demo/wasm",
   "demo/boundary",
-  "sans_effort",
-  "sans_effort_host",
+  "sans-effort",
+  "sans-effort-host",
 ]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/inkandswitch/sans_effort"
+repository = "https://github.com/inkandswitch/sans-effort"
 authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]
 
 [workspace.dependencies]
 # Internal crates
-sans_effort = { version = "0.1.0", path = "sans_effort", default-features = false }
-sans_effort_host = { version = "0.1.0", path = "sans_effort_host" }
+sans-effort = { version = "0.1.0", path = "sans-effort", default-features = false }
+sans-effort-host = { version = "0.1.0", path = "sans-effort-host" }
 
 # External crates
 bolero = "0.13"

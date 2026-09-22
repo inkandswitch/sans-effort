@@ -28,27 +28,27 @@ in {
   "test:no_std" = cmd "Check the core crate (wasm32, thumbv6m) and the demo routine (wasm32) build without std" ''
     set -e
 
-    echo "===> Checking sans_effort (no_std: spin lock)..."
-    ${cargo} check -p sans_effort --no-default-features --features spin
+    echo "===> Checking sans-effort (no_std: spin lock)..."
+    ${cargo} check -p sans-effort --no-default-features --features spin
 
     echo ""
     echo "===> Checking every feature combination builds (or is refused on purpose)..."
-    ${cargo} hack check -p sans_effort --feature-powerset --at-least-one-of std,spin
-    ${cargo} hack check -p sans_effort_host --feature-powerset --at-least-one-of std,spin
+    ${cargo} hack check -p sans-effort --feature-powerset --at-least-one-of std,spin
+    ${cargo} hack check -p sans-effort-host --feature-powerset --at-least-one-of std,spin
 
     echo ""
-    echo "===> Checking sans_effort and sans_effort_host without std (wasm32-unknown-unknown)..."
-    ${cargo} check -p sans_effort -p sans_effort_host --no-default-features --features spin --target wasm32-unknown-unknown
+    echo "===> Checking sans-effort and sans-effort-host without std (wasm32-unknown-unknown)..."
+    ${cargo} check -p sans-effort -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
 
     echo ""
-    echo "===> Checking sans_effort (thumbv6m-none-eabi, critical-section)..."
-    ${cargo} check -p sans_effort --no-default-features --features critical-section --target thumbv6m-none-eabi
+    echo "===> Checking sans-effort (thumbv6m-none-eabi, critical-section)..."
+    ${cargo} check -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
 
     echo ""
     echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
     # Neither crate picks a lock — that is the binary's decision — so checking
     # them as leaves means standing in for the binary here.
-    ${cargo} check -p routines -p greeter_boundary --features sans_effort/spin --target wasm32-unknown-unknown
+    ${cargo} check -p routines -p greeter_boundary --features sans-effort/spin --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"

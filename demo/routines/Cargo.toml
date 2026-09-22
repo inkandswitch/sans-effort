@@ -11,11 +11,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sans_effort = { workspace = true }
+sans-effort = { workspace = true }
 
 [dev-dependencies]
 bolero = { workspace = true }
-sans_effort = { workspace = true, features = ["std"] }
+sans-effort = { workspace = true, features = ["std"] }
 trybuild = { workspace = true }
 
 [lints]

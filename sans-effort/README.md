@@ -1,4 +1,4 @@
-# sans_effort
+# sans-effort
 
 > Host-driven async coroutines whose every wait is a typed effect
 
@@ -75,7 +75,7 @@ for effect in driver.start() {
 }
 ```
 
-A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `sans_effort_host` and `ABI.md` in the repository.
+A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
 
 ## Features
 

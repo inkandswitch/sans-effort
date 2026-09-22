@@ -28,7 +28,7 @@ jobs:
       # Only the core crate is no_std; the host crate and the demo are std by
       # design, so these are scoped with -p rather than --workspace.
       - name: Check no_std (host)
-        run: cargo check -p sans_effort --no-default-features --features spin
+        run: cargo check -p sans-effort --no-default-features --features spin
 
       - name: Install cargo-hack
         uses: taiki-e/install-action
@@ -37,14 +37,14 @@ jobs:
 
       - name: Every feature combination with at least one lock builds
         run: |
-          cargo hack check -p sans_effort --feature-powerset --at-least-one-of std,spin
-          cargo hack check -p sans_effort_host --feature-powerset --at-least-one-of std,spin
+          cargo hack check -p sans-effort --feature-powerset --at-least-one-of std,spin
+          cargo hack check -p sans-effort-host --feature-powerset --at-least-one-of std,spin
 
       - name: Check wasm32
-        run: cargo check -p sans_effort -p sans_effort_host --no-default-features --features spin --target wasm32-unknown-unknown
+        run: cargo check -p sans-effort -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
 
       - name: Check thumbv6m (no CAS, no 64-bit atomics)
-        run: cargo check -p sans_effort --no-default-features --features critical-section --target thumbv6m-none-eabi
+        run: cargo check -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
 
       - name: Check the demo routine and wire crate are no_std (wasm32)
-        run: cargo check -p routines -p greeter_boundary --features sans_effort/spin --target wasm32-unknown-unknown
+        run: cargo check -p routines -p greeter_boundary --features sans-effort/spin --target wasm32-unknown-unknown

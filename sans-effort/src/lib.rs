@@ -183,7 +183,7 @@
 //! ```
 //!
 //! A host in another language cannot hold a `ReplyHandle`; see [`boundary`] and
-//! the `sans_effort_host` crate for that path. A host with a runtime needs
+//! the `sans-effort-host` crate for that path. A host with a runtime needs
 //! none of this: implement `Console` with real futures and `tokio::spawn` the
 //! routine.
 //!
