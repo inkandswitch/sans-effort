@@ -15,7 +15,11 @@ This is the library. The research that motivates it, with the alternatives built
 | The same program in six styles, side by side | [`compare/`][compare]                         |
 | What it costs per step, per host             | [`hosts/bench/`][bench]                       |
 
-[exploration]: https://tangled.org/expede.wtf/effect-routines-exploration [guide]: https://tangled.org/expede.wtf/effect-routines-exploration/raw/main/guide/how-to-write-effect-routines.pdf [analysis]: https://tangled.org/expede.wtf/effect-routines-exploration/blob/main/analysis/README.md [compare]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/compare [bench]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/hosts/bench
+[exploration]: https://tangled.org/expede.wtf/effect-routines-exploration
+[guide]: https://tangled.org/expede.wtf/effect-routines-exploration/raw/main/guide/how-to-write-effect-routines.pdf
+[analysis]: https://tangled.org/expede.wtf/effect-routines-exploration/blob/main/analysis/README.md
+[compare]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/compare
+[bench]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/hosts/bench
 
 ## Three layers
 
@@ -43,15 +47,15 @@ The routine is the foundation and depends on nothing above it. The left column i
 pub trait Sleep     { async fn sleep(&self, d: Duration); }
 pub trait Lookup    { async fn lookup(&self, name: String) -> String; }
 pub trait ReadLine  { async fn read_line(&self) -> String; }
-pub trait WriteLine { fn write(&self, line: String); }
+pub trait WriteLine { fn write_line(&self, line: String); }
 
 impl<C: Sleep + Lookup + ReadLine + WriteLine> Run for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
-        self.ctx.write("Who are you?".into());
+        self.ctx.write_line("Who are you?".into());
         let name = self.ctx.read_line().await;
         let greeting = self.ctx.lookup(name.clone()).await;
         self.ctx.sleep(PAUSE).await;
-        self.ctx.write(format!("{greeting}, {name}!"));
+        self.ctx.write_line(format!("{greeting}, {name}!"));
         ControlFlow::Continue(())
     }
 }

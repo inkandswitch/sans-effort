@@ -138,7 +138,7 @@ public class Main {
                 case 2 -> { String name = r.str(); yield new Effect("lookup", r.u64(), name, 0, null); }
                 case 3 -> new Effect("read_line", r.u64(), null, 0, null);
                 case 4 -> { long millis = r.u64(); yield new Effect("sleep", r.u64(), null, millis, null); }
-                case 5 -> new Effect("write", 0, null, 0, r.str());
+                case 5 -> new Effect("write_line", 0, null, 0, r.str());
                 default -> throw new IllegalStateException("unknown effect tag " + tag + ": this host knows 1..5");
             });
         }
@@ -158,7 +158,7 @@ public class Main {
             Effect e = queue.poll();
             byte[] record;
             switch (e.kind()) {
-                case "write" -> { System.out.println(e.text()); continue; }
+                case "write_line" -> { System.out.println(e.text()); continue; }
                 case "read_line" -> record = replyStr(e.id(), lines.hasNext() ? lines.next() : "quit");
                 case "lookup" -> record = replyStr(e.id(), GREETINGS.getOrDefault(e.name(), "Greetings"));
                 case "sleep" -> { Thread.sleep(e.millis()); record = replyUnit(e.id()); }

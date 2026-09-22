@@ -128,7 +128,7 @@ class Library:
 
 # ---- the greeter's tag table (the program's, not the ABI's) ---------------
 
-TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write"}
+TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line"}
 
 
 def decode(data: bytes) -> list[dict]:
@@ -147,7 +147,7 @@ def decode(data: bytes) -> list[dict]:
             effects.append({"kind": kind, "id": r.u64()})
         elif kind == "sleep":
             effects.append({"kind": kind, "millis": r.u64(), "id": r.u64()})
-        elif kind == "write":
+        elif kind == "write_line":
             effects.append({"kind": kind, "text": r.str()})
     return effects
 
@@ -165,7 +165,7 @@ def drive(lib: Library, handle: int, script: list[str]) -> list[str]:
 
     while queue:
         e = queue.popleft()
-        if e["kind"] == "write":
+        if e["kind"] == "write_line":
             written.append(e["text"])
             print(e["text"])
             continue

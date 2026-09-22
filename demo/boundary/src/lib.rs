@@ -50,7 +50,7 @@
 //! | 2   | `Lookup(str) · id`       | `1 id str` |
 //! | 3   | `ReadLine · id`          | `1 id str` |
 //! | 4   | `Sleep(u64 millis) · id` | `3 id`     |
-//! | 5   | `Write(str)`             | —          |
+//! | 5   | `WriteLine(str)`         | —          |
 
 #![no_std]
 
