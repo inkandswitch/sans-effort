@@ -1,6 +1,6 @@
 //! C ABI over the greeter: `new`, `start`, `reply`, `free`.
 //!
-//! The vocabulary and the reifying context are `greeter_wire`; the handle
+//! The vocabulary and the reifying context are `greeter_boundary`; the handle
 //! table and the type check on replies are `effect_routine_host`. This crate
 //! is the `extern "C"` skin over both: one wrapper per function, each a line
 //! plus the `unsafe` needed to touch foreign memory — building a slice from a
@@ -12,7 +12,7 @@
 
 use effect_routine::run::Run;
 use effect_routine_host::{code::code_of, error::Error, status::Status, table};
-use greeter_wire::{Ctx, Full, Quiet};
+use greeter_boundary::{Ctx, Full, Quiet};
 use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two

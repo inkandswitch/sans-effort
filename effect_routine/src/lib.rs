@@ -67,7 +67,7 @@
 //! - [`driver::Driver`] turns a routine into something a host can resume:
 //!   [`start`](driver::Driver::start), then [`reply`](driver::Driver::reply)
 //!   with each handle the effects hand back, until it is finished.
-//! - [`wire`] is what crosses a boundary: the reply menu, and the traits an
+//! - [`boundary`] is what crosses a boundary: the reply menu, and the traits an
 //!   effect type implements to be shown to a host that cannot hold a Rust
 //!   value.
 //! - [`testing::run_now`] runs a routine against a mock context whose every
@@ -123,7 +123,7 @@
 //! # }
 //! use effect_routine::{driver::outbox::Outbox, request::{Asked, Request}};
 //!
-//! // The wire vocabulary: one struct per wait, one per message.
+//! // The host vocabulary: one struct per wait, one per message.
 //! struct ReadLine;
 //! struct Write(String);
 //!
@@ -181,7 +181,7 @@
 //! assert_eq!(written, ["Who are you?", "Hello, bob!"]);
 //! ```
 //!
-//! A host in another language cannot hold a `ReplyHandle`; see [`wire`] and
+//! A host in another language cannot hold a `ReplyHandle`; see [`boundary`] and
 //! the `effect_routine_host` crate for that path. A host with a runtime needs
 //! none of this: implement `Console` with real futures and `tokio::spawn` the
 //! routine.
@@ -211,10 +211,10 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub mod boundary;
 pub mod driver;
 pub mod join;
 pub mod reply;
 pub mod request;
 pub mod run;
 pub mod testing;
-pub mod wire;

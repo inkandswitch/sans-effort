@@ -1,5 +1,5 @@
 [package]
-name = "greeter_wire"
+name = "greeter_boundary"
 version = "0.1.0"
 description = "The greeter's reifying context and wire vocabulary: what only the routine's author can write, and nothing else"
 publish = false

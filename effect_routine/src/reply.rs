@@ -16,7 +16,7 @@ pub mod kind;
 pub mod value;
 
 use self::{handle::ReplyHandle, value::Value};
-use crate::wire::pending::Pending;
+use crate::boundary::pending::Pending;
 use alloc::{string::String, vec::Vec};
 
 /// A type a request may ask for. Sealed: the impls below are the menu, and

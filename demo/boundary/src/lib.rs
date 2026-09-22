@@ -1,4 +1,4 @@
-//! The greeter's reifying context and wire vocabulary.
+//! The greeter's reifying context and host vocabularies: its side of the boundary.
 //!
 //! `Greeter<Ctx<E>>` is the same routine as under `greeter_tokio`; only
 //! the context differs. The routines are the `routines` crate. [`Ctx`] serves every wait by recording a request that
@@ -33,7 +33,7 @@
 //! ```compile_fail,E0277
 //! use effect_routine::{driver::Driver, run::Run};
 //! use routines::greeter::Greeter;
-//! use greeter_wire::{Ctx, Quiet};
+//! use greeter_boundary::{Ctx, Quiet};
 //!
 //! // error[E0277]: the trait bound `Ctx<Quiet>: Lookup` is not satisfied
 //! let _ = Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());
@@ -59,14 +59,14 @@ extern crate alloc;
 use alloc::string::String;
 use core::time::Duration;
 use effect_routine::{
-    driver::outbox::Outbox,
-    reply::Reply,
-    request::{Asked, Request},
-    wire::{
+    boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
         pending::Pending,
     },
+    driver::outbox::Outbox,
+    reply::Reply,
+    request::{Asked, Request},
 };
 use routines::traits;
 

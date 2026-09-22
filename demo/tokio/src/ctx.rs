@@ -1,6 +1,6 @@
 //! The five capability traits, served by tokio.
 //!
-//! Compare `greeter_wire::Ctx`: there each trait method records a request
+//! Compare `greeter_boundary::Ctx`: there each trait method records a request
 //! and suspends until a host replies. Here each one is a real future —
 //! `tokio::time::sleep`, a line from an async reader — and tokio's own
 //! waker drives it. No effect is built, no driver polls, no host loop

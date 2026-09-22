@@ -12,7 +12,7 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
              tokio::spawn(Greeter::new(ctx).run()). No Driver anywhere.
              Tests: paused clock — three 50 ms pauses cost no wall time.
 
-  wire/      the reifying context. Request structs (Lookup, ReadLine, …); Ctx<E>
+  boundary/  the reifying context. Request structs (Lookup, ReadLine, …); Ctx<E>
              implements each trait for any E: From<Asked<…>>; Full carries all five,
              Quiet only Sleep + Write. View/HostEffect/Encode: the tag table.
              Tests: through a Driver, as data; Greeter under Quiet is a compile_fail.

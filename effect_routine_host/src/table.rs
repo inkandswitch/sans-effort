@@ -10,10 +10,10 @@
 //! are never `0` and never reused, so a stale one is [`Error::BadHandle`]
 //! rather than a fault.
 
-use crate::{error::Error, machine::Machine, status::Status};
+use crate::{encoded::Encoded, error::Error, machine::Machine, status::Status};
 use effect_routine::{
+    boundary::{codec::Encode, host_effect::HostEffect},
     driver::outbox::Outbox,
-    wire::{codec::Encode, host_effect::HostEffect},
 };
 use std::{
     collections::HashMap,
@@ -23,22 +23,23 @@ use std::{
 };
 
 /// What the table holds: a machine of any effect type, behind its byte
-/// layer.
-trait Encoded {
+/// layer. The table is one `static` for every routine every skin registers,
+/// so the effect type is erased here.
+trait Stepped {
     fn start(&mut self) -> Result<(Vec<u8>, Status), Error>;
     fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error>;
 }
 
-impl<E: HostEffect> Encoded for Machine<E>
+impl<E: HostEffect> Stepped for Encoded<E>
 where
     E::View: Encode,
 {
     fn start(&mut self) -> Result<(Vec<u8>, Status), Error> {
-        Machine::start_encoded(self)
+        Encoded::start(self)
     }
 
     fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
-        Machine::reply_encoded(self, record)
+        Encoded::reply(self, record)
     }
 }
 
@@ -46,17 +47,17 @@ where
 /// driving it right now. Any effect type: the table is one `static` holding
 /// every routine every skin registers, so the machine is type-erased here.
 #[derive(Clone)]
-struct Entry(Arc<Mutex<Box<dyn Encoded + Send>>>);
+struct Entry(Arc<Mutex<Box<dyn Stepped + Send>>>);
 
 impl Entry {
-    fn new(machine: Box<dyn Encoded + Send>) -> Self {
+    fn new(machine: Box<dyn Stepped + Send>) -> Self {
         Self(Arc::new(Mutex::new(machine)))
     }
 
     /// Take the machine's lock without waiting: a concurrent call is
     /// [`Error::Busy`] rather than a wait, and a lock poisoned by an earlier
     /// panic is [`Error::Panicked`].
-    fn try_lock(&self) -> Result<MutexGuard<'_, Box<dyn Encoded + Send>>, Error> {
+    fn try_lock(&self) -> Result<MutexGuard<'_, Box<dyn Stepped + Send>>, Error> {
         self.0.try_lock().map_err(|e| match e {
             TryLockError::WouldBlock => Error::Busy,
             TryLockError::Poisoned(_) => Error::Panicked,
@@ -80,7 +81,7 @@ impl Table {
     }
 
     /// Store a machine under a fresh handle, never `0`, never reused.
-    fn insert(&mut self, machine: Box<dyn Encoded + Send>) -> u64 {
+    fn insert(&mut self, machine: Box<dyn Stepped + Send>) -> u64 {
         let handle = self.next;
         self.next += 1;
         self.machines.insert(handle, Entry::new(machine));
@@ -116,7 +117,7 @@ where
     F: Future<Output = ()> + Send + 'static,
     M: FnOnce(Outbox<E>) -> F,
 {
-    table().insert(Box::new(Machine::from_routine(make)))
+    table().insert(Box::new(Encoded::new(Machine::from_routine(make))))
 }
 
 /// Run the routine to its first wait: the effects it recorded, encoded, plus
@@ -125,7 +126,7 @@ where
 /// # Errors
 ///
 /// [`Error::BadHandle`], [`Error::Busy`], [`Error::Panicked`], or whatever
-/// [`Machine::start_encoded`] returns.
+/// [`Encoded::start`] returns.
 pub fn start(handle: u64) -> Result<(Vec<u8>, Status), Error> {
     guarded(handle, |m| m.start())
 }
@@ -136,7 +137,7 @@ pub fn start(handle: u64) -> Result<(Vec<u8>, Status), Error> {
 /// # Errors
 ///
 /// [`Error::BadHandle`], [`Error::Busy`], [`Error::Panicked`], or whatever
-/// [`Machine::reply_encoded`] returns.
+/// [`Encoded::reply`] returns.
 pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
     guarded(handle, |m| m.reply(record))
 }
@@ -162,7 +163,7 @@ pub fn free(handle: u64) -> Result<(), Error> {
 /// observe the poisoned machine in between.
 fn guarded<T>(
     handle: u64,
-    f: impl FnOnce(&mut MutexGuard<'_, Box<dyn Encoded + Send>>) -> Result<T, Error>,
+    f: impl FnOnce(&mut MutexGuard<'_, Box<dyn Stepped + Send>>) -> Result<T, Error>,
 ) -> Result<T, Error> {
     let machine = table().get(handle).ok_or(Error::BadHandle)?;
 
@@ -187,7 +188,7 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Echo, Effect, reply_str_record};
-    use effect_routine::{run::Run, wire::codec::Writer};
+    use effect_routine::{boundary::codec::Writer, run::Run};
 
     #[test]
     fn round_trip_across_threads() {

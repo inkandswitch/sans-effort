@@ -4,7 +4,7 @@
 //! `new(routine) → handle`, `start(handle) → effects`, `reply(handle, record)
 //! → effects`, `free(handle)`. A reply record is `kind · id · payload`, where
 //! the id came out on the wire with the effect and the kind is one of the
-//! reply menu's ([`Pending`](effect_routine::wire::pending::Pending)).
+//! reply menu's ([`Pending`](effect_routine::boundary::pending::Pending)).
 //!
 //! Everything a foreign host needs — the handle table, the type check on
 //! replies, the encoding — over owned Rust types, in two layers:
@@ -14,10 +14,9 @@
 //!   handles replaced by ids. It owns the outstanding-request table and the
 //!   kind check. Skins that speak the host language's own types —
 //!   wasm-bindgen, `PyO3`, Rustler — hold one directly.
-//! - [`start_encoded`](machine::Machine::start_encoded) and
-//!   [`reply_encoded`](machine::Machine::reply_encoded) are the _byte_ layer over it:
-//!   decode one reply record, call the typed method, encode the views. The
-//!   [`table`] holds machines behind this, and a C-ABI or `erl_nif` skin
+//! - [`encoded::Encoded`] is the _byte_ layer over it, with the same two
+//!   calls: decode one reply record, call the typed method, encode the views.
+//!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` skin
 //!   calls it.
 //!
 //! The application adds the skin: one `#[no_mangle]` wrapper per function in
@@ -37,12 +36,13 @@
 //! # Wire
 //!
 //! The codec, the reply menu ([`Value`](effect_routine::reply::value::Value)), and
-//! the [`HostEffect`](effect_routine::wire::host_effect::HostEffect)/[`Encode`](effect_routine::wire::codec::Encode) traits live in [`effect_routine::wire`] — the
-//! `no_std` half of the boundary, so a routine's wire crate may implement
+//! the [`HostEffect`](effect_routine::boundary::host_effect::HostEffect)/[`Encode`](effect_routine::boundary::codec::Encode) traits live in [`effect_routine::boundary`] — the
+//! `no_std` half of the boundary, so a routine's boundary crate may implement
 //! them. This crate decodes reply records (`1 id str`; `2 id u64`; `3 id`;
 //! `4 id bytes`) and keeps the table. `ABI.md` at the repository root is the
 //! contract in full.
 pub mod code;
+pub mod encoded;
 pub mod error;
 pub mod machine;
 pub mod status;

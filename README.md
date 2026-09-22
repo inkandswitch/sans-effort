@@ -109,7 +109,7 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 - _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `start`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
 - _Typed replies._ Every awaiting effect carries a `ReplyHandle<T>`: the typed, single-use capability to answer it. A Rust host replies through the handle, infallibly; a foreign host replies by id, and the host layer checks the kind.
 - _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits and a host may reply in any order.
-- _`no_std` core._ The mechanism, the routine, and its wire crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
+- _`no_std` core._ The mechanism, the routine, and its boundary crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
 
 ## Crates
 

@@ -16,7 +16,7 @@ use effect_routine::run::Run;
 /// can run a `Ticker` but not a [`Greeter`](crate::greeter::Greeter) —
 /// checked where it is built, and, under a reifying context with a
 /// host-chosen vocabulary, visible on the wire as tags that can never appear.
-/// See `greeter_wire::Quiet`.
+/// See `greeter_boundary::Quiet`.
 #[derive(Debug)]
 pub struct Ticker<C: Sleep + WriteLine> {
     ctx: C,

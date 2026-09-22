@@ -35,7 +35,7 @@ Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays ou
 
 And therefore lives with each routine:
 
-- _The tag table_ — which `u8` means which effect, what fields follow it, and which reply kind answers it. The wire crate's `Encode` impl is the source of truth; `demo/wire` documents its five tags on the `View` enum.
+- _The tag table_ — which `u8` means which effect, what fields follow it, and which reply kind answers it. The wire crate's `Encode` impl is the source of truth; `demo/boundary` documents its five tags on the `View` enum.
 - _The world_ — what performing an effect means: where `Write` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
 - _The host loop_ — the host's own; `demo/python/main.py` and `demo/java/Main.java` are one each, in ~40 lines.
 

@@ -33,7 +33,7 @@ pub trait Request {
 
 /// A request in flight: what was asked, and the handle the host replies
 /// through. A host's effect type carries these; the host layer splits them
-/// into a view and a [`Pending`](crate::wire::pending::Pending).
+/// into a view and a [`Pending`](crate::boundary::pending::Pending).
 #[derive(Debug)]
 pub struct Asked<R: Request> {
     /// What was asked.

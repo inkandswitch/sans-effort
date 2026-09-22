@@ -47,7 +47,7 @@ in {
     echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
     # Neither crate picks a lock — that is the binary's decision — so checking
     # them as leaves means standing in for the binary here.
-    ${cargo} check -p routines -p greeter_wire --features effect_routine/spin --target wasm32-unknown-unknown
+    ${cargo} check -p routines -p greeter_boundary --features effect_routine/spin --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"

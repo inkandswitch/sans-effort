@@ -1,15 +1,15 @@
-//! Test routines and a wire vocabulary shared by the crate's tests.
+//! Test routines and a host vocabulary shared by the crate's tests.
 
 use core::{future::Future, ops::ControlFlow};
 use effect_routine::{
-    driver::outbox::Outbox,
-    reply::handle::ReplyHandle,
-    run::Run,
-    wire::{
+    boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
         pending::Pending,
     },
+    driver::outbox::Outbox,
+    reply::handle::ReplyHandle,
+    run::Run,
 };
 
 /// Asks once (tag 1), says the answer (tag 2), finishes.

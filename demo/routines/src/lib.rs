@@ -19,7 +19,7 @@
 //!   Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine>: Run
 //!        │
 //!        ├── C = TokioCtx          (../tokio)   waits are tokio futures; tokio polls; no driver
-//!        ├── C = wire::Ctx<E>      (../wire)    waits record effects; a Driver polls; any host
+//!        ├── C = boundary::Ctx<E>  (../boundary) waits record effects; a Driver polls; any host
 //!        └── C = Recording         (tests)      waits are ready at once; one poll runs it all
 //! ```
 //!

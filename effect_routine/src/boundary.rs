@@ -1,8 +1,8 @@
-//! What crosses a boundary.
+//! The boundary between a routine and a host that cannot hold a Rust value.
 //!
 //! This is the `no_std` half of the boundary. The handle table, panic
 //! isolation, and input decoding are `effect_routine_host`, which is `std`; a
-//! routine's wire crate depends on this module without pulling that in.
+//! routine's boundary crate depends on this module without pulling that in.
 //!
 //! - [`host_effect`] is how an effect type is shown to a host that cannot
 //!   hold a Rust value: its [`ReplyHandle`](crate::reply::handle::ReplyHandle)
@@ -14,10 +14,11 @@
 //!
 //! # Terms
 //!
-//! _The wire_ is this whole boundary — everything that exists because a host
-//! cannot hold a Rust value — and the demo's `greeter_wire` crate is named for
-//! it. A [`HostEffect`](host_effect::HostEffect) is an effect type that can
-//! cross it. The [`codec`] is the narrowest sense: the bytes themselves.
+//! _The boundary_ is everything that exists because a host cannot hold a Rust
+//! value — this module, and the demo's `greeter_boundary` crate. A
+//! [`HostEffect`](host_effect::HostEffect) is an effect type that can cross it.
+//! _The wire_ is the narrowest sense, the bytes themselves: the [`codec`], and
+//! `ABI.md`'s subject.
 //!
 //! ```text
 //!   Full::Lookup(Asked { request: Lookup("bob"), reply: ReplyHandle<String>{id: 2} })

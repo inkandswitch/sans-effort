@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 [dependencies]
 effect_routine = { workspace = true, features = ["std"] }
 effect_routine_host = { workspace = true }
-greeter_wire = { version = "0.1.0", path = "../wire" }
+greeter_boundary = { version = "0.1.0", path = "../boundary" }
 routines = { version = "0.1.0", path = "../routines" }
 
 # The FFI boundary: reading host bytes and handing buffers back needs
