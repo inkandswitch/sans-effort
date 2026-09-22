@@ -24,6 +24,9 @@ default = ["std"]
 ## is `no_std` + `alloc`: the typed `Machine` and byte-level `Encoded`, for a
 ## skin that keeps its own statics.
 std = ["sans_effort/std"]
+## Forwarded to `sans_effort`: the lock for a `no_std` build. Exactly as
+## there, at least one of `std` and `spin` must be enabled.
+spin = ["sans_effort/spin"]
 
 [dev-dependencies]
 bolero = { workspace = true }

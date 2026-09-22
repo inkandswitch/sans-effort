@@ -4,6 +4,8 @@
 
 A Rust host drives a routine through `sans_effort::driver::Driver`, replying through typed `ReplyHandle`s. A host in another language has neither the handle nor the type: it has a `u64` request id and some bytes. This crate is the layer between — safe Rust, over owned types, with `unsafe_code = "forbid"`. The application adds the `extern "C"` (or wasm-bindgen, or `erl_nif`) skin: one wrapper per function, each a line plus the `unsafe` needed to touch foreign memory.
 
+Everything but `table` is `no_std` + `alloc`; the table needs a process-wide `static Mutex`, a `HashMap`, and `catch_unwind`, so it is behind the default `std` feature. A skin on a target without `std` holds its `Encoded` machines in statics of its own.
+
 ```text
   app skin (unsafe, ~40 lines)   ─▶   sans_effort_host (this crate)   ─▶   sans_effort::Driver
   new / start / reply / free            Machine: id → ReplyHandle, kind check
