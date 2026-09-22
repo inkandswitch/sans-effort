@@ -80,7 +80,7 @@
 //!
 //! ```
 //! use core::ops::ControlFlow;
-//! use effect_routine::run::Run;
+//! use sans_effort::run::Run;
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;
@@ -110,7 +110,7 @@
 //!
 //! ```
 //! # use core::ops::ControlFlow;
-//! # use effect_routine::run::Run;
+//! # use sans_effort::run::Run;
 //! # trait Console { async fn read_line(&self) -> String; fn write(&self, line: String); }
 //! # struct Greeter<C: Console> { ctx: C }
 //! # impl<C: Console> Run for Greeter<C> {
@@ -121,7 +121,7 @@
 //! #         ControlFlow::Break(())
 //! #     }
 //! # }
-//! use effect_routine::{driver::outbox::Outbox, request::{Asked, Request}};
+//! use sans_effort::{driver::outbox::Outbox, request::{Asked, Request}};
 //!
 //! // The host vocabulary: one struct per wait, one per message.
 //! struct ReadLine;
@@ -161,7 +161,7 @@
 //! }
 //!
 //! // Driving it from Rust: match on the effects, reply through the handles.
-//! use effect_routine::driver::{Driver, status::Status};
+//! use sans_effort::driver::{Driver, status::Status};
 //! use std::collections::VecDeque;
 //!
 //! let mut driver = Driver::<Effect>::new(|outbox| Greeter { ctx: Ctx { outbox } }.run());
@@ -182,7 +182,7 @@
 //! ```
 //!
 //! A host in another language cannot hold a `ReplyHandle`; see [`boundary`] and
-//! the `effect_routine_host` crate for that path. A host with a runtime needs
+//! the `sans_effort_host` crate for that path. A host with a runtime needs
 //! none of this: implement `Console` with real futures and `tokio::spawn` the
 //! routine.
 //!

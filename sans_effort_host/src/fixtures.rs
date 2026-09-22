@@ -1,7 +1,7 @@
 //! Test routines and a host vocabulary shared by the crate's tests.
 
 use core::{future::Future, ops::ControlFlow};
-use effect_routine::{
+use sans_effort::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
@@ -65,7 +65,7 @@ pub(crate) struct Both(pub(crate) Outbox<Effect>);
 impl Run for Both {
     async fn step(&mut self) -> ControlFlow<()> {
         let (a, b) =
-            effect_routine::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
+            sans_effort::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
         self.0.tell(Effect::Say(format!("{a}+{b}")));
         ControlFlow::Break(())
     }
@@ -79,9 +79,9 @@ impl<F: Future + Unpin> Future for PollOnce<F> {
     type Output = F;
 
     fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<F> {
+        mut self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<F> {
         #[expect(
             clippy::expect_used,
             reason = "a test fixture that is polled exactly once by construction"

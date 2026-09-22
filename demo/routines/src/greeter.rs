@@ -6,7 +6,7 @@ use crate::{
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
-use effect_routine::run::Run;
+use sans_effort::run::Run;
 
 /// Prompt, read a name, look up a greeting, pause, greet, count; repeat until
 /// the name is `quit`.

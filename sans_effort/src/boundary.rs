@@ -1,7 +1,7 @@
 //! The boundary between a routine and a host that cannot hold a Rust value.
 //!
 //! This is the `no_std` half of the boundary. The handle table, panic
-//! isolation, and input decoding are `effect_routine_host`, which is `std`; a
+//! isolation, and input decoding are `sans_effort_host`, which is `std`; a
 //! routine's boundary crate depends on this module without pulling that in.
 //!
 //! - [`host_effect`] is how an effect type is shown to a host that cannot

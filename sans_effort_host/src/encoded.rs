@@ -10,7 +10,8 @@ mod input;
 
 use self::input::Input;
 use crate::{error::Error, machine::Machine, status::Status};
-use effect_routine::boundary::{codec::Encode, codec::Writer, host_effect::HostEffect};
+use alloc::vec::Vec;
+use sans_effort::boundary::{codec::Encode, codec::Writer, host_effect::HostEffect};
 
 /// A machine seen through bytes.
 pub struct Encoded<E>(Machine<E>);
@@ -60,8 +61,8 @@ where
     }
 }
 
-impl<E> std::fmt::Debug for Encoded<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<E> core::fmt::Debug for Encoded<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("Encoded").field(&self.0).finish()
     }
 }
@@ -80,10 +81,10 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Both, Echo, reply_str_record};
-    use effect_routine::{boundary::codec::Writer, run::Run};
+    use sans_effort::{boundary::codec::Writer, run::Run};
 
     fn encoded<F: core::future::Future<Output = ()> + Send + 'static>(
-        make: impl FnOnce(effect_routine::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
+        make: impl FnOnce(sans_effort::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
     ) -> Encoded<crate::fixtures::Effect> {
         Encoded::new(Machine::from_routine(make))
     }

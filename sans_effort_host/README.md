@@ -1,11 +1,11 @@
-# effect_routine_host
+# sans_effort_host
 
 > The host side of an effect routine, for hosts that cannot hold a Rust value
 
-A Rust host drives a routine through `effect_routine::driver::Driver`, replying through typed `ReplyHandle`s. A host in another language has neither the handle nor the type: it has a `u64` request id and some bytes. This crate is the layer between — safe Rust, over owned types, with `unsafe_code = "forbid"`. The application adds the `extern "C"` (or wasm-bindgen, or `erl_nif`) skin: one wrapper per function, each a line plus the `unsafe` needed to touch foreign memory.
+A Rust host drives a routine through `sans_effort::driver::Driver`, replying through typed `ReplyHandle`s. A host in another language has neither the handle nor the type: it has a `u64` request id and some bytes. This crate is the layer between — safe Rust, over owned types, with `unsafe_code = "forbid"`. The application adds the `extern "C"` (or wasm-bindgen, or `erl_nif`) skin: one wrapper per function, each a line plus the `unsafe` needed to touch foreign memory.
 
 ```text
-  app skin (unsafe, ~40 lines)   ─▶   effect_routine_host (this crate)   ─▶   effect_routine::Driver
+  app skin (unsafe, ~40 lines)   ─▶   sans_effort_host (this crate)   ─▶   sans_effort::Driver
   new / start / reply / free            Machine: id → ReplyHandle, kind check
   buf_free                              table:   u64 handles, BUSY, panic isolation
                                         bytes:   decode one reply record, encode the effects

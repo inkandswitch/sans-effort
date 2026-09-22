@@ -2,12 +2,13 @@
 //! [`Encoded`](crate::encoded::Encoded).
 
 use crate::{error::Error, status::Status};
-use effect_routine::{
+use sans_effort::{
     boundary::{host_effect::HostEffect, pending::Pending},
     driver::{Driver, outbox::Outbox},
     reply::{Reply, handle::ReplyHandle},
 };
-use std::{future::Future, marker::PhantomData};
+use alloc::vec::Vec;
+use core::{future::Future, marker::PhantomData};
 
 /// A driver plus the requests it has outstanding, keyed by id: the typed
 /// layer.
@@ -158,8 +159,8 @@ impl<E: HostEffect> Machine<E> {
     }
 }
 
-impl<E> std::fmt::Debug for Machine<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<E> core::fmt::Debug for Machine<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Machine")
             .field("started", &self.started)
             .field("pending", &self.pending)
@@ -173,7 +174,7 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Echo, Impatient, View};
-    use effect_routine::{reply::kind::Kind, run::Run};
+    use sans_effort::{reply::kind::Kind, run::Run};
 
     #[test]
     fn typed_layer() {

@@ -1,4 +1,4 @@
-# effect_routine
+# sans_effort
 
 > Host-driven async coroutines whose every wait is a typed effect
 
@@ -30,7 +30,7 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 
 ```rust
 use core::ops::ControlFlow;
-use effect_routine::{driver::{Driver, outbox::Outbox}, request::{Asked, Request}, run::Run};
+use sans_effort::{driver::{Driver, outbox::Outbox}, request::{Asked, Request}, run::Run};
 
 trait Console {
     async fn read_line(&self) -> String;
@@ -75,7 +75,7 @@ for effect in driver.start() {
 }
 ```
 
-A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `effect_routine_host` and `ABI.md` in the repository.
+A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `sans_effort_host` and `ABI.md` in the repository.
 
 ## Features
 

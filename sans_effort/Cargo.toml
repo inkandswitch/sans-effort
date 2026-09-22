@@ -1,7 +1,7 @@
 [package]
-name = "effect_routine"
+name = "sans_effort"
 version = "0.1.0"
-description = "Effect routines: host-driven async coroutines whose every wait is a typed effect"
+description = "sans-io, sans effort: host-driven async coroutines whose every wait is a typed effect"
 readme = "README.md"
 
 categories = ["asynchronous", "no-std"]

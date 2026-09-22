@@ -1,7 +1,8 @@
 //! One decoded reply record: what the host is telling the routine.
 
 use crate::error::Error;
-use effect_routine::boundary::codec::Reader;
+use alloc::{string::String, vec::Vec};
+use sans_effort::boundary::codec::Reader;
 
 pub(super) enum Input {
     Bytes(u64, Vec<u8>),

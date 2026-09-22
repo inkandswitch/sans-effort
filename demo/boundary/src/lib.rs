@@ -2,15 +2,15 @@
 //!
 //! `Greeter<Ctx<E>>` is the same routine as under `greeter_tokio`; only
 //! the context differs. The routines are the `routines` crate. [`Ctx`] serves every wait by recording a request that
-//! carries a [`ReplyHandle`](effect_routine::reply::handle::ReplyHandle) and suspending; a host replies by id. This crate
+//! carries a [`ReplyHandle`](sans_effort::reply::handle::ReplyHandle) and suspending; a host replies by id. This crate
 //! is what only the routine's author can write — which requests exist, how
 //! the five traits map onto them, how a host sees them — and nothing else.
 //! Stepping, the handle table, and the type check on replies are
-//! `effect_routine_host`; the `extern "C"` or wasm-bindgen surface is a
+//! `sans_effort_host`; the `extern "C"` or wasm-bindgen surface is a
 //! _skin_ over both, one per binding, in `../cdylib` and `../wasm`.
 //!
 //! ```text
-//!   routines   Greeter<C>: Run   ──▶   this crate   Ctx<E> · Full · View · Encode   ──▶   effect_routine_host
+//!   routines   Greeter<C>: Run   ──▶   this crate   Ctx<E> · Full · View · Encode   ──▶   sans_effort_host
 //!                                                                                                  │
 //!                                                                     ┌────────────────────────────┴──────────┐
 //!                                                                  cdylib  greeter_* (C ABI)          wasm  Greeter class
@@ -31,7 +31,7 @@
 //! machine knows from the type alone that tags 1–3 can never appear.
 //!
 //! ```compile_fail,E0277
-//! use effect_routine::{driver::Driver, run::Run};
+//! use sans_effort::{driver::Driver, run::Run};
 //! use routines::greeter::Greeter;
 //! use greeter_boundary::{Ctx, Quiet};
 //!
@@ -58,7 +58,8 @@ extern crate alloc;
 
 use alloc::string::String;
 use core::time::Duration;
-use effect_routine::{
+use routines::traits;
+use sans_effort::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
@@ -68,7 +69,6 @@ use effect_routine::{
     reply::Reply,
     request::{Asked, Request},
 };
-use routines::traits;
 
 // ---- requests: one per awaited capability, plus the one message ----------
 
@@ -360,11 +360,11 @@ mod tests {
     use super::*;
     use alloc::{collections::VecDeque, format, vec, vec::Vec};
     use core::future::Future;
-    use effect_routine::{
+    use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
+    use sans_effort::{
         driver::{Driver, status::Status},
         run::Run,
     };
-    use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
 
     fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
         Greeter::new(Ctx::new(outbox)).run()

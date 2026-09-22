@@ -6,21 +6,21 @@ members = [
   "demo/tokio",
   "demo/wasm",
   "demo/boundary",
-  "effect_routine",
-  "effect_routine_host",
+  "sans_effort",
+  "sans_effort_host",
 ]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/inkandswitch/effect-routine"
+repository = "https://github.com/inkandswitch/sans_effort"
 authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]
 
 [workspace.dependencies]
 # Internal crates
-effect_routine = { version = "0.1.0", path = "effect_routine", default-features = false }
-effect_routine_host = { version = "0.1.0", path = "effect_routine_host" }
+sans_effort = { version = "0.1.0", path = "sans_effort", default-features = false }
+sans_effort_host = { version = "0.1.0", path = "sans_effort_host" }
 
 # External crates
 bolero = "0.13"

@@ -22,8 +22,8 @@
 mod ctx;
 
 use ctx::TokioCtx;
-use effect_routine::run::Run;
 use routines::{fanout::Fanout, greeter::Greeter};
+use sans_effort::run::Run;
 use tokio::io::BufReader;
 
 #[tokio::main]

@@ -2,7 +2,7 @@
 //! at the one place that asks — not on the traits.
 
 use core::{cell::Cell, time::Duration};
-use effect_routine::run::Run;
+use sans_effort::run::Run;
 use routines::{
     ticker::Ticker,
     traits::{Sleep, WriteLine},

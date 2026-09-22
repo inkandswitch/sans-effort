@@ -6,7 +6,7 @@ use crate::{
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
-use effect_routine::{join::join, run::Run};
+use sans_effort::{join::join, run::Run};
 
 /// Reads a name, then looks up the greeting and counts _concurrently_; then
 /// waits out the pause while reading the farewell, likewise.

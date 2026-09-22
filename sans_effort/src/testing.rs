@@ -7,7 +7,7 @@
 //!
 //! ```
 //! use core::{cell::RefCell, ops::ControlFlow};
-//! use effect_routine::{run::Run, testing::run_now};
+//! use sans_effort::{run::Run, testing::run_now};
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;

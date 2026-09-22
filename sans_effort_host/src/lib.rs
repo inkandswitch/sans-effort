@@ -4,7 +4,7 @@
 //! `new(routine) → handle`, `start(handle) → effects`, `reply(handle, record)
 //! → effects`, `free(handle)`. A reply record is `kind · id · payload`, where
 //! the id came out on the wire with the effect and the kind is one of the
-//! reply menu's ([`Pending`](effect_routine::boundary::pending::Pending)).
+//! reply menu's ([`Pending`](sans_effort::boundary::pending::Pending)).
 //!
 //! Everything a foreign host needs — the handle table, the type check on
 //! replies, the encoding — over owned Rust types, in two layers:
@@ -24,7 +24,7 @@
 //! That keeps this crate under `unsafe_code = "forbid"`.
 //!
 //! ```text
-//!   app cdylib                                 effect_routine_host
+//!   app cdylib                                 sans_effort_host
 //!   ────────────────────────────────           ──────────────────────────────────────────
 //!   enum Effect { … }  impl HostEffect
 //!   #[no_mangle] new()             ─────────▶  table::new(|outbox| Greeter::new(Ctx::new(outbox)).run())
@@ -35,17 +35,31 @@
 //!
 //! # Wire
 //!
-//! The codec, the reply menu ([`Value`](effect_routine::reply::value::Value)), and
-//! the [`HostEffect`](effect_routine::boundary::host_effect::HostEffect)/[`Encode`](effect_routine::boundary::codec::Encode) traits live in [`effect_routine::boundary`] — the
+//! The codec, the reply menu ([`Value`](sans_effort::reply::value::Value)), and
+//! the [`HostEffect`](sans_effort::boundary::host_effect::HostEffect)/[`Encode`](sans_effort::boundary::codec::Encode) traits live in [`sans_effort::boundary`] — the
 //! `no_std` half of the boundary, so a routine's boundary crate may implement
 //! them. This crate decodes reply records (`1 id str`; `2 id u64`; `3 id`;
 //! `4 id bytes`) and keeps the table. `ABI.md` at the repository root is the
 //! contract in full.
+//!
+//! # `no_std`
+//!
+//! Everything but [`table`] is `no_std` + `alloc`. The table needs a
+//! process-wide `static Mutex`, a `HashMap`, and `catch_unwind` for panic
+//! isolation, so it is behind the default `std` feature; a skin on a target
+//! without `std` holds its [`encoded::Encoded`] machines in statics of its own.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 pub mod code;
 pub mod encoded;
 pub mod error;
 pub mod machine;
 pub mod status;
+
+#[cfg(feature = "std")]
 pub mod table;
 
 #[cfg(test)]

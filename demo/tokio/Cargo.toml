@@ -11,7 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-effect_routine = { workspace = true, features = ["std"] }
+sans_effort = { workspace = true, features = ["std"] }
 routines = { version = "0.1.0", path = "../routines" }
 tokio = { workspace = true }
 

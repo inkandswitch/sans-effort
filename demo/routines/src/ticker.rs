@@ -6,7 +6,7 @@ use crate::{
 };
 use alloc::format;
 use core::ops::ControlFlow;
-use effect_routine::run::Run;
+use sans_effort::run::Run;
 
 /// Ticks `n` times, pausing between, and never reads a line, looks anything
 /// up, or counts.

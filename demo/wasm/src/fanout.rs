@@ -1,8 +1,8 @@
 //! The fan-out greeter as a JS class.
 
 use crate::{ctx::JsCtx, host::JsHost};
-use effect_routine::run::Run;
 use routines::fanout::Fanout;
+use sans_effort::run::Run;
 use wasm_bindgen::prelude::*;
 
 /// The fan-out greeter over a JS host: two waits in flight at once, as two

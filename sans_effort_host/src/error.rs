@@ -1,7 +1,7 @@
 //! Why a call failed.
 
 use crate::code;
-use effect_routine::reply::kind::Kind;
+use sans_effort::reply::kind::Kind;
 
 /// Why a call failed. [`code`](Self::code) is its wire form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]

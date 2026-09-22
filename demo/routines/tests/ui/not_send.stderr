@@ -6,7 +6,7 @@ error[E0277]: `Rc<Cell<u32>>` cannot be sent between threads safely
    |     |
    |     required by a bound introduced by this call
    |
-  ::: $WORKSPACE/effect_routine/src/run.rs
+  ::: $WORKSPACE/sans_effort/src/run.rs
    |
    |     fn run(mut self) -> impl Future<Output = ()>
    |                         ------------------------ within this `impl Future<Output = ()>`
@@ -23,7 +23,7 @@ note: required because it appears within the type `Ticker<Local>`
    | pub struct Ticker<C: Sleep + WriteLine> {
    |            ^^^^^^
 note: required because it's used within this `async` block
-  --> $WORKSPACE/effect_routine/src/run.rs
+  --> $WORKSPACE/sans_effort/src/run.rs
    |
    |         async move { while self.step().await.is_continue() {} }
    |         ^^^^^^^^^^

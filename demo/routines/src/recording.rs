@@ -20,7 +20,7 @@ use core::{
     cell::{Cell, RefCell},
     time::Duration,
 };
-use effect_routine::{run::Run, testing::run_now};
+use sans_effort::{run::Run, testing::run_now};
 
 /// What a routine did to its context, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]

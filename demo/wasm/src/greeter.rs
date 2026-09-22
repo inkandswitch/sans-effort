@@ -1,8 +1,8 @@
 //! The greeter as a JS class.
 
 use crate::{ctx::JsCtx, host::JsHost};
-use effect_routine::run::Run;
 use routines::greeter::Greeter;
+use sans_effort::run::Run;
 use wasm_bindgen::prelude::*;
 
 /// A greeter over a JS host. Construct, then `await` [`run`](Self::run).

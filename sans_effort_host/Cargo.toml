@@ -1,5 +1,5 @@
 [package]
-name = "effect_routine_host"
+name = "sans_effort_host"
 version = "0.1.0"
 description = "Everything a foreign host needs to step effect routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
 readme = "README.md"
@@ -14,8 +14,16 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-effect_routine = { workspace = true, features = ["std"] }
+sans_effort = { workspace = true }
 thiserror = { workspace = true }
+
+[features]
+default = ["std"]
+## The process-wide handle table (`table`), which needs `HashMap`, a
+## `static Mutex`, and `catch_unwind` for panic isolation. Without it the crate
+## is `no_std` + `alloc`: the typed `Machine` and byte-level `Encoded`, for a
+## skin that keeps its own statics.
+std = ["sans_effort/std"]
 
 [dev-dependencies]
 bolero = { workspace = true }

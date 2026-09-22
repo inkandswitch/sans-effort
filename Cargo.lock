@@ -136,25 +136,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
-name = "effect_routine"
-version = "0.1.0"
-dependencies = [
- "bolero",
- "portable-atomic",
- "portable-atomic-util",
- "spin",
-]
-
-[[package]]
-name = "effect_routine_host"
-version = "0.1.0"
-dependencies = [
- "bolero",
- "effect_routine",
- "thiserror",
-]
-
-[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -219,26 +200,26 @@ name = "greeter_boundary"
 version = "0.1.0"
 dependencies = [
  "bolero",
- "effect_routine",
  "routines",
+ "sans_effort",
 ]
 
 [[package]]
 name = "greeter_cdylib"
 version = "0.1.0"
 dependencies = [
- "effect_routine",
- "effect_routine_host",
  "greeter_boundary",
  "routines",
+ "sans_effort",
+ "sans_effort_host",
 ]
 
 [[package]]
 name = "greeter_tokio"
 version = "0.1.0"
 dependencies = [
- "effect_routine",
  "routines",
+ "sans_effort",
  "tokio",
 ]
 
@@ -246,9 +227,9 @@ dependencies = [
 name = "greeter_wasm"
 version = "0.1.0"
 dependencies = [
- "effect_routine",
  "js-sys",
  "routines",
+ "sans_effort",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -426,7 +407,7 @@ name = "routines"
 version = "0.1.0"
 dependencies = [
  "bolero",
- "effect_routine",
+ "sans_effort",
  "trybuild",
 ]
 
@@ -435,6 +416,25 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "sans_effort"
+version = "0.1.0"
+dependencies = [
+ "bolero",
+ "portable-atomic",
+ "portable-atomic-util",
+ "spin",
+]
+
+[[package]]
+name = "sans_effort_host"
+version = "0.1.0"
+dependencies = [
+ "bolero",
+ "sans_effort",
+ "thiserror",
+]
 
 [[package]]
 name = "serde"

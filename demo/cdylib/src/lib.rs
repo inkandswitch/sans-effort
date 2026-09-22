@@ -1,7 +1,7 @@
 //! C ABI over the greeter: `new`, `start`, `reply`, `free`.
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
-//! table and the type check on replies are `effect_routine_host`. This crate
+//! table and the type check on replies are `sans_effort_host`. This crate
 //! is the `extern "C"` skin over both: one wrapper per function, each a line
 //! plus the `unsafe` needed to touch foreign memory — building a slice from a
 //! host pointer, writing the out-pointers, reclaiming a buffer. Three blocks,
@@ -10,10 +10,10 @@
 //! `ABI.md` at the repository root is the contract; `../python/main.py` is a
 //! host that speaks it with a byte buffer and no library.
 
-use effect_routine::run::Run;
-use effect_routine_host::{code::code_of, error::Error, status::Status, table};
 use greeter_boundary::{Ctx, Full, Quiet};
 use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
+use sans_effort::run::Run;
+use sans_effort_host::{code::code_of, error::Error, status::Status, table};
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two
 /// threads driving it at once get `BUSY`.

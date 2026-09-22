@@ -11,7 +11,7 @@
 //! rather than a fault.
 
 use crate::{encoded::Encoded, error::Error, machine::Machine, status::Status};
-use effect_routine::{
+use sans_effort::{
     boundary::{codec::Encode, host_effect::HostEffect},
     driver::outbox::Outbox,
 };
@@ -188,7 +188,7 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Echo, Effect, reply_str_record};
-    use effect_routine::{boundary::codec::Writer, run::Run};
+    use sans_effort::{boundary::codec::Writer, run::Run};
 
     #[test]
     fn round_trip_across_threads() {

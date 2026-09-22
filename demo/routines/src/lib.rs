@@ -11,8 +11,8 @@
 //! bounds. It does not know whether `read_line` awaits a tokio channel, pops
 //! a line off a test script, or records an effect for a Python host and
 //! suspends; each of those is a different `C`, and the routine is the same
-//! code under all of them. This crate imports [`Run`](effect_routine::run::Run)
-//! and [`join`](effect_routine::join::join) from the mechanism and nothing
+//! code under all of them. This crate imports [`Run`](sans_effort::run::Run)
+//! and [`join`](sans_effort::join::join) from the mechanism and nothing
 //! else — no effect, no handle, no driver — and it is `no_std`.
 //!
 //! ```text

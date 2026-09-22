@@ -1,8 +1,8 @@
-# effect-routine
+# sans_effort
 
 > _sans-io, sans effort_
 
-[![CI](https://github.com/inkandswitch/effect-routine/actions/workflows/test-host.yml/badge.svg)](https://github.com/inkandswitch/effect-routine/actions/workflows/test-host.yml) [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT) [![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/effect_routine)
+[![CI](https://github.com/inkandswitch/sans_effort/actions/workflows/test-host.yml/badge.svg)](https://github.com/inkandswitch/sans_effort/actions/workflows/test-host.yml) [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT) [![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/sans_effort)
 
 An _effect routine_ is a coroutine written in direct style as an ordinary `async fn`, whose every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you — and because the routine asks for _traits_ rather than effects, the very same code is also a plain `async fn` that tokio runs at native speed with no driver at all.
 
@@ -115,8 +115,8 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 
 | Crate                                         | Purpose                                                                                                        | Target             |
 |-----------------------------------------------|----------------------------------------------------------------------------------------------------------------|--------------------|
-| [`effect_routine`](effect_routine/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `wire`, `testing`    | `no_std` + `alloc` |
-| [`effect_routine_host`](effect_routine_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
+| [`sans_effort`](sans_effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `wire`, `testing`    | `no_std` + `alloc` |
+| [`sans_effort_host`](sans_effort_host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                            | —                  |
 | [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI skin driven from Python and Java | — |
 
