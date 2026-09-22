@@ -5,6 +5,12 @@
 
 use crate::error::Error;
 
+/// The revision of `ABI.md` this crate implements. A binding returns it from
+/// `<prefix>_abi_version()`; a host checks it once, before `new`. One number,
+/// bumped whenever a host written against the previous text could misbehave
+/// against a binding written against the new one. Tag tables are outside it.
+pub const ABI_VERSION: u8 = 0;
+
 /// Success, for calls that carry no status (`free`).
 pub const OK: i32 = 0;
 /// Suspended; at least one effect in the batch awaits a reply. Shares

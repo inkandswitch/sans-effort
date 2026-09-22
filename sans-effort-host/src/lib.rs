@@ -12,16 +12,17 @@
 //! - [`machine::Machine`] is _typed_: [`start`](machine::Machine::start) and
 //!   [`reply`](machine::Machine::reply) return `Vec<E::View>`, the effects with their
 //!   handles replaced by ids. It owns the outstanding-request table and the
-//!   kind check. Skins that speak the host language's own types —
+//!   kind check. Bindings that speak the host language's own types —
 //!   wasm-bindgen, `PyO3`, Rustler — hold one directly.
 //! - [`encoded::Encoded`] is the _byte_ layer over it, with the same two
 //!   calls: decode one reply record, call the typed method, encode the views.
-//!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` skin
+//!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` binding
 //!   calls it.
 //!
-//! The application adds the skin: one `#[no_mangle]` wrapper per function in
-//! [`table`], each a line plus the `unsafe` needed to touch foreign memory.
-//! That keeps this crate under `unsafe_code = "forbid"`.
+//! The application adds the _binding_: the thin `unsafe` wrapper a foreign host
+//! actually calls — one `#[no_mangle]` wrapper per function in [`table`], each
+//! a line plus the `unsafe` needed to touch foreign memory. That keeps this
+//! crate under `unsafe_code = "forbid"`.
 //!
 //! ```text
 //!   app cdylib                                 sans-effort-host
@@ -46,7 +47,7 @@
 //!
 //! Everything but [`table`] is `no_std` + `alloc`. The table needs a
 //! process-wide `static Mutex`, a `HashMap`, and `catch_unwind` for panic
-//! isolation, so it is behind the default `std` feature; a skin on a target
+//! isolation, so it is behind the default `std` feature; a binding on a target
 //! without `std` holds its [`encoded::Encoded`] machines in statics of its own.
 
 #![cfg_attr(not(feature = "std"), no_std)]

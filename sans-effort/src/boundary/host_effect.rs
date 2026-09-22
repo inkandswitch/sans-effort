@@ -7,7 +7,7 @@ use super::pending::Pending;
 /// A host that cannot hold a Rust value — anything across an ABI — sees the
 /// effect with its [`ReplyHandle`](crate::reply::handle::ReplyHandle) replaced by the request id. The handle
 /// stays on this side as a [`Pending`], so the reply is still typed.
-/// [`View`](Self::View) is what every skin hands on: as Python objects, as
+/// [`View`](Self::View) is what every binding hands on: as Python objects, as
 /// Erlang terms, or, through [`Encode`](super::codec::Encode), as bytes.
 ///
 /// A Rust host that holds the effect itself never needs this trait.

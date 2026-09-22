@@ -23,7 +23,7 @@ use std::{
 };
 
 /// What the table holds: a machine of any effect type, behind its byte
-/// layer. The table is one `static` for every routine every skin registers,
+/// layer. The table is one `static` for every routine every binding registers,
 /// so the effect type is erased here.
 trait Stepped {
     fn start(&mut self) -> Result<(Vec<u8>, Status), Error>;
@@ -45,7 +45,7 @@ where
 
 /// A machine behind its own lock, shared between the table and whoever is
 /// driving it right now. Any effect type: the table is one `static` holding
-/// every routine every skin registers, so the machine is type-erased here.
+/// every routine every binding registers, so the machine is type-erased here.
 #[derive(Clone)]
 struct Entry(Arc<Mutex<Box<dyn Stepped + Send>>>);
 

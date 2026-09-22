@@ -21,6 +21,7 @@ import java.util.*;
 public class Main {
     // ---- ABI.md, as code --------------------------------------------------
 
+    static final byte ABI_VERSION = 0;
     static final int AWAITING = 0, COMPLETE = 1, STALLED = 2;
     static final Map<Integer, String> ERRORS = Map.of(
         -1, "BUSY", -2, "FINISHED", -3, "WRONG_KIND", -4, "PANICKED", -5, "BAD_HANDLE", -6, "BAD_INPUT");
@@ -56,17 +57,19 @@ public class Main {
         boolean done() { return !buf.hasRemaining(); }
     }
 
-    /** `new / start / reply / free / buf_free` over the loaded cdylib, prefix `greeter_`. */
+    /** `abi_version / new / start / reply / free / buf_free` over the loaded cdylib, prefix `greeter_`. */
     static final class Library {
         final Arena arena = Arena.ofConfined();
-        final MethodHandle newGreeter, newFanout, newTicker, start, reply, free, bufFree;
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, start, reply, free, bufFree;
 
-        Library(Path path) {
+        Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
             SymbolLookup lib = SymbolLookup.libraryLookup(path, arena);
             var u64 = ValueLayout.JAVA_LONG;
             var i32 = ValueLayout.JAVA_INT;
+            var u8  = ValueLayout.JAVA_BYTE;
             var ptr = ValueLayout.ADDRESS;
+            abiVersion = linker.downcallHandle(lib.find("greeter_abi_version").get(), FunctionDescriptor.of(u8));
             newGreeter = linker.downcallHandle(lib.find("greeter_new").get(), FunctionDescriptor.of(u64));
             newFanout  = linker.downcallHandle(lib.find("greeter_new_fanout").get(), FunctionDescriptor.of(u64));
             newTicker  = linker.downcallHandle(lib.find("greeter_new_ticker").get(), FunctionDescriptor.of(u64));
@@ -74,6 +77,9 @@ public class Main {
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             free       = linker.downcallHandle(lib.find("greeter_free").get(), FunctionDescriptor.of(i32, u64));
             bufFree    = linker.downcallHandle(lib.find("greeter_buf_free").get(), FunctionDescriptor.ofVoid(ptr, u64));
+
+            byte v = (byte) abiVersion.invokeExact();
+            if (v != ABI_VERSION) throw new IllegalStateException("ABI revision " + v + "; this host speaks " + ABI_VERSION);
         }
 
         long create(String kind) throws Throwable {

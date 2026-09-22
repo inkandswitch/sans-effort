@@ -22,7 +22,7 @@ default = ["std"]
 ## The process-wide handle table (`table`), which needs `HashMap`, a
 ## `static Mutex`, and `catch_unwind` for panic isolation. Without it the crate
 ## is `no_std` + `alloc`: the typed `Machine` and byte-level `Encoded`, for a
-## skin that keeps its own statics.
+## binding that keeps its own statics.
 std = ["sans-effort/std"]
 ## Forwarded to `sans-effort`: the lock for a `no_std` build. Exactly as
 ## there, at least one of `std` and `spin` must be enabled.

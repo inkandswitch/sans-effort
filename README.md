@@ -85,7 +85,7 @@ Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());  // E0277: 
 Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ticker needs only Sleep + WriteLine
 ```
 
-`demo/` has all of this in full — the greeter, the ticker, both contexts, native hosts on tokio and on Node (wasm-bindgen), and a C-ABI skin driven from Python (ctypes) and Java (Panama) — and `nix develop` then `demo` runs all four and checks the transcripts are byte-identical.
+`demo/` has all of this in full — the greeter, the ticker, both contexts, native hosts on tokio and on Node (wasm-bindgen), and a C-ABI binding driven from Python (ctypes) and Java (Panama) — and `nix develop` then `demo` runs all four and checks the transcripts are byte-identical.
 
 ## How the wire works
 
@@ -122,11 +122,11 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 | [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `boundary`, `testing`    | `no_std` + `alloc` |
 | [`sans-effort-host`](sans-effort-host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                            | —                  |
-| [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI skin driven from Python and Java | — |
+| [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java | — |
 
 ### Not here, on purpose
 
-An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; a derive for the `View`/`Encode` restatement (next); `pyo3`/`rustler` skins. Each is a natural next layer; none is needed to use what is here.
+An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; a derive for the `View`/`Encode` restatement (next); `pyo3`/`rustler` bindings. Each is a natural next layer; none is needed to use what is here.
 
 ## Development
 

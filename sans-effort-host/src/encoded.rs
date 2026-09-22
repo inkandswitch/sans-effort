@@ -3,7 +3,7 @@
 //! Same two operations as the typed machine — [`start`](Encoded::start) and
 //! [`reply`](Encoded::reply) — with one reply record in and the effects
 //! encoded out, one record each, by the routine's [`Encode`] impl. This is
-//! what a C-ABI or `erl_nif` skin calls, and what the [`table`](crate::table)
+//! what a C-ABI or `erl_nif` binding calls, and what the [`table`](crate::table)
 //! holds.
 
 mod input;

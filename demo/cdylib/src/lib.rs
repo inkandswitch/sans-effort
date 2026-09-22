@@ -1,8 +1,8 @@
-//! C ABI over the greeter: `new`, `start`, `reply`, `free`.
+//! C ABI over the greeter: `abi_version`, `new`, `start`, `reply`, `free`.
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
 //! table and the type check on replies are `sans-effort-host`. This crate
-//! is the `extern "C"` skin over both: one wrapper per function, each a line
+//! is the `extern "C"` binding over both: one wrapper per function, each a line
 //! plus the `unsafe` needed to touch foreign memory — building a slice from a
 //! host pointer, writing the out-pointers, reclaiming a buffer. Three blocks,
 //! and no mechanism.
@@ -13,7 +13,18 @@
 use greeter_boundary::{Ctx, Full, Quiet};
 use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
 use sans_effort::run::Run;
-use sans_effort_host::{code::code_of, error::Error, status::Status, table};
+use sans_effort_host::{
+    code::{ABI_VERSION, code_of},
+    error::Error,
+    status::Status,
+    table,
+};
+
+/// The revision of `ABI.md` this binding speaks. Check it before `new`.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_abi_version() -> u8 {
+    ABI_VERSION
+}
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two
 /// threads driving it at once get `BUSY`.

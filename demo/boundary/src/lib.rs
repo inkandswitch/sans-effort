@@ -6,8 +6,8 @@
 //! is what only the routine's author can write — which requests exist, how
 //! the five traits map onto them, how a host sees them — and nothing else.
 //! Stepping, the handle table, and the type check on replies are
-//! `sans-effort-host`; the `extern "C"` or wasm-bindgen surface is a
-//! _skin_ over both, one per binding, in `../cdylib` and `../wasm`.
+//! `sans-effort-host`; the `extern "C"` surface is the _binding_ over both,
+//! in `../cdylib`. (`../wasm` needs neither: JS is a runtime host.)
 //!
 //! ```text
 //!   routines   Greeter<C>: Run   ──▶   this crate   Ctx<E> · Full · View · Encode   ──▶   sans-effort-host

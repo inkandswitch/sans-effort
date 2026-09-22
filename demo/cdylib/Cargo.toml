@@ -1,7 +1,7 @@
 [package]
 name = "greeter_cdylib"
 version = "0.1.0"
-description = "C ABI over the greeter: the skin a foreign host loads. The one crate in the workspace that touches foreign memory"
+description = "C ABI over the greeter: the binding a foreign host loads. The one crate in the workspace that touches foreign memory"
 publish = false
 
 authors.workspace = true

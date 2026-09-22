@@ -17,7 +17,7 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
              Quiet only Sleep + Write. View/HostEffect/Encode: the tag table.
              Tests: through a Driver, as data; Greeter under Quiet is a compile_fail.
 
-  cdylib/    the C-ABI skin over sans-effort-host: new/start/reply/free/buf_free,
+  cdylib/    the C-ABI binding over sans-effort-host: new/start/reply/free/buf_free,
              three unsafe blocks, no mechanism. The only crate allowing unsafe.
   python/    a ctypes host that speaks ABI.md with a byte buffer and no library.
   java/      a Panama (java.lang.foreign) host: the same ABI, downcalls only, no JNI.

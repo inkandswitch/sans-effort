@@ -20,6 +20,7 @@ from pathlib import Path
 
 # ---- ABI.md, as code ------------------------------------------------------
 
+ABI_VERSION = 0
 OK = AWAITING = 0
 COMPLETE, STALLED = 1, 2
 ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT"}
@@ -72,10 +73,13 @@ class Reader:
 
 
 class Library:
-    """`new / start / reply / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
+    """`abi_version / new / start / reply / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
 
     def __init__(self, path: Path):
         self.lib = ctypes.CDLL(str(path))
+        self.lib.greeter_abi_version.restype = ctypes.c_uint8
+        if (v := self.lib.greeter_abi_version()) != ABI_VERSION:
+            raise RuntimeError(f"ABI revision {v}; this host speaks {ABI_VERSION}")
         self.lib.greeter_new.restype = ctypes.c_uint64
         self.lib.greeter_new_fanout.restype = ctypes.c_uint64
         self.lib.greeter_new_ticker.restype = ctypes.c_uint64
