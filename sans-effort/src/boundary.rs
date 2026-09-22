@@ -9,8 +9,9 @@
 //!   detached and replaced by the request id.
 //! - [`pending`] is the detached handle, wrapped so the host layer can keep
 //!   it in one table and type-check the reply against it.
-//! - [`codec`] writes a host's view of an effect as bytes and reads a reply
-//!   record back.
+//! - [`codec`] writes values as bytes and reads them back: a host's view of an
+//!   effect on the way out, and anything richer than the four reply kinds on
+//!   the way in.
 //!
 //! # Terms
 //!

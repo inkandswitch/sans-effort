@@ -22,6 +22,7 @@ public class Main {
     // ---- ABI.md, as code --------------------------------------------------
 
     static final byte ABI_VERSION = 0;
+    static final int FRAME_TELL = 1, FRAME_ASK = 2;
     static final int AWAITING = 0, COMPLETE = 1, STALLED = 2;
     static final Map<Integer, String> ERRORS = Map.of(
         -1, "BUSY", -2, "FINISHED", -3, "WRONG_KIND", -4, "PANICKED", -5, "BAD_HANDLE", -6, "BAD_INPUT");
@@ -49,11 +50,12 @@ public class Main {
         Reader(byte[] data) { buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN); }
         int u8() { return Byte.toUnsignedInt(buf.get()); }
         long u64() { return buf.getLong(); }
-        String str() {
+        byte[] bytes() {
             byte[] b = new byte[buf.getInt()];
             buf.get(b);
-            return new String(b, StandardCharsets.UTF_8);
+            return b;
         }
+        String str() { return new String(bytes(), StandardCharsets.UTF_8); }
         boolean done() { return !buf.hasRemaining(); }
     }
 
@@ -134,19 +136,40 @@ public class Main {
 
     record Effect(String kind, long id, String name, long millis, String text) {}
 
-    static List<Effect> decode(byte[] data) {
+    /** One effect frame: its kind (tell, ask, or reserved) and the view's bytes. */
+    record Frame(int kind, byte[] payload) {}
+
+    /** Split a batch into frames. Knows nothing of any routine's tags. */
+    static List<Frame> frames(byte[] data) {
         Reader r = new Reader(data);
+        List<Frame> out = new ArrayList<>();
+        while (!r.done()) out.add(new Frame(r.u8(), r.bytes()));
+        return out;
+    }
+
+    static List<Effect> decode(byte[] data) {
         List<Effect> out = new ArrayList<>();
-        while (!r.done()) {
+        List<Frame> fs = frames(data);
+        for (int n = 0; n < fs.size(); n++) {
+            Frame f = fs.get(n);
+            if (f.kind() != FRAME_TELL && f.kind() != FRAME_ASK) continue; // reserved: safe to skip
+            Reader r = new Reader(f.payload());
             int tag = r.u8();
-            out.add(switch (tag) {
+            Effect e = switch (tag) {
                 case 1 -> new Effect("count", r.u64(), null, 0, null);
                 case 2 -> { String name = r.str(); yield new Effect("lookup", r.u64(), name, 0, null); }
                 case 3 -> new Effect("read_line", r.u64(), null, 0, null);
                 case 4 -> { long millis = r.u64(); yield new Effect("sleep", r.u64(), null, millis, null); }
                 case 5 -> new Effect("write_line", 0, null, 0, r.str());
-                default -> throw new IllegalStateException("unknown effect tag " + tag + ": this host knows 1..5");
-            });
+                default -> null;
+            };
+            if (e == null) {
+                if (f.kind() == FRAME_TELL) continue; // a tell this host doesn't know: skip it
+                throw new IllegalStateException("frame " + n + " asks with unknown tag " + tag + ": this host cannot answer it; it knows 1..5");
+            }
+            if (!r.done())
+                throw new IllegalStateException("frame " + n + " (" + e.kind() + ") has bytes this host did not expect: its tag table disagrees with the routine's");
+            out.add(e);
         }
         return out;
     }

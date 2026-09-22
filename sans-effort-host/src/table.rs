@@ -187,8 +187,8 @@ mod tests {
     )]
 
     use super::*;
-    use crate::fixtures::{Echo, Effect, reply_str_record};
-    use sans_effort::{boundary::codec::Writer, run::Run};
+    use crate::fixtures::{Echo, Effect, View, framed, reply_str_record};
+    use sans_effort::run::Run;
 
     #[test]
     fn round_trip_across_threads() {
@@ -196,10 +196,7 @@ mod tests {
 
         let (bytes, status) = start(h).expect("start");
         assert_eq!(status, Status::Awaiting);
-        let mut want = Writer::new();
-        want.u8(1);
-        want.u64(1);
-        assert_eq!(bytes, want.finish());
+        assert_eq!(bytes, framed(&[View::Ask(1)]));
 
         let record = reply_str_record(1, "far");
         let elsewhere = std::thread::spawn(move || reply(h, &record))
@@ -207,10 +204,7 @@ mod tests {
             .expect("thread");
         let (bytes, status) = elsewhere.expect("replied on another thread");
         assert_eq!(status, Status::Complete);
-        let mut want = Writer::new();
-        want.u8(2);
-        want.str("far");
-        assert_eq!(bytes, want.finish());
+        assert_eq!(bytes, framed(&[View::Say(String::from("far"))]));
 
         free(h).expect("free");
         assert_eq!(free(h), Err(Error::BadHandle));

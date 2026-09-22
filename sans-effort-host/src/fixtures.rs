@@ -106,6 +106,20 @@ impl Run for Impatient {
     }
 }
 
+/// What the byte layer emits for these views: one frame each, `FRAME_ASK`
+/// for an `Ask`, `FRAME_TELL` for a `Say`.
+pub(crate) fn framed(views: &[View]) -> Vec<u8> {
+    let mut w = Writer::new();
+    for view in views {
+        w.u8(match view {
+            View::Ask(_) => crate::code::FRAME_ASK,
+            View::Say(_) => crate::code::FRAME_TELL,
+        });
+        w.bytes(&view.to_bytes());
+    }
+    w.finish()
+}
+
 pub(crate) fn reply_str_record(id: u64, s: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(1);

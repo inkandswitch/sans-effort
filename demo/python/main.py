@@ -21,6 +21,7 @@ from pathlib import Path
 # ---- ABI.md, as code ------------------------------------------------------
 
 ABI_VERSION = 0
+FRAME_TELL, FRAME_ASK = 1, 2
 OK = AWAITING = 0
 COMPLETE, STALLED = 1, 2
 ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT"}
@@ -62,14 +63,27 @@ class Reader:
     def u64(self) -> int:
         return self._take("<Q")
 
-    def str(self) -> str:
+    def bytes(self) -> bytes:
         n = self._take("<I")
-        s = self.data[self.at : self.at + n].decode()
+        b = self.data[self.at : self.at + n]
+        if len(b) != n:
+            raise ValueError(f"a {n}-byte field has only {len(b)} bytes left")
         self.at += n
-        return s
+        return b
+
+    def str(self) -> str:
+        return self.bytes().decode()
 
     def done(self) -> bool:
         return self.at >= len(self.data)
+
+
+def frames(data: bytes) -> list[tuple[int, bytes]]:
+    """Split a batch into (frame kind, payload). Knows nothing of any routine's tags."""
+    r, out = Reader(data), []
+    while not r.done():
+        out.append((r.u8(), r.bytes()))
+    return out
 
 
 class Library:
@@ -136,13 +150,18 @@ TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line"}
 
 
 def decode(data: bytes) -> list[dict]:
-    """Effect records → dicts with a `kind`, its fields, and an `id` if awaiting."""
-    r, effects = Reader(data), []
-    while not r.done():
-        at, tag = r.at, r.u8()
+    """Frames → dicts with a `kind`, its fields, and an `id` if awaiting."""
+    effects = []
+    for n, (frame, payload) in enumerate(frames(data)):
+        if frame not in (FRAME_TELL, FRAME_ASK):
+            continue  # a reserved frame kind: a newer binding's record, safe to skip
+        r = Reader(payload)
+        tag = r.u8()
         kind = TAGS.get(tag)
         if kind is None:
-            raise ValueError(f"unknown effect tag {tag} at byte {at}: this host knows {sorted(TAGS)}")
+            if frame == FRAME_TELL:
+                continue  # a tell this host doesn't know: nothing to answer, skip it
+            raise ValueError(f"frame {n} asks with unknown tag {tag}: this host cannot answer it; it knows {sorted(TAGS)}")
         if kind == "count":
             effects.append({"kind": kind, "id": r.u64()})
         elif kind == "lookup":
@@ -153,6 +172,8 @@ def decode(data: bytes) -> list[dict]:
             effects.append({"kind": kind, "millis": r.u64(), "id": r.u64()})
         elif kind == "write_line":
             effects.append({"kind": kind, "text": r.str()})
+        if not r.done():
+            raise ValueError(f"frame {n} ({kind}) has {len(payload) - r.at} bytes this host did not expect: its tag table disagrees with the routine's")
     return effects
 
 

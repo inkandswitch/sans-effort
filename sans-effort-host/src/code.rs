@@ -1,7 +1,9 @@
-//! Status and error codes as they cross the ABI.
+//! The ABI's numbers: its revision, the kinds of effect frame, and the status
+//! and error codes.
 //!
-//! Non-negative is a status, negative is an error. Plain constants so a host
-//! can copy them; `ABI.md` at the repository root is the table in prose.
+//! For codes, non-negative is a status and negative is an error. Plain
+//! constants so a host can copy them; `ABI.md` at the repository root is the
+//! table in prose.
 
 use crate::error::Error;
 
@@ -10,6 +12,13 @@ use crate::error::Error;
 /// bumped whenever a host written against the previous text could misbehave
 /// against a binding written against the new one. Tag tables are outside it.
 pub const ABI_VERSION: u8 = 0;
+
+/// A frame holding an effect that awaits no reply. A host may skip one whose
+/// tag it does not know.
+pub const FRAME_TELL: u8 = 1;
+/// A frame holding an effect that awaits a reply. A host must refuse to
+/// continue on one whose tag it does not know: nobody else will answer it.
+pub const FRAME_ASK: u8 = 2;
 
 /// Success, for calls that carry no status (`free`).
 pub const OK: i32 = 0;

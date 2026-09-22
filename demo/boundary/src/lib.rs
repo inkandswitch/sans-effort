@@ -41,8 +41,9 @@
 //!
 //! # Encoding
 //!
-//! Little-endian; `str` is `u32 len` + UTF-8. One record per effect; an
-//! awaiting effect's record ends with its `u64` request id:
+//! Little-endian; `str` is `u32 len` + UTF-8. One record per effect, which
+//! the host layer wraps in a frame (`ABI.md` §Frames); an awaiting effect's
+//! record ends with its `u64` request id. This table is the payload only:
 //!
 //! | tag | effect                   | reply with |
 //! |-----|--------------------------|------------|

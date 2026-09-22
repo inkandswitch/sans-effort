@@ -17,6 +17,7 @@ rust-version.workspace = true
 portable-atomic = { workspace = true, optional = true }
 portable-atomic-util = { workspace = true, optional = true }
 spin = { workspace = true, optional = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 bolero = { workspace = true }

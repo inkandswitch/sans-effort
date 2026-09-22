@@ -12,17 +12,29 @@ The shape: `abi_version` once, then `new`, `start(handle) → effects`, then `re
 | Out-buffers | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written. |
 | `start` | Valid once per handle; a second call is `BAD_INPUT`. Returns the effects recorded before the first wait. |
 | `reply` | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` — typed by reply kind, not by effect. Trailing bytes are `BAD_INPUT`. Returns the effects recorded before the next wait. |
-| Effects | Little-endian; `str` and `bytes` are `u32 len` + payload; one `u8` tag per record, records concatenated; an awaiting effect's record ends with its `u64` request id. |
+| Effects | Little-endian; `str` and `bytes` are `u32 len` + payload. One frame per effect, frames concatenated: `u8 kind · u32 len · payload`, where the payload is the routine's record — one `u8` tag, its fields, and, for an ask, its `u64` request id last. See [Frames](#frames). |
 | Request ids | Per machine, from `1`, increasing. Any number may be outstanding at once, and the host may reply in any order. An id the routine has abandoned is `BAD_INPUT`. |
 | Upcalls | None. The host calls in; the routine never calls out. No callback is registered, no host value is held on the Rust side. |
 | Threading | Any thread, one at a time per handle: two threads driving one handle get `BUSY`, not a race. A host may pool, and a machine's calls migrate between threads. |
 | Panics | A routine that panics is removed; the call returns `PANICKED` and every later call on that handle is `BAD_HANDLE`. The process is not aborted. |
 
+## Frames
+
+Each effect crosses as one frame: `u8 kind · u32 len · payload`. The payload is the routine's own record, laid out as its tag table says; the frame around it is the ABI's, so a host can split a batch into records without knowing any tag table.
+
+| Frame kind | Holds                                                     | A host that does not know the payload's tag… |
+|------------|-----------------------------------------------------------|----------------------------------------------|
+| `1` tell   | an effect that awaits no reply                            | skips it                                     |
+| `2` ask    | an effect that awaits a reply; its payload ends with the request id | refuses to continue: nobody else will answer it |
+| other      | reserved for records a later revision adds                | skips the whole frame                        |
+
+A host should check that parsing a payload used exactly `len` bytes. A mismatch means its copy of the tag table disagrees with the routine's, and it is caught at the record where it happens rather than corrupting everything after it.
+
 ## Versioning
 
 `<prefix>_abi_version()` returns the revision of this document the binding implements; this text is revision `0`: pre-release, nothing published yet. A host checks it once, before `new`, and refuses to continue on a mismatch. The number is independent of the crates' versions: the ABI is meant to outlive them.
 
-It changes when a host written against the previous revision could misbehave against a binding written against the new one — a new code, a new reply kind, a change to a record's layout or to a call's signature. It does not change for what the table already leaves to the binding: a new constructor, a routine's tag table. A binding may version its own vocabulary however it likes (`<prefix>_schema_version()` is a reasonable convention); that is not this number.
+It changes when a host written against the previous revision could misbehave against a binding written against the new one — a new code, a new reply kind, a change to a record's layout or to a call's signature. It does not change for what the table already leaves to the binding — a new constructor, a routine's tag table — nor for a new frame kind, which older hosts skip. A binding may version its own vocabulary however it likes (`<prefix>_schema_version()` is a reasonable convention); that is not this number.
 
 ## The reply menu
 
@@ -47,23 +59,23 @@ And therefore lives with each routine:
 
 ## A conversation
 
-The greeter in `demo/`, driven from start to `quit`:
+The greeter in `demo/`, driven from start to `quit`. Each frame is written `tell[…]` or `ask[…]`, with its length left out:
 
 ```text
 host → start(h)
-     ← 05 "Who are you?" · 03 id=1               AWAITING     WriteLine, ReadLine·1
+     ← tell[05 "Who are you?"] · ask[03 id=1]        AWAITING     WriteLine, ReadLine·1
 host → reply(h, [01 id=1 "alice"])                       str
-     ← 02 "alice" id=2                           AWAITING     Lookup·2
+     ← ask[02 "alice" id=2]                          AWAITING     Lookup·2
 host → reply(h, [01 id=2 "Hello"])                       str
-     ← 04 millis=50 id=3                         AWAITING     Sleep·3
+     ← ask[04 millis=50 id=3]                        AWAITING     Sleep·3
 host → reply(h, [03 id=3])                               unit
-     ← 05 "Hello, alice!" · 01 id=4              AWAITING     WriteLine, Count·4
+     ← tell[05 "Hello, alice!"] · ask[01 id=4]       AWAITING     WriteLine, Count·4
 host → reply(h, [02 id=4 1])                             u64
-     ← 05 "(greeted 1 so far)" · 05 "Who are you?" · 03 id=5
-                                                 AWAITING
+     ← tell[05 "(greeted 1 so far)"] · tell[05 "Who are you?"] · ask[03 id=5]
+                                                     AWAITING
 host → reply(h, [01 id=5 "quit"])                        str
-     ← 05 "Bye."                                 COMPLETE
-host → free(h)                                   OK
+     ← tell[05 "Bye."]                               COMPLETE
+host → free(h)                                       OK
 ```
 
 A `Quiet` machine (`<prefix>_new_ticker()` in the demo) is driven by the same loop and only ever produces tags 4 and 5 — the routine's trait bounds guarantee it, and the host can rely on it.

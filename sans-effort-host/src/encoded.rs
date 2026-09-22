@@ -2,14 +2,22 @@
 //!
 //! Same two operations as the typed machine — [`start`](Encoded::start) and
 //! [`reply`](Encoded::reply) — with one reply record in and the effects
-//! encoded out, one record each, by the routine's [`Encode`] impl. This is
-//! what a C-ABI or `erl_nif` binding calls, and what the [`table`](crate::table)
-//! holds.
+//! encoded out. Each effect is one _frame_: a kind
+//! ([`FRAME_TELL`] or [`FRAME_ASK`]), a `u32` length, and the view's
+//! bytes as the routine's [`Encode`] impl writes them. The length lets a host
+//! skip a tell it does not understand and check that it parsed each record
+//! exactly. This is what a C-ABI or `erl_nif` binding calls, and what the
+//! [`table`](crate::table) holds.
 
 mod input;
 
 use self::input::Input;
-use crate::{error::Error, machine::Machine, status::Status};
+use crate::{
+    code::{FRAME_ASK, FRAME_TELL},
+    error::Error,
+    machine::{Machine, Shown},
+    status::Status,
+};
 use alloc::vec::Vec;
 use sans_effort::boundary::{codec::Encode, codec::Writer, host_effect::HostEffect};
 
@@ -38,8 +46,8 @@ where
     ///
     /// As [`Machine::start`].
     pub fn start(&mut self) -> Result<(Vec<u8>, Status), Error> {
-        let views = self.0.start()?;
-        Ok((encode(&views), self.0.status()))
+        let shown = self.0.start_shown()?;
+        Ok((encode(&shown), self.0.status()))
     }
 
     /// Deliver one reply record — `1 id str`, `2 id u64`, `3 id`, or
@@ -48,16 +56,16 @@ where
     ///
     /// # Errors
     ///
-    /// [`Error::BadInput`] on a malformed record or trailing bytes, plus
+    /// [`Error::Malformed`] on a malformed record or trailing bytes, plus
     /// whatever [`Machine::reply`] returns.
     pub fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
-        let views = match Input::decode(record)? {
-            Input::Bytes(id, v) => self.0.reply(id, v)?,
-            Input::Str(id, v) => self.0.reply(id, v)?,
-            Input::U64(id, v) => self.0.reply(id, v)?,
-            Input::Unit(id) => self.0.reply(id, ())?,
+        let shown = match Input::decode(record)? {
+            Input::Bytes(id, v) => self.0.reply_shown(id, v)?,
+            Input::Str(id, v) => self.0.reply_shown(id, v)?,
+            Input::U64(id, v) => self.0.reply_shown(id, v)?,
+            Input::Unit(id) => self.0.reply_shown(id, ())?,
         };
-        Ok((encode(&views), self.0.status()))
+        Ok((encode(&shown), self.0.status()))
     }
 }
 
@@ -67,10 +75,12 @@ impl<E> core::fmt::Debug for Encoded<E> {
     }
 }
 
-fn encode<V: Encode>(views: &[V]) -> Vec<u8> {
+/// One frame per effect: kind, `u32` length, the view's own bytes.
+fn encode<V: Encode>(shown: &[Shown<V>]) -> Vec<u8> {
     let mut w = Writer::new();
-    for view in views {
-        view.encode(&mut w);
+    for Shown { view, awaits } in shown {
+        w.u8(if *awaits { FRAME_ASK } else { FRAME_TELL });
+        w.bytes(&view.to_bytes());
     }
     w.finish()
 }
@@ -80,8 +90,9 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
-    use crate::fixtures::{Both, Echo, reply_str_record};
-    use sans_effort::{boundary::codec::Writer, run::Run};
+    use crate::fixtures::{Both, Echo, View, framed, reply_str_record};
+    use alloc::string::String;
+    use sans_effort::{boundary::codec::DecodeError, run::Run};
 
     fn encoded<F: core::future::Future<Output = ()> + Send + 'static>(
         make: impl FnOnce(sans_effort::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
@@ -96,12 +107,7 @@ mod tests {
         let mut m = encoded(|outbox| Both(outbox).run());
         let (bytes, status) = m.start().expect("start");
         assert_eq!(status, Status::Awaiting);
-        let mut want = Writer::new();
-        want.u8(1);
-        want.u64(1);
-        want.u8(1);
-        want.u64(2);
-        assert_eq!(bytes, want.finish(), "Ask·1, Ask·2");
+        assert_eq!(bytes, framed(&[View::Ask(1), View::Ask(2)]), "Ask·1, Ask·2");
 
         let (bytes, status) = m.reply(&reply_str_record(2, "b")).expect("reply 2");
         assert!(bytes.is_empty(), "one of two replied: no new effects");
@@ -110,10 +116,7 @@ mod tests {
         let (bytes, status) = m.reply(&reply_str_record(1, "a")).expect("reply 1");
         assert_eq!(status, Status::Complete);
 
-        let mut want = Writer::new();
-        want.u8(2);
-        want.str("a+b");
-        assert_eq!(bytes, want.finish());
+        assert_eq!(bytes, framed(&[View::Say(String::from("a+b"))]));
     }
 
     #[test]
@@ -121,11 +124,15 @@ mod tests {
         bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
             let mut m = encoded(|outbox| Echo(outbox).run());
             m.start().expect("start");
-            // Any input either decodes to a well-formed record or is
-            // `BadInput`; a well-formed record for id 1 of kind str succeeds.
+            // Any input is refused with a code, or is a well-formed record:
+            // for id 1 of kind str it completes; of another kind it is
+            // `WRONG_KIND`; anything else is `BAD_INPUT`.
             match m.reply(bytes) {
                 Ok((_, status)) => assert_eq!(status, Status::Complete),
-                Err(e) => assert_eq!(e, Error::BadInput),
+                Err(e) => assert!(
+                    [crate::code::BAD_INPUT, crate::code::WRONG_KIND].contains(&e.code()),
+                    "{e}"
+                ),
             }
         });
     }
@@ -136,7 +143,13 @@ mod tests {
         assert_eq!(m.start().expect("start").1, Status::Awaiting);
         let mut record = reply_str_record(1, "hi");
         record.push(0);
-        assert_eq!(m.reply(&record), Err(Error::BadInput), "trailing byte");
+        assert_eq!(
+            m.reply(&record),
+            Err(Error::Malformed(DecodeError::TrailingBytes {
+                remaining: 1
+            })),
+            "trailing byte"
+        );
         assert_eq!(
             m.machine().status(),
             Status::Awaiting,
@@ -149,10 +162,35 @@ mod tests {
         let mut m = encoded(|outbox| Echo(outbox).run());
         let (bytes, status) = m.start().expect("start");
         assert_eq!(status, Status::Awaiting);
-        let mut want = Writer::new();
-        want.u8(1);
-        want.u64(1);
-        assert_eq!(bytes, want.finish());
+        assert_eq!(bytes, framed(&[View::Ask(1)]));
         assert_eq!(m.start(), Err(Error::BadInput), "start twice");
+    }
+
+    /// The frame format, spelled out byte by byte rather than through the
+    /// code that writes it.
+    #[test]
+    fn a_frame_is_kind_length_payload() {
+        let mut m = encoded(|outbox| Echo(outbox).run());
+        let (ask, _) = m.start().expect("start");
+        assert_eq!(
+            ask,
+            [
+                2, // FRAME_ASK
+                9, 0, 0, 0, // payload length
+                1, // the view's tag: Ask
+                1, 0, 0, 0, 0, 0, 0, 0, // its request id
+            ]
+        );
+
+        let (tell, _) = m.reply(&reply_str_record(1, "hi")).expect("reply");
+        assert_eq!(
+            tell,
+            [
+                1, // FRAME_TELL
+                7, 0, 0, 0, // payload length
+                2, // the view's tag: Say
+                2, 0, 0, 0, b'h', b'i', // its text
+            ]
+        );
     }
 }

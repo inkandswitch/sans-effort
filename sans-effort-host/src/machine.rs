@@ -64,6 +64,11 @@ impl<E: HostEffect> Machine<E> {
     /// [`Error::Finished`] if the routine has completed;
     /// [`Error::BadInput`] if already started.
     pub fn start(&mut self) -> Result<Vec<E::View>, Error> {
+        self.start_shown().map(views)
+    }
+
+    /// As [`start`](Self::start), marking which effects await a reply.
+    pub(crate) fn start_shown(&mut self) -> Result<Vec<Shown<E::View>>, Error> {
         if self.driver.is_finished() {
             return Err(Error::Finished);
         }
@@ -74,7 +79,7 @@ impl<E: HostEffect> Machine<E> {
 
         self.started = true;
         let effects = self.driver.start();
-        Ok(self.present(effects))
+        Ok(self.show(effects))
     }
 
     /// Reply to the request with this id: the effects recorded before the
@@ -90,6 +95,15 @@ impl<E: HostEffect> Machine<E> {
     /// if nothing awaits `id`; [`Error::WrongKind`] if `id` awaits another
     /// kind — the handle is kept, so the host may retry with the right one.
     pub fn reply<T: Reply>(&mut self, id: u64, value: T) -> Result<Vec<E::View>, Error> {
+        self.reply_shown(id, value).map(views)
+    }
+
+    /// As [`reply`](Self::reply), marking which effects await a reply.
+    pub(crate) fn reply_shown<T: Reply>(
+        &mut self,
+        id: u64,
+        value: T,
+    ) -> Result<Vec<Shown<E::View>>, Error> {
         match T::from_pending(self.take(id)?) {
             Ok(reply) => Ok(self.deliver(reply, value)),
             Err(pending) => {
@@ -119,15 +133,16 @@ impl<E: HostEffect> Machine<E> {
     /// Split a batch into what the host sees and the handles we keep — and
     /// forget the handles of requests the routine dropped unanswered, so this
     /// table tracks the driver's rather than growing past it.
-    fn present(&mut self, effects: Vec<E>) -> Vec<E::View> {
-        let views = effects
+    fn show(&mut self, effects: Vec<E>) -> Vec<Shown<E::View>> {
+        let shown = effects
             .into_iter()
             .map(|effect| {
                 let (view, pending) = effect.split();
+                let awaits = pending.is_some();
                 if let Some(p) = pending {
                     self.pending.push((p.id(), p));
                 }
-                view
+                Shown { view, awaits }
             })
             .collect();
 
@@ -137,7 +152,7 @@ impl<E: HostEffect> Machine<E> {
             self.pending.retain(|(i, _)| *i != id);
         }
 
-        views
+        shown
     }
 
     fn take(&mut self, id: u64) -> Result<Pending, Error> {
@@ -153,9 +168,9 @@ impl<E: HostEffect> Machine<E> {
         Ok(self.pending.swap_remove(at).1)
     }
 
-    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<E::View> {
+    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Vec<Shown<E::View>> {
         let effects = self.driver.reply(reply, value);
-        self.present(effects)
+        self.show(effects)
     }
 }
 
@@ -166,6 +181,17 @@ impl<E> core::fmt::Debug for Machine<E> {
             .field("pending", &self.pending)
             .finish_non_exhaustive()
     }
+}
+
+/// One effect as a host sees it, and whether it awaits a reply: what the byte
+/// layer needs to frame it.
+pub(crate) struct Shown<V> {
+    pub(crate) view: V,
+    pub(crate) awaits: bool,
+}
+
+fn views<V>(shown: Vec<Shown<V>>) -> Vec<V> {
+    shown.into_iter().map(|s| s.view).collect()
 }
 
 #[cfg(test)]
