@@ -1,20 +1,23 @@
 # demo
 
-The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five capability traits, then run four ways that must agree byte for byte.
+The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five capability traits, then run four ways that must agree byte for byte. Three of the traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`; two (`Count`, `Lookup`) are the demo's own.
 
 ```text
   routines/  the routines, one per module: greeter (the conversation), fanout (two
-             waits at once), ticker (needs only Sleep + WriteLine); traits.rs. no_std.
-             Imports Run and join, nothing else.
+             waits at once), ticker (needs only Sleep + WriteLine). no_std.
+             traits.rs: the demo's own capabilities, Count and Lookup, each with
+             its effect and its Ctx impl beside it (the orphan rule puts them
+             there), like a module of the standard library. The routines
+             themselves use only traits.
              Tests: a Recording mock + testing::run_now — no driver, one poll.
 
   tokio/     the native path. TokioCtx implements the traits with tokio futures;
              tokio::spawn(Greeter::new(ctx).run()). No Driver anywhere.
              Tests: paused clock — three 50 ms pauses cost no wall time.
 
-  boundary/  the reifying context. Request structs (Lookup, ReadLine, …); Ctx<E>
-             implements each trait for any E: From<Asked<…>>; Full carries all five,
-             Quiet only Sleep + WriteLine. View/HostEffect/Encode: the tag table.
+  boundary/  the host vocabularies. Full carries all five capabilities' effects,
+             Quiet only Sleep + WriteLine; Ctx<E> implements each trait for any
+             E that can carry its effect. View/HostEffect/Encode: the tag table.
              Tests: through a Driver, as data; Greeter under Quiet is a compile_fail.
 
   cdylib/    the C-ABI binding over sans-effort-host: abi_version/new/start/reply/

@@ -1,7 +1,7 @@
 # A standard library of effects
 
 > [!NOTE]
-> _Status:_ planned. Today the five capabilities below live in `demo/`.
+> _Status:_ `sans-effort-effects` exists with `time`, `console`, and `Ctx`; `Decode` and the `Result`/`Option` encoding are in core. `actor` and `sans-effort-tokio` are planned.
 
 `Sleep` and console I/O are things nearly every routine wants, and messaging other routines is close behind. Today a user who wants `Sleep` writes it three times:
 
@@ -21,7 +21,7 @@ The shape is `embedded-hal`'s: one crate of traits, implementations in separate 
 | Crate                 | Contents                                                                                               | Target   |
 |-----------------------|--------------------------------------------------------------------------------------------------------|----------|
 | `sans-effort`         | The mechanism, unchanged, plus `Decode` and `select`                                                    | `no_std` |
-| `sans-effort-effects` | Per module: the trait, its request struct(s), and the reifying `Ctx<E>` impl. No tags                  | `no_std` |
+| `sans-effort-effects` | Per module: the trait, its effect structs (`effect::…`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
 | `sans-effort-tokio`   | `TokioCtx`, implementing every trait in `sans-effort-effects` natively; the actor `Registry`           | `std`    |
 
 Modules in `sans-effort-effects`:
@@ -39,9 +39,9 @@ The vocabulary enum and its tags stay the application's. A host decides what it 
 `Ctx<E>` is generic over the vocabulary, so one impl per trait covers every application:
 
 ```rust
-impl<E: From<Asked<time::Sleep>>> time::Sleep for Ctx<E> {
+impl<E: From<Asked<time::effect::Sleep>>> time::Sleep for Ctx<E> {
     async fn sleep(&self, d: Duration) {
-        self.request(time::Sleep(d)).await
+        self.request(time::effect::Sleep(d)).await;
     }
 }
 ```
@@ -50,14 +50,18 @@ An application writes its vocabulary — eventually with a derive — and both i
 
 ```rust
 enum Full {
-    Sleep(Asked<time::Sleep>),
-    ReadLine(Asked<console::ReadLine>),
-    WriteLine(console::WriteLine),
-    Lookup(Asked<Lookup>),          // the application's own capability
+    Sleep(Asked<time::effect::Sleep>),
+    ReadLine(Asked<console::effect::ReadLine>),
+    WriteLine(console::effect::WriteLine),
+    Lookup(Asked<effect::Lookup>),  // the application's own capability
 }
 ```
 
-An application's own capabilities implement their traits for the same `Ctx<E>`. That needs `Ctx` to expose `request` and `notify` — enough to add a capability, without handing out the outbox.
+Each module names its effect structs in an `effect` submodule: `time::Sleep` is the trait, `time::effect::Sleep` what it records.
+
+### Application capabilities live with their traits
+
+An application's own capabilities implement their traits for the same `Ctx<E>`, through `Ctx::request` and `Ctx::notify` — enough to add a capability without handing out the outbox. Where that impl goes is not a choice: the orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`. So an application lays out its capabilities the way the stdlib lays out a module — trait, effect, and `Ctx` impl together, in the crate that defines the trait — and its vocabulary crate holds only the vocabularies. In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
 
 ## Why a crate, and not a feature
 
