@@ -97,12 +97,30 @@ Given an honest host and actors in safe Rust:
 | Use a capability its context lacks                               | the routine does not compile under that context            |
 | Answer another routine's request                                 | `ReplyHandle` is unforgeable and bound to its driver       |
 
-## Two kinds of c-list
+## Untrusted guests
 
-A _c-list_ is a table that translates between references and small integers at a trust boundary. There are two places one could go, and they solve different problems.
+A _c-list_ is a table that translates between references and small integers at a trust boundary: the holder sees only its own numbering, so guessing integers is useless. Agoric's SwingSet keeps one per vat. Should hosts keep one per actor?
 
-- _Per actor, inside one host_ — as Agoric's SwingSet keeps one per vat. Each actor sees only its own numbering, so guessing integers is useless. This matters for actors that _can_ forge integers: untrusted Wasm modules, or actors written in the host language. Safe-Rust actors do not need it; the private constructor and the out-of-band table already cover them. Not planned.
-- _Per connection, between hosts_ — the CapTP piece. Needed only when actors span processes. See below.
+Only if some actors can forge integers — and a c-list only helps some of those:
+
+| Untrusted actor                                   | Does a c-list in the host help?                                                                    |
+|---------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| Safe Rust routine                                 | Not needed: the private constructor and the out-of-band table cover it                             |
+| `unsafe` Rust routine                             | No: it can read the host's memory, and no table survives that                                      |
+| Host-language code, such as third-party Python    | No: the language cannot isolate it, so it can call the ABI with any handle or edit the host's tables |
+| A sandboxed guest: a Wasm module, Hardened JS     | Yes — the one real case                                                                            |
+
+For that case, the c-list belongs where the guest is embedded, not in the host scheduler or the ABI. A guest adapter — a Rust context that implements the effect traits for a guest module — holds real `Address<M>` values and shows the guest only indices into its own table. Everything outside the adapter is unchanged: other actors, host loops, the wire.
+
+```text
+  trusted Rust actors ── Address<M> ──┐
+                                      host scheduler (unchanged)
+  Wasm guest ── indices ── [ adapter: c-list ↔ Address<M> ] ──┘
+```
+
+Putting it in the host instead would make every host translate `to` and every `addrs` entry on every post, grow tables that only shrink with "I dropped this address" messages, make transcripts show a different number for the same actor depending on who refers to it — and all of it would protect only the guests the adapter already protects.
+
+A separate question, not this one: tables _between_ hosts, when actors span processes. See below.
 
 ## Across hosts
 
@@ -125,5 +143,4 @@ Unguessable addresses would make forging a body useless without the out-of-band 
 
 ## Open questions
 
-- Per-actor c-lists inside a host, for untrusted actors: undecided — probably declined, at least deferred. A much heavier host loop for a threat that safe Rust already closes.
 - Should the host verify each entry in `addrs` is live, or is forwarding enough?
