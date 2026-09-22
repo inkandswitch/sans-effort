@@ -1,4 +1,4 @@
-# sans_effort_host
+# sans-effort-host
 
 > The host side of a routine, for hosts that cannot hold a Rust value
 
@@ -7,7 +7,7 @@ A Rust host drives a routine through `sans_effort::driver::Driver`, replying thr
 Everything but `table` is `no_std` + `alloc`; the table needs a process-wide `static Mutex`, a `HashMap`, and `catch_unwind`, so it is behind the default `std` feature. A skin on a target without `std` holds its `Encoded` machines in statics of its own.
 
 ```text
-  app skin (unsafe, ~40 lines)   ─▶   sans_effort_host (this crate)   ─▶   sans_effort::Driver
+  app skin (unsafe, ~40 lines)   ─▶   sans-effort-host (this crate)   ─▶   sans_effort::Driver
   new / start / reply / free            Machine: id → ReplyHandle, kind check
   buf_free                              table:   u64 handles, BUSY, panic isolation
                                         bytes:   decode one reply record, encode the effects

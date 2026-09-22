@@ -24,7 +24,7 @@
 //! That keeps this crate under `unsafe_code = "forbid"`.
 //!
 //! ```text
-//!   app cdylib                                 sans_effort_host
+//!   app cdylib                                 sans-effort-host
 //!   ────────────────────────────────           ──────────────────────────────────────────
 //!   enum Effect { … }  impl HostEffect
 //!   #[no_mangle] new()             ─────────▶  table::new(|outbox| Greeter::new(Ctx::new(outbox)).run())

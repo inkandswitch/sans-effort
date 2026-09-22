@@ -1,5 +1,5 @@
 [package]
-name = "sans_effort"
+name = "sans-effort"
 version = "0.1.0"
 description = "sans-io, sans effort: host-driven async coroutines whose every wait is a typed effect"
 readme = "README.md"

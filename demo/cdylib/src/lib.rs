@@ -1,7 +1,7 @@
 //! C ABI over the greeter: `new`, `start`, `reply`, `free`.
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
-//! table and the type check on replies are `sans_effort_host`. This crate
+//! table and the type check on replies are `sans-effort-host`. This crate
 //! is the `extern "C"` skin over both: one wrapper per function, each a line
 //! plus the `unsafe` needed to touch foreign memory — building a slice from a
 //! host pointer, writing the out-pointers, reclaiming a buffer. Three blocks,

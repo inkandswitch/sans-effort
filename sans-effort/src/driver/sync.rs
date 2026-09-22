@@ -18,7 +18,7 @@
 
 #[cfg(not(any(feature = "std", feature = "spin")))]
 compile_error!(
-    "sans_effort needs a lock: enable the `std` feature (default), or `spin` for no_std \
+    "sans-effort needs a lock: enable the `std` feature (default), or `spin` for no_std \
      (add `portable-atomic` or `critical-section` on targets without CAS atomics)"
 );
 

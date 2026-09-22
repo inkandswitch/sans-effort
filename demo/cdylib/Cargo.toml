@@ -14,8 +14,8 @@ rust-version.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-sans_effort = { workspace = true, features = ["std"] }
-sans_effort_host = { workspace = true }
+sans-effort = { workspace = true, features = ["std"] }
+sans-effort-host = { workspace = true }
 greeter_boundary = { version = "0.1.0", path = "../boundary" }
 routines = { version = "0.1.0", path = "../routines" }
 

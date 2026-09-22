@@ -1,5 +1,5 @@
 {
-  description = "sans_effort — host-driven async coroutines whose every wait is a typed effect";
+  description = "sans-effort — host-driven async coroutines whose every wait is a typed effect";
 
   inputs = {
     nixpkgs.url = "nixpkgs/nixos-26.05";
@@ -168,7 +168,7 @@
         ci-demo-pkgs = demo-pkgs;
       in rec {
         devShells.default = pkgs.mkShell {
-          name = "sans_effort_shell";
+          name = "sans-effort-shell";
 
           # `command_menu` is already a flat list (menu + command scripts).
           nativeBuildInputs =
@@ -194,7 +194,7 @@
         };
 
         devShells.ci = pkgs.mkShell {
-          name = "sans_effort_ci";
+          name = "sans-effort-ci";
 
           nativeBuildInputs =
             [

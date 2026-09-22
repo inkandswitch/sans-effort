@@ -1,6 +1,6 @@
 # The ABI
 
-What a skin built on `sans_effort_host` exports, and what a foreign host may assume. A host that assumes this and nothing else is generic over routines: it can drive any routine whose skin speaks it, given only the routine's tag table.
+What a skin built on `sans-effort-host` exports, and what a foreign host may assume. A host that assumes this and nothing else is generic over routines: it can drive any routine whose skin speaks it, given only the routine's tag table.
 
 The shape: `new`, `start(handle) → effects`, then `reply(handle, record) → effects` until the status is `COMPLETE`, then `free`. Each call returns the effects the routine recorded before its next wait.
 

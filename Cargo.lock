@@ -201,7 +201,7 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "routines",
- "sans_effort",
+ "sans-effort",
 ]
 
 [[package]]
@@ -210,8 +210,8 @@ version = "0.1.0"
 dependencies = [
  "greeter_boundary",
  "routines",
- "sans_effort",
- "sans_effort_host",
+ "sans-effort",
+ "sans-effort-host",
 ]
 
 [[package]]
@@ -219,7 +219,7 @@ name = "greeter_tokio"
 version = "0.1.0"
 dependencies = [
  "routines",
- "sans_effort",
+ "sans-effort",
  "tokio",
 ]
 
@@ -229,7 +229,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "routines",
- "sans_effort",
+ "sans-effort",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -407,7 +407,7 @@ name = "routines"
 version = "0.1.0"
 dependencies = [
  "bolero",
- "sans_effort",
+ "sans-effort",
  "trybuild",
 ]
 
@@ -418,7 +418,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "sans_effort"
+name = "sans-effort"
 version = "0.1.0"
 dependencies = [
  "bolero",
@@ -428,11 +428,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "sans_effort_host"
+name = "sans-effort-host"
 version = "0.1.0"
 dependencies = [
  "bolero",
- "sans_effort",
+ "sans-effort",
  "thiserror",
 ]
 
