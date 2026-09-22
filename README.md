@@ -1,19 +1,17 @@
 # sans-effort
 
-> _sans-io, sans effort_
+> _sans-io, without all the effort_
 
 [![CI](https://github.com/inkandswitch/sans-effort/actions/workflows/test-host.yml/badge.svg)](https://github.com/inkandswitch/sans-effort/actions/workflows/test-host.yml) [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT) [![no_std](https://img.shields.io/badge/no__std-compatible-green)](https://docs.rs/sans-effort)
 
-`sans-effort` lets you write a coroutine in direct style as an ordinary `async fn`, where every wait is a typed effect answered by whoever drives it. No waker, no executor, no `Pin` in the routine; one `Box::pin` at the boundary. It is a sans-io state machine that the compiler writes for you — and because the routine asks for _traits_ rather than effects, the very same code is also a plain `async fn` that tokio runs at native speed with no driver at all.
+`sans-effort` lets you write ordinary, "direct-style" Rust (`async fn`, `.await`, loops, `?`, etc) and run it two ways:
 
-This is the library. The research that motivates it, with the alternatives built out and measured, lives in [`effect-routines-exploration`][exploration]:
+1. Call it from Rust as normal: on `tokio` it is a plain future at native speed, with no driver.
+2. Drive it from a FFI host language through a sans-io interface: every wait becomes a typed effect that the host answers by id, so the host owns I/O, time, and scheduling — which routine resumes, in what order replies arrive, whether the clock is real or virtual — and the output is typically byte-identical to the native run.
 
-| If you want                                  | Read                                          |
-|----------------------------------------------|-----------------------------------------------|
-| To write one today                           | [_How to Write Effect Routines_][guide] (PDF) |
-| The argument, and the counter-argument       | [`analysis/README.md`][analysis]              |
-| The same program in six styles, side by side | [`compare/`][compare]                         |
-| What it costs per step, per host             | [`hosts/bench/`][bench]                       |
+The routine asks for traits, not effects, and cannot tell which way it is running. The compiler writes the state machine; the only `Pin` is one `Box::pin` at any FFI boundary (if and when it exists).
+
+This repo contains the library. The research exploration including alternatives built out and measured live in [`effect-routines-exploration`][exploration]:
 
 [exploration]: https://tangled.org/expede.wtf/effect-routines-exploration
 [guide]: https://tangled.org/expede.wtf/effect-routines-exploration/raw/main/guide/how-to-write-effect-routines.pdf
@@ -23,23 +21,29 @@ This is the library. The research that motivates it, with the alternatives built
 
 ## Three layers
 
-```text
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │ routine      Greeter<C: Sleep + Lookup + ReadLine + WriteLine>: Run  │  no_std
-  │              owns the logic; asks for traits; knows nothing of        │
-  │              effects, handles, drivers, or hosts                      │
-  ├──────────────────────────────────────────────────────────────────────┤
-  │ context      impl Sleep for TokioCtx    │  impl Sleep for Ctx<E>      │
-  │              each call is a real future │  each call records an       │
-  │                                         │  effect and suspends        │
-  ├─────────────────────────────────────────┼────────────────────────────┤
-  │ host         tokio or the JS event loop │  a Driver polls; a host     │
-  │              polls the task — no driver │  performs and replies by id │
-  │                                         │  Python · Java · a test · … │
-  └─────────────────────────────────────────┴────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph host["host"]
+        direction LR
+        native["tokio · the JS event loop<br/>polls the task directly, no driver"]
+        foreign["Python · Java · a test<br/>a Driver polls; the host performs effects and replies by id"]
+    end
+
+    subgraph context["context"]
+        direction LR
+        tokio_ctx["impl Sleep for TokioCtx<br/>each call is a real future"]
+        reify_ctx["impl Sleep for Ctx#60;E#62;<br/>each call records an effect and suspends"]
+    end
+
+    subgraph routine["routine · no_std"]
+        greeter["Greeter#60;C: Sleep + Lookup + ReadLine + WriteLine#62;: Run<br/>owns the logic; asks for traits; knows nothing of hosts"]
+    end
+
+    native --> tokio_ctx --> greeter
+    foreign --> reify_ctx --> greeter
 ```
 
-The routine is the foundation and depends on nothing above it. The left column is why you write it this way: it is also an ordinary library function. The right column is what these crates provide.
+The routine is the foundation and depends on nothing above it. The native path is why you write it this way: the routine is also an ordinary library function. The driven path is what these crates provide.
 
 ## The routine
 
@@ -97,23 +101,25 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 
 ```text
   host                                    routine
-    │                                        │
-    │  start()                               │
-    │───────────────────────────────────────▶│  runs until it needs input:
-    │                                        │  tells WriteLine, asks ReadLine·1
-    │  [WriteLine, ReadLine·1]  AWAITING     │
-    │◀───────────────────────────────────────│
-    │                                        │
-    │  reply(1, "bob")                       │
-    │───────────────────────────────────────▶│  resumes; asks Lookup·2
-    │  [Lookup·2]            AWAITING        │
-    │◀───────────────────────────────────────│
-    │                                        │
-    │  reply(2, "Hello")                     │
-    │───────────────────────────────────────▶│  resumes; tells WriteLine, returns
-    │  [WriteLine]           COMPLETE        │
-    │◀───────────────────────────────────────│
-    │                                        ┴
+    │                                         │
+    │  start()                                │
+    │────────────────────────────────────────▶│ run until input needed
+    │                                         │ 
+    │        [WriteLine, (ReadLine, 1)]       │
+    │◀────────────────────────────────────────🮘
+    │                                         🮘 AWAITING
+    │             reply(1, "bob")             🮘
+    │────────────────────────────────────────▶🮘 
+    │                                         │
+    │              [(Lookup, 2)]              │
+    │◀────────────────────────────────────────🮘 
+    │                                         🮘 AWAITING
+    │             reply(2, "Hello")           🮘
+    │────────────────────────────────────────▶🮘 
+    │                                         │
+    │  [WriteLine]                            │
+    │◀────────────────────────────────────────│ COMPLETE
+    │                                         ┴
 ```
 
 - _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `start`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.

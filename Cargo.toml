@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
+  "demo/boundary",
   "demo/cdylib",
   "demo/routines",
   "demo/tokio",
   "demo/wasm",
-  "demo/boundary",
   "sans-effort",
   "sans-effort-host",
 ]
