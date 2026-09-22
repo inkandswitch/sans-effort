@@ -33,13 +33,13 @@ This is the library. The research that motivates it, with the alternatives built
   │              each call is a real future │  each call records an       │
   │                                         │  effect and suspends        │
   ├─────────────────────────────────────────┼────────────────────────────┤
-  │ host         tokio polls the task       │  a Driver polls; a host     │
-  │              directly — no driver       │  performs and replies by id │
-  │                                         │  Python · JS · a test · …   │
+  │ host         tokio or the JS event loop │  a Driver polls; a host     │
+  │              polls the task — no driver │  performs and replies by id │
+  │                                         │  Python · Java · a test · … │
   └─────────────────────────────────────────┴────────────────────────────┘
 ```
 
-The routine is the foundation and depends on nothing above it. The left column is why you write it this way: it is also an ordinary library function. The right column is what this crate provides.
+The routine is the foundation and depends on nothing above it. The left column is why you write it this way: it is also an ordinary library function. The right column is what these crates provide.
 
 ## The routine
 
@@ -87,6 +87,12 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 
 `demo/` has all of this in full — the greeter, the ticker, both contexts, native hosts on tokio and on Node (wasm-bindgen), and a C-ABI binding driven from Python (ctypes) and Java (Panama) — and `nix develop` then `demo` runs all four and checks the transcripts are byte-identical.
 
+### Where this sits
+
+This is the [tagless-final][tf] style with the representation pinned to `impl Future`: the traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one — the instance that recovers the initial, tagged encoding (`Full`) from the final one. `Quiet` is a smaller algebra. Rust readers may know the same shape as "capability traits" or MTL-style; the effects style, where the routine emits a tagged enum directly, is the initial encoding, and the two share one mechanism because initial and final encodings are interconvertible. Rust has no higher-kinded types, so the representation cannot vary; the interpreter does.
+
+[tf]: https://okmij.org/ftp/tagless-final/index.html
+
 ## How a host drives a routine
 
 ```text
@@ -117,16 +123,20 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 
 ## Crates
 
-| Crate                                         | Purpose                                                                                                        | Target             |
-|-----------------------------------------------|----------------------------------------------------------------------------------------------------------------|--------------------|
-| [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `boundary`, `testing`    | `no_std` + `alloc` |
-| [`sans-effort-host`](sans-effort-host/) | The host side for foreign hosts: a typed `Machine`, a byte layer, a handle table, panic isolation. No `unsafe` | `std`              |
-| [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                            | —                  |
-| [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java | — |
+| Crate                                   | Purpose                                                                                                                                                                                  | Target             |
+|-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
+| [`sans-effort`](sans-effort/)           | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, the reply menu, `boundary`, `testing`                                                                        | `no_std` + `alloc` |
+| [`sans-effort-host`](sans-effort-host/) | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                               | `std`              |
+| [`ABI.md`](ABI.md)                      | The contract a foreign host assumes                                                                                                                                                      | —                  |
+| [`demo/`](demo/)                        | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java | —                  |
+
+### Next
+
+A standard library of common capabilities — `Sleep`, console I/O, and actors (`Post`, `Receive`, `Spawn`) — as `sans-effort-effects`, with the reifying context shipped once and a native tokio context beside it; a derive for the `View`/`Encode` restatement. The demo grows routines that spawn and message each other, with each host's loop as the scheduler.
 
 ### Not here, on purpose
 
-An in-process scheduler that routes between many routines; child routines; deadlock levels; language-side host SDKs beyond the demo; a derive for the `View`/`Encode` restatement (next); `pyo3`/`rustler` bindings. Each is a natural next layer; none is needed to use what is here.
+A scheduler inside the library (the host is the scheduler, whichever host it is); supervision and linking; deadlock levels; language-side host SDKs beyond the demo; `pyo3`/`rustler` bindings. Each is a natural next layer; none is needed to use what is here.
 
 ## Development
 
@@ -135,7 +145,7 @@ nix develop   # dev shell with a command menu
 menu          # list project commands: ci:full, demo, test:no_std, …
 ```
 
-Without Nix, `rust-toolchain.toml` pins the toolchain for `rustup`; the demo's foreign hosts need Python 3, Node, and `wasm-bindgen-cli` at the version pinned in `Cargo.toml`.
+Without Nix, `rust-toolchain.toml` pins the toolchain for `rustup`; the demo's hosts need Python 3, a JDK with `java.lang.foreign` (25), Node, and `wasm-bindgen-cli` at the version pinned in `Cargo.toml`.
 
 ## License
 

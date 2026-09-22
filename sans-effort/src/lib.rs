@@ -1,11 +1,11 @@
 //! Host-driven async coroutines whose every wait is a typed effect.
 //!
 //! An _effect routine_ — the unit this crate runs; "routine" from here on —
-//! is a coroutine written in direct style as an ordinary
-//! `async fn`, whose every wait is a typed effect answered by whoever drives
-//! it. The routine has no waker, no executor, and one `Box::pin` at the
-//! boundary; a host resumes it one wait at a time and supplies the answers.
-//! It is a sans-io state machine that the compiler writes for you.
+//! is a coroutine written in direct style as an ordinary `async fn`, whose
+//! every wait is a typed effect answered by whoever drives it. The routine
+//! has no waker, no executor, and one `Box::pin` at the boundary; a host
+//! resumes it one wait at a time and supplies the answers. It is a sans-io
+//! state machine that the compiler writes for you.
 //!
 //! ```text
 //!   host                                    routine
@@ -43,8 +43,8 @@
 //!   │ context     impl Sleep for TokioCtx   │ impl Sleep for Ctx<E>   │
 //!   │             a real future             │ record an effect, wait  │
 //!   ├───────────────────────────────────────┼─────────────────────────┤
-//!   │ host        tokio polls the task      │ a Driver polls; Python, │
-//!   │             directly — no driver      │ JS, a test… performs    │
+//!   │ host        tokio or the JS event     │ a Driver polls; Python, │
+//!   │             loop polls — no driver    │ Java, a test… performs  │
 //!   └───────────────────────────────────────┴─────────────────────────┘
 //! ```
 //!
@@ -61,16 +61,19 @@
 //!   [`tell`](driver::outbox::Outbox::tell) an effect and move on, or
 //!   [`ask`](driver::outbox::Outbox::ask) one and await the reply.
 //! - [`reply::handle::ReplyHandle`] is the typed, single-use capability to answer one
-//!   `ask`. It travels inside the effect to whoever performs it.
+//!   `ask`. It travels inside the effect to whoever performs it. What it
+//!   accepts is the sealed four-kind menu, [`reply::Reply`]: `str`, `u64`,
+//!   `unit`, `bytes`.
 //! - [`request::Request`] lets a wait be a value — `Lookup(name)` — so a
 //!   context can be generic over the host's vocabulary, and a host can offer
 //!   a routine less than everything.
 //! - [`driver::Driver`] turns a routine into something a host can resume:
 //!   [`start`](driver::Driver::start), then [`reply`](driver::Driver::reply)
 //!   with each handle the effects hand back, until it is finished.
-//! - [`boundary`] is what crosses a boundary: the reply menu, and the traits an
-//!   effect type implements to be shown to a host that cannot hold a Rust
-//!   value.
+//! - [`boundary`] is what an effect type implements to be shown to a host
+//!   that cannot hold a Rust value: [`HostEffect`](boundary::host_effect::HostEffect)
+//!   (handles → ids), [`Encode`](boundary::codec::Encode) (the codec), and
+//!   [`Pending`](boundary::pending::Pending).
 //! - [`testing::run_now`] runs a routine against a mock context whose every
 //!   future is ready, in one poll, with no driver.
 //!
@@ -197,6 +200,15 @@
 //! enum is the spec), or state its requirements as `E: From<Asked<…>>` bounds
 //! on the routine itself (host-chosen vocabulary without traits). Pick the
 //! traits-and-context arrangement unless you know why you want another.
+//!
+//! The names, for readers who have them: traits-and-context is the
+//! _tagless-final_ style with the representation pinned to `impl Future` —
+//! the traits are the algebra, the routine a term abstract in its
+//! interpreter, `TokioCtx` the evaluating interpreter, and `Ctx<E>` the
+//! reifying one that recovers the initial, tagged encoding. The closed-enum
+//! arrangement _is_ that initial encoding. They share one mechanism because
+//! the two encodings are interconvertible. Rust readers may know the shape
+//! as "capability traits" or MTL-style.
 //!
 //! # `no_std`
 //!

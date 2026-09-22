@@ -6,7 +6,7 @@ The shape: `abi_version` once, then `new`, `start(handle) → effects`, then `re
 
 | Element | Contract |
 |---------|----------|
-| Calls | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_start(u64, out_ptr, out_len) → i32`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. A binding may export more constructors (`<prefix>_new_fanout()`, `<prefix>_new_ticker()`); all return the same handle type and answer to the same calls. |
+| Calls | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_start(u64, out_ptr, out_len) → i32`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. A binding may export more constructors, with or without an in-buffer of encoded arguments (`<prefix>_new_ticker()`, `<prefix>_new_greeter(in_ptr, in_len)`); all return the same handle type and answer to the same calls. |
 | Machine handles | `u64`, never `0`, never reused; a stale handle is `BAD_HANDLE`, not a fault. |
 | Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `STALLED`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`). |
 | Out-buffers | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written. |

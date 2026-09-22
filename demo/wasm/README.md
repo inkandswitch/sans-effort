@@ -1,8 +1,8 @@
 # greeter_wasm
 
-The greeter in Node or a browser, with no driver. JS is a runtime host like tokio: its event loop is an executor, and `wasm-bindgen-futures` bridges Rust wakers to microtasks. So the routine runs as a task on that loop, and the context — `JsCtx` — makes each of its five waits a call into a JS object the caller supplies.
+The greeter in Node or a browser, with no driver. JS is a runtime host like tokio: its event loop is an executor, and `wasm-bindgen-futures` bridges Rust wakers to microtasks. So the routine runs as a task on that loop, and the context — `JsCtx` — makes each of its five capabilities a call into a JS object the caller supplies.
 
-```
+```text
   host.rs     the extern block: readLine · lookup · sleep · count · writeLine on a JS object
   ctx.rs      JsCtx: the five traits over that object; awaits a Promise if one comes back
   greeter.rs  class Greeter { constructor(host); run(): Promise<void> }

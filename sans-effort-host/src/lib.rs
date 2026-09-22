@@ -1,10 +1,11 @@
 //! The host side of a routine, for hosts that cannot hold a Rust value —
 //! minus the C ABI.
 //!
-//! `new(routine) → handle`, `start(handle) → effects`, `reply(handle, record)
-//! → effects`, `free(handle)`. A reply record is `kind · id · payload`, where
-//! the id came out on the wire with the effect and the kind is one of the
-//! reply menu's ([`Pending`](sans_effort::boundary::pending::Pending)).
+//! `abi_version()`, then `new(routine) → handle`, `start(handle) → effects`,
+//! `reply(handle, record) → effects`, `free(handle)`. A reply record is
+//! `kind · id · payload`, where the id came out on the wire with the effect
+//! and the kind is one of the reply menu's four
+//! ([`Kind`](sans_effort::reply::kind::Kind)).
 //!
 //! Everything a foreign host needs — the handle table, the type check on
 //! replies, the encoding — over owned Rust types, in two layers:
@@ -28,20 +29,23 @@
 //!   app cdylib                                 sans-effort-host
 //!   ────────────────────────────────           ──────────────────────────────────────────
 //!   enum Effect { … }  impl HostEffect
+//!   #[no_mangle] abi_version()     ─────────▶  code::ABI_VERSION
 //!   #[no_mangle] new()             ─────────▶  table::new(|outbox| Greeter::new(Ctx::new(outbox)).run())
 //!   #[no_mangle] start(h, out*)    ─────────▶  table::start(h)          -> Result<(Vec<u8>, Status), Error>
 //!   #[no_mangle] reply(h, in*, out*) ───────▶  table::reply(h, &[u8])   -> Result<(Vec<u8>, Status), Error>
 //!                                  ◀─────────  (bytes, status)   — app writes the out-pointers
 //! ```
 //!
-//! # Wire
+//! # Where the boundary is split
 //!
-//! The codec, the reply menu ([`Value`](sans_effort::reply::value::Value)), and
-//! the [`HostEffect`](sans_effort::boundary::host_effect::HostEffect)/[`Encode`](sans_effort::boundary::codec::Encode) traits live in [`sans_effort::boundary`] — the
-//! `no_std` half of the boundary, so a routine's boundary crate may implement
-//! them. This crate decodes reply records (`1 id str`; `2 id u64`; `3 id`;
-//! `4 id bytes`) and keeps the table. `ABI.md` at the repository root is the
-//! contract in full.
+//! The [`HostEffect`](sans_effort::boundary::host_effect::HostEffect) and
+//! [`Encode`](sans_effort::boundary::codec::Encode) traits, [`Pending`](sans_effort::boundary::pending::Pending),
+//! and the codec live in [`sans_effort::boundary`]; the reply menu
+//! ([`Value`](sans_effort::reply::value::Value), [`Kind`](sans_effort::reply::kind::Kind))
+//! in [`sans_effort::reply`]. Both are `no_std`, so a routine's boundary
+//! crate may implement them. This crate decodes reply records (`1 id str`;
+//! `2 id u64`; `3 id`; `4 id bytes`), checks the kind, and keeps the table.
+//! `ABI.md` at the repository root is the contract in full.
 //!
 //! # `no_std`
 //!

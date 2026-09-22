@@ -7,10 +7,10 @@ A routine is an ordinary `async fn` whose waits are answered by whoever drives i
 This crate is the mechanism. It is `no_std` + `alloc`.
 
 ```text
-  routine     Greeter<C: Sleep + Console>: Run      asks for traits; knows nothing of hosts
-  context     impl Sleep for TokioCtx  │ impl Sleep for Ctx<E>
-              a real future            │ records an effect, waits for the reply
-  host        tokio polls the task     │ a Driver polls; Python, JS, a test… replies by id
+  routine     Greeter<C: Sleep + Console>: Run              asks for traits; knows nothing of hosts
+  context     impl Sleep for TokioCtx          │ impl Sleep for Ctx<E>
+              a real future                    │ records an effect, waits for the reply
+  host        tokio or the JS event loop polls │ a Driver polls; Python, Java, a test… replies by id
 ```
 
 ## What is here

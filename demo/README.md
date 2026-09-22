@@ -1,8 +1,8 @@
 # demo
 
-The greeter — prompt, read, look up, pause, greet, count, repeat — written once against four capability traits, then run three ways that must agree byte for byte.
+The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five capability traits, then run four ways that must agree byte for byte.
 
-```
+```text
   routines/  the routines, one per module: greeter (the conversation), fanout (two
              waits at once), ticker (needs only Sleep + WriteLine); traits.rs. no_std.
              Imports Run and join, nothing else.
@@ -14,11 +14,11 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
 
   boundary/  the reifying context. Request structs (Lookup, ReadLine, …); Ctx<E>
              implements each trait for any E: From<Asked<…>>; Full carries all five,
-             Quiet only Sleep + Write. View/HostEffect/Encode: the tag table.
+             Quiet only Sleep + WriteLine. View/HostEffect/Encode: the tag table.
              Tests: through a Driver, as data; Greeter under Quiet is a compile_fail.
 
-  cdylib/    the C-ABI binding over sans-effort-host: new/start/reply/free/buf_free,
-             three unsafe blocks, no mechanism. The only crate allowing unsafe.
+  cdylib/    the C-ABI binding over sans-effort-host: abi_version/new/start/reply/
+             free/buf_free, three unsafe blocks, no mechanism. The only crate allowing unsafe.
   python/    a ctypes host that speaks ABI.md with a byte buffer and no library.
   java/      a Panama (java.lang.foreign) host: the same ABI, downcalls only, no JNI.
 
@@ -37,7 +37,7 @@ printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio          # native
 cargo build -p greeter_cdylib && python3 demo/python/main.py       # C ABI, ctypes
 java --enable-native-access=ALL-UNNAMED demo/java/Main.java       # C ABI, Panama
 nix develop --command demo:wasm && node demo/js/main.mjs           # wasm-bindgen
-nix develop --command demo                                         # all three, diffed
+nix develop --command demo                                         # all four, diffed
 ```
 
 `--fanout` on any host runs the two-waits-per-batch variant; `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
