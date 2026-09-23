@@ -1,78 +1,53 @@
-//! The five capability traits, served by tokio.
+//! The demo's native context: `sans-effort-tokio`'s `TokioCtx`, plus the
+//! demo's own capabilities.
 //!
-//! Compare `greeter_boundary::Ctx`: there each trait method records a request
-//! and suspends until a host replies. Here each one is a real future —
-//! `tokio::time::sleep`, a line from an async reader — and tokio's own
-//! waker drives it. No effect is built, no driver polls, no host loop
-//! interprets anything. The routine is the task.
+//! `TokioCtx` already serves `Sleep`, `ReadLine`, and `WriteLine` with tokio
+//! futures. `Count` and `Lookup` are the demo's, and the orphan rule allows
+//! `impl Count for TokioCtx` in neither this crate nor any other that owns
+//! only one side — so they go on a type this crate owns, which forwards the
+//! stdlib capabilities to the `TokioCtx` inside it, one line each.
+//!
+//! Compare `greeter_boundary`'s vocabularies: there each capability records
+//! an effect and suspends until a host replies. Here each one is a real
+//! future, and the routine is the task.
 
+use core::time::Duration;
 use routines::traits::{Count, Lookup};
 use sans_effort_effects::{
     console::{ReadLine, ReadLineError, WriteLine},
     time::Sleep,
 };
+use sans_effort_tokio::ctx::TokioCtx;
 use std::{
-    io::{self, Write as _},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
-    time::Duration,
+    io,
+    sync::atomic::{AtomicU64, Ordering},
 };
-use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt},
-    sync::Mutex,
-};
+use tokio::io::AsyncBufRead;
 
-/// A context whose waits are tokio futures.
-///
-/// Generic over its line source `R`: stdin in `main`, a byte slice in tests,
-/// statically dispatched either way. `WriteLine` writes to stdout; `Lookup`
-/// is a fixed table; `Count` is an atomic; `Sleep` is `tokio::time::sleep`,
-/// so under a paused-clock test it costs no wall time.
-pub(crate) struct TokioCtx<R> {
-    /// `read_line` needs `&mut R`; the trait takes `&self` so that a routine
-    /// can `join` two waits on one context. Something must bridge the two,
-    /// and it is the context's job, not the caller's. It must be tokio's mutex,
-    /// not `std`'s: the guard is held across `.await`, and a `std` guard there
-    /// would make the future `!Send` and could deadlock a single thread.
-    /// Never contended — one routine holds one context.
-    lines: Mutex<R>,
+/// `TokioCtx` with a greeting counter and a fixed directory.
+#[derive(Debug)]
+pub(crate) struct DemoCtx<R, W> {
+    tokio: TokioCtx<R, W>,
     greeted: AtomicU64,
-    /// Set once stdout has failed, so the failure is reported once and the
-    /// routine is left to finish on its own (its input closes and it ends).
-    stdout_failed: AtomicBool,
 }
 
-impl<R: AsyncBufRead + Send + Unpin> TokioCtx<R> {
-    /// A context reading lines from `input`.
-    pub(crate) const fn new(input: R) -> Self {
+impl<R, W> DemoCtx<R, W> {
+    /// The demo's capabilities on top of `tokio`.
+    pub(crate) const fn new(tokio: TokioCtx<R, W>) -> Self {
         Self {
-            lines: Mutex::const_new(input),
+            tokio,
             greeted: AtomicU64::new(0),
-            stdout_failed: AtomicBool::new(false),
         }
     }
 }
 
-impl<R> std::fmt::Debug for TokioCtx<R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokioCtx")
-            .field("greeted", &self.greeted)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<R: AsyncBufRead + Send + Unpin> Sleep for TokioCtx<R> {
-    async fn sleep(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
-    }
-}
-
-impl<R: AsyncBufRead + Send + Unpin> Count for TokioCtx<R> {
+impl<R, W> Count for DemoCtx<R, W> {
     async fn count(&self) -> u64 {
         self.greeted.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> Lookup for TokioCtx<R> {
+impl<R, W> Lookup for DemoCtx<R, W> {
     async fn lookup(&self, name: String) -> String {
         match name.as_str() {
             "alice" => "Hello",
@@ -84,32 +59,20 @@ impl<R: AsyncBufRead + Send + Unpin> Lookup for TokioCtx<R> {
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> ReadLine for TokioCtx<R> {
-    /// The next line; `Closed` at end of input, `Failed` on a read error.
-    async fn read_line(&self) -> Result<String, ReadLineError> {
-        let mut line = String::new();
-        let read = self.lines.lock().await.read_line(&mut line).await;
-
-        match read {
-            Ok(0) => Err(ReadLineError::Closed),
-            Ok(_) => Ok(line.trim_end().to_owned()),
-            Err(_) => Err(ReadLineError::Failed),
-        }
+impl<R, W> Sleep for DemoCtx<R, W> {
+    async fn sleep(&self, duration: Duration) {
+        self.tokio.sleep(duration).await;
     }
 }
 
-impl<R: AsyncBufRead + Send + Unpin> WriteLine for TokioCtx<R> {
-    /// `WriteLine::write_line` is fire-and-forget by design, so a stdout
-    /// error has nowhere to go. A context must not end the process on the
-    /// routine's behalf; it reports once and carries on.
-    fn write_line(&self, line: String) {
-        if self.stdout_failed.load(Ordering::Relaxed) {
-            return;
-        }
+impl<R: AsyncBufRead + Unpin, W> ReadLine for DemoCtx<R, W> {
+    async fn read_line(&self) -> Result<String, ReadLineError> {
+        self.tokio.read_line().await
+    }
+}
 
-        if let Err(e) = writeln!(io::stdout().lock(), "{line}") {
-            self.stdout_failed.store(true, Ordering::Relaxed);
-            eprintln!("greeter_tokio: stdout: {e}");
-        }
+impl<R, W: io::Write> WriteLine for DemoCtx<R, W> {
+    fn write_line(&self, line: String) {
+        self.tokio.write_line(line);
     }
 }

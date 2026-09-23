@@ -1,7 +1,7 @@
 # A standard library of effects
 
 > [!NOTE]
-> _Status:_ `sans-effort-effects` exists with `time`, `console`, and `Ctx`; `Decode` and the `Result`/`Option` encoding are in core. `actor` and `sans-effort-tokio` are planned.
+> _Status:_ `sans-effort-effects` exists with `time`, `console`, `Ctx`, and `AsCtx`; `sans-effort-tokio` exists with `TokioClock`, `TokioInput`, `TokioOutput`, and `TokioCtx`; `Decode` and the `Result`/`Option` encoding are in core. `actor` and its tokio side are planned.
 
 `Sleep` and console I/O are things nearly every routine wants, and messaging other routines is close behind. Today a user who wants `Sleep` writes it three times:
 
@@ -22,7 +22,7 @@ The shape is `embedded-hal`'s: one crate of traits, implementations in separate 
 |-----------------------|--------------------------------------------------------------------------------------------------------|----------|
 | `sans-effort`         | The mechanism, unchanged, plus `Decode` and `select`                                                    | `no_std` |
 | `sans-effort-effects` | Per module: the trait, its effect structs (`effect::…`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
-| `sans-effort-tokio`   | `TokioCtx`, implementing every trait in `sans-effort-effects` natively; the actor `Registry`           | `std`    |
+| `sans-effort-tokio`   | One component per capability — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, the actor `Registry`           | `std`    |
 
 Modules in `sans-effort-effects`:
 
@@ -76,6 +76,21 @@ impl<C: AsCtx> Sleep for C where C::Vocabulary: From<Asked<time::effect::Sleep>>
 `Ctx<E>` implements `AsCtx`, and so do references, `Box`, `Rc`, and `Arc` to anything that does. A newtype over `Ctx` implements it with one method and gets every capability — which is how a crate reifies a capability trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Without `AsCtx`, that newtype would have to forward every stdlib trait by hand.
 
 It is opt-in. Routines name capabilities; `Ctx<E>` already implements `AsCtx`; native contexts implement capabilities directly and are unaffected. The price: a type that implements `AsCtx` cannot also implement a stdlib capability by hand, and the stdlib cannot add blanket forwarding impls for `&T` or `Box<T>` on its traits — those would overlap. Forwarding through `AsCtx` for references and smart pointers covers the same ground for reifying contexts.
+
+### Native contexts forward
+
+The native side has no equivalent of `AsCtx`. Blanket impls of the stdlib's traits can only live in the stdlib crate, and the stdlib's blanket is already over `AsCtx`. So a native context that needs capabilities of its own — the demo's `Count` and `Lookup` on tokio — is a type the application owns, wrapping `TokioCtx` and forwarding the stdlib capabilities in one line each:
+
+```rust
+struct DemoCtx<R, W> { tokio: TokioCtx<R, W>, greeted: AtomicU64 }
+
+impl<R, W> Sleep for DemoCtx<R, W> {
+    async fn sleep(&self, d: Duration) { self.tokio.sleep(d).await }
+}
+// … ReadLine, WriteLine likewise; Count and Lookup directly.
+```
+
+`sans-effort-tokio` offers one component per capability (`TokioClock`, `TokioInput`, `TokioOutput`) as well as the assembled `TokioCtx`, so a context can take just what it needs — a clock and output for a routine that never reads, or a paused clock with an in-memory output in a test. References and smart pointers do not forward capabilities for native contexts (that forwarding goes through `AsCtx`), so a routine owns its native context; a test that wants the output back shares the _writer_, not the context. If forwarding grows painful as the stdlib grows, a forwarding macro or `#[capability]`-style generation is the next step.
 
 ## Why a crate, and not a feature
 

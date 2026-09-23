@@ -11,9 +11,11 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
              themselves use only traits.
              Tests: a Recording mock + testing::run_now — no driver, one poll.
 
-  tokio/     the native path. TokioCtx implements the traits with tokio futures;
-             tokio::spawn(Greeter::new(ctx).run()). No Driver anywhere.
-             Tests: paused clock — three 50 ms pauses cost no wall time.
+  tokio/     the native path. DemoCtx wraps sans-effort-tokio's TokioCtx (Sleep,
+             ReadLine, WriteLine as tokio futures), adds Count and Lookup, and
+             forwards the rest; tokio::spawn(Greeter::new(ctx).run()). No Driver.
+             Tests: paused clock, output captured — three 50 ms pauses cost no
+             wall time, and the transcript is checked.
 
   boundary/  the host vocabularies. Full carries all five capabilities' effects,
              Quiet only Sleep + WriteLine; Ctx<E> implements each trait for any

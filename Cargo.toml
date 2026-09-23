@@ -9,6 +9,7 @@ members = [
   "sans-effort",
   "sans-effort-effects",
   "sans-effort-host",
+  "sans-effort-tokio",
 ]
 
 [workspace.package]
@@ -23,6 +24,7 @@ authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]
 sans-effort = { version = "0.1.0", path = "sans-effort", default-features = false }
 sans-effort-effects = { version = "0.1.0", path = "sans-effort-effects", default-features = false }
 sans-effort-host = { version = "0.1.0", path = "sans-effort-host" }
+sans-effort-tokio = { version = "0.1.0", path = "sans-effort-tokio" }
 
 # External crates
 bolero = "0.13"
@@ -37,15 +39,9 @@ spin = { version = "0.12", default-features = false, features = [
   "spin_mutex",
 ] }
 thiserror = { version = "2.0", default-features = false }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 trybuild = "1"
-tokio = { version = "1", default-features = false, features = [
-  "io-std",
-  "io-util",
-  "macros",
-  "rt-multi-thread",
-  "sync",
-  "time",
-] }
+tokio = { version = "1", default-features = false }
 # `=`: the crate and `wasm-bindgen-cli` must match exactly, and the CLI comes
 # from nixpkgs-unstable (`unstable.wasm-bindgen-cli` in flake.nix). Bump both together.
 wasm-bindgen = "=0.2.127"

@@ -45,7 +45,7 @@ flowchart BT
     core["sans-effort<br/>mechanism · no_std"]
     host_crate["sans-effort-host<br/>Machine · Encoded · table · std"]
     effects["sans-effort-effects<br/>traits · requests · Ctx#60;E#62; · no_std"]
-    tokio_crate["sans-effort-tokio<br/>TokioCtx · actor Registry · std"]
+    tokio_crate["sans-effort-tokio<br/>TokioClock · TokioInput · TokioOutput · TokioCtx · std"]
     binding["an application's binding<br/>extern C · the only unsafe"]
 
     host_crate --> core
@@ -54,10 +54,9 @@ flowchart BT
     binding --> host_crate
 
     classDef planned stroke-dasharray: 5 5
-    class tokio_crate planned
 ```
 
-Dashed crates are planned. The mechanism crate is meant to be small and close to frozen; everything opinionated lives in a crate above it, so it can change without breaking the mechanism.
+The mechanism crate is meant to be small and close to frozen; everything opinionated lives in a crate above it, so it can change without breaking the mechanism.
 
 ## Typical flow
 

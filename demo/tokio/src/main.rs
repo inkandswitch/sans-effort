@@ -1,34 +1,36 @@
 //! The greeter on tokio, with no driver.
 //!
-//! [`ctx::TokioCtx`] implements the five traits with tokio primitives, and
-//! `Greeter::new(ctx).run()` is then an ordinary future: `tokio::spawn`
-//! polls it, `tokio::time::sleep` wakes it, stdin delivers its lines. There
-//! is no effect enum, no reply loop, no host — the routine _is_ the task.
+//! [`ctx::DemoCtx`] is `sans-effort-tokio`'s `TokioCtx` plus the demo's own
+//! `Count` and `Lookup`, and `Greeter::new(ctx).run()` is then an ordinary
+//! future: `tokio::spawn` polls it, `tokio::time::sleep` wakes it, stdin
+//! delivers its lines. There is no effect enum, no reply loop, no host — the
+//! routine _is_ the task.
 //! Compare `../cdylib` and `../wasm`, where the identical `Greeter` runs
 //! behind a `Driver` because the poller is not Rust.
 //!
 //! `tokio::spawn` needs the future to be `Send`. Nothing in the traits says
-//! so; the compiler infers it from `TokioCtx`'s fields, because at this call
-//! site the context is concrete.
+//! so; the compiler infers it from the context's fields, because at this
+//! call site the context is concrete.
 //!
 //! ```sh
 //! printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio
 //! cargo run -p greeter_tokio -- --fanout    # two waits at a time
 //! ```
 //!
-//! The test at the bottom runs the same routines under tokio's paused clock:
-//! the 50 ms `PAUSE`s cost no wall time, and the transcript is checked.
+//! The tests at the bottom run the same routines under tokio's paused clock,
+//! writing into a buffer: the 50 ms `PAUSE`s cost no wall time, and the
+//! transcript is checked.
 
 mod ctx;
 
-use ctx::TokioCtx;
+use ctx::DemoCtx;
 use routines::{fanout::Fanout, greeter::Greeter};
 use sans_effort::run::Run;
-use tokio::io::BufReader;
+use sans_effort_tokio::ctx::TokioCtx;
 
 #[tokio::main]
 async fn main() -> Result<(), tokio::task::JoinError> {
-    let ctx = TokioCtx::new(BufReader::new(tokio::io::stdin()));
+    let ctx = DemoCtx::new(TokioCtx::stdio());
 
     if std::env::args().any(|a| a == "--fanout") {
         tokio::spawn(Fanout::new(ctx).run()).await
@@ -42,29 +44,63 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
-    use std::time::Instant;
+    use std::{
+        io,
+        sync::{Arc, Mutex},
+        time::Instant,
+    };
+
+    /// A writer the test keeps a handle to while the routine owns the context.
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Shared {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("unpoisoned").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs `routine` on a context over `input`, and returns what it wrote.
+    async fn transcript<F, P>(input: &'static [u8], routine: F) -> String
+    where
+        F: FnOnce(DemoCtx<&'static [u8], Shared>) -> P,
+        P: core::future::Future<Output = ()> + Send + 'static,
+    {
+        let out = Shared::default();
+        tokio::spawn(routine(DemoCtx::new(TokioCtx::new(input, out.clone()))))
+            .await
+            .expect("finished");
+        let written = out.0.lock().expect("unpoisoned").clone();
+        String::from_utf8(written).expect("UTF-8")
+    }
 
     /// The greeter runs to completion under tokio alone — no `Driver`
     /// anywhere — and its sleeps are tokio's: under a paused clock, three
     /// 50 ms pauses take no wall time and advance virtual time by 150 ms.
     ///
-    /// The traits say nothing about `Send`; the future is `Send` because
-    /// `TokioCtx` is, and the compiler works that out here, where the
-    /// context is concrete. `assert_send` makes the inference visible.
+    /// The traits say nothing about `Send`; `tokio::spawn` accepts the future
+    /// because the concrete context is `Send`, and the compiler works that
+    /// out here.
     #[tokio::test(start_paused = true)]
     async fn greeter_runs_natively_in_virtual_time() {
-        fn assert_send<T: Send>(value: T) -> T {
-            value
-        }
-
         let started = Instant::now();
         let virtual_start = tokio::time::Instant::now();
 
-        let ctx = TokioCtx::new(BufReader::new(&b"alice\nbob\ncarol\nquit\n"[..]));
-        tokio::spawn(assert_send(Greeter::new(ctx).run()))
-            .await
-            .expect("finished");
+        let written = transcript(b"alice\nbob\ncarol\n", |ctx| Greeter::new(ctx).run()).await;
 
+        assert_eq!(
+            written,
+            "Who are you?\nHello, alice!\n(greeted 1 so far)\n\
+             Who are you?\nHi, bob!\n(greeted 2 so far)\n\
+             Who are you?\nHey, carol!\n(greeted 3 so far)\n\
+             Who are you?\nBye.\n",
+            "the end of input ends the conversation"
+        );
         assert!(
             started.elapsed().as_millis() < 100,
             "wall clock advanced: {:?}",
@@ -82,12 +118,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn fanout_joins_native_futures() {
         let virtual_start = tokio::time::Instant::now();
+        let written = transcript(b"bob\ncarol\n", |ctx| Fanout::new(ctx).run()).await;
 
-        let ctx = TokioCtx::new(BufReader::new(&b"bob\ncarol\n"[..]));
-        tokio::spawn(Fanout::new(ctx).run())
-            .await
-            .expect("finished");
-
+        assert_eq!(written, "Who are you?\nHi, bob! (#1)\nBye, carol.\n");
         assert_eq!(virtual_start.elapsed().as_millis(), 50);
     }
 }
