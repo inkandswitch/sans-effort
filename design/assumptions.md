@@ -83,7 +83,7 @@ Machine handles and channel ids mean something only there, and a child spawned b
 
 _Consequence of violation:_ not reachable today. Routines spanning processes would need a translation layer between hosts; see [`capabilities`](capabilities.md#across-hosts).
 
-### Tokens are minted deterministically
+### Request ids are minted deterministically
 
 > [!IMPORTANT]
 > _Assumption:_ request ids are minted per machine, from `1`, increasing, at the moment their effect is recorded.

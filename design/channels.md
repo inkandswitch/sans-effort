@@ -66,7 +66,7 @@ Provisional names; each is generic over the message type, so a context can bound
 | `Open<M>`    | open a channel; returns both ends      | a new unbounded tokio channel       | ask → the host mints an id       |
 | `Post<M>`    | send on a `Sender`; fire and forget    | send the value                      | tell: `channel · handles · body` |
 | `Receive<M>` | await the next message on a `Receiver` | await the tokio receiver            | ask → the body, as bytes         |
-| `Spawn`      | start a child routine                  | `tokio::spawn`                      | see [Spawn](#spawn)              |
+| `Spawn`      | start a child routine                  | `tokio::spawn`                      | tell, carrying the child — see [Spawn](#spawn) |
 
 Generic per trait rather than per method, because a trait method's bounds are fixed in the trait: `Ctx<E>` implements `Post<M>` only for messages it can encode, and the tokio context for any `M: Send + 'static`. A routine that only ever runs on tokio never has to make its messages encodable.
 
@@ -101,12 +101,34 @@ It is a free function in `sans-effort-effects`, usable by any context with both 
 
 A child is built by value: the parent's context builds the child's routine in Rust. Its arguments stay typed values — any channel ends among them move with it, so a `Receiver` can pass to a child at spawn. Moving a `Receiver` inside _message bytes_ is not supported yet: it would need move semantics in the handle table.
 
+### How a child reaches the host
+
+Behind a driver, the child rides up in the effect. `Spawn` records a tell whose payload _is_ the child — boxed and not yet started, in the shape the host table already takes (`FnOnce(Outbox<E>) -> impl Future`). The vocabulary's `split` arm decides what spawning means. Registering the child in `sans-effort-host`'s table is one choice:
+
+```rust
+Full::Spawn(child) => (View::Spawned(table::new(child)), None),
+```
+
+```mermaid
+sequenceDiagram
+    participant P as Parent
+    participant B as Binding (split)
+    participant H as Host
+
+    P-->>B: Spawn(child) — a tell, recorded in the outbox
+    Note over B: split registers the child → handle 9
+    B-->>H: Spawned { 9 } · …
+    H->>B: start(9)
+```
+
+The host sees "child 9 exists" in a frame and starts it. No reply goes to the parent, since `spawn` returns nothing; no token; no ABI function. The table releases its lock before a routine steps, so registering from inside `split` is safe.
+
+Nothing in core changes: core carries effect values and does not know which one means "spawn". So a vocabulary can choose differently — a binding without `std` registers the child in statics of its own, a deterministic test router keeps children in a `Vec`, and a vocabulary without a `Spawn` variant simply grants no spawning. The one constraint is the chosen table's: `sans-effort-host`'s requires `Send` futures, so a child registered there must be `Send`.
+
+The cost is coupling: a vocabulary whose `split` calls `sans-effort-host`'s table needs that crate's `std` feature, so a vocabulary crate that must also build `no_std` gates its `Spawn` arm behind a feature. `#[derive(Boundary)]` can generate the arm later.
+
 > [!IMPORTANT]
-> A child built by value gets its parent's vocabulary `E`, or a narrower one. Otherwise a parent limited to `Quiet` could spawn a child with `Full` and escape its own limits.
-
-### How a child reaches the host (open)
-
-The context that builds the child — `Ctx<E>` in `sans-effort-effects` — is `no_std` and cannot reach the host crate's machine table, and neither can a vocabulary's `HostEffect::split`. So the child has to travel up through the mechanism. The natural shape mirrors closed ids: a `Step` reports the children a routine created (`spawned: Vec<Driver<E>>`, with the parent's own `E`), `Machine` hands them up, the binding registers each, and the host starts it. That is a change to the core mechanism, and needs its own decision.
+> The child's type is `Child<E>` for the parent's own vocabulary `E`, so a parent limited to `Quiet` cannot spawn a child with `Full` and escape its own limits. The type enforces this; no check is needed.
 
 A locality note, from when spawn was designed actor-style: a running routine is a pinned Rust future and can never leave its process, so building children by value loses nothing a routine had. Creating a child in _another_ process could never be by value — code cannot travel, only a name and data can (Erlang's reliable remote form is `spawn(Node, M, F, Args)`). That is what a factory is for: a routine whose messages are creation requests, reached through an ordinary `Sender`.
 
@@ -159,7 +181,6 @@ The losing branch is abandoned mid-flight; its `Receive` is reported closed, so 
 
 ## Open questions
 
-- How a child reaches the host: children in `Step` (above).
 - Opening a channel as an ask (the host mints the id) or locally (the context mints an id the host qualifies). An ask is simpler and uniform; local minting would make opening synchronous.
 - The exact shape of `Spawn`: what the child's context is (the parent's, or one built from its parts), and how that is expressed in the trait.
 - Moving a `Receiver` inside message bytes: move semantics in the handle table.
