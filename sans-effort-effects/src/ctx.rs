@@ -1,9 +1,7 @@
 //! The reifying context: every call records an effect for a host.
 
-use sans_effort::{
-    driver::{awaiting::Awaiting, outbox::Outbox},
-    request::{Asked, Request},
-};
+use crate::request::{Asked, Request};
+use sans_effort::driver::{awaiting::Awaiting, outbox::Outbox};
 
 /// A context that serves every capability by asking the host.
 ///
@@ -28,8 +26,7 @@ impl<E> Ctx<E> {
     /// implements its own capabilities for this context.
     ///
     /// ```
-    /// # use sans_effort::{reply::Reply, request::{Asked, Request}};
-    /// # use sans_effort_effects::Ctx;
+    /// # use sans_effort_effects::{Ctx, request::{Asked, Request}};
     /// trait Lookup { async fn lookup(&self, name: String) -> String; }
     ///
     /// struct LookupRequest(String);
@@ -45,7 +42,7 @@ impl<E> Ctx<E> {
     where
         E: From<Asked<R>>,
     {
-        self.outbox.request(request)
+        self.outbox.ask(|reply| E::from(Asked { request, reply }))
     }
 
     /// Tell the host `message`, expecting no reply.
@@ -53,6 +50,6 @@ impl<E> Ctx<E> {
     where
         E: From<M>,
     {
-        self.outbox.notify(message);
+        self.outbox.tell(E::from(message));
     }
 }

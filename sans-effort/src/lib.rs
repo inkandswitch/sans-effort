@@ -78,9 +78,6 @@
 //!   `ask`. It travels inside the effect to whoever performs it. What it
 //!   accepts is the sealed four-kind menu, [`reply::Reply`]: `str`, `u64`,
 //!   `unit`, `bytes`.
-//! - [`request::Request`] lets a wait be a value — `Lookup(name)` — so a
-//!   context can be generic over the host's vocabulary, and a host can offer
-//!   a routine less than everything.
 //! - [`driver::Driver`] turns a routine into something a host can resume:
 //!   [`start`](driver::Driver::start), then [`reply`](driver::Driver::reply)
 //!   with each handle the effects hand back, until it is finished.
@@ -126,9 +123,9 @@
 //! # A reifying context
 //!
 //! To run behind a host, a context implements the same traits by recording
-//! effects. Each wait is a [`Request`](request::Request); the context is
-//! generic over any vocabulary `E` that can carry it, so the host — not the
-//! routine — decides what is on offer.
+//! effects: each wait becomes an effect carrying a
+//! [`ReplyHandle`](reply::handle::ReplyHandle), and the routine suspends
+//! until the host replies through it.
 //!
 //! ```
 //! # use core::ops::ControlFlow;
@@ -143,65 +140,55 @@
 //! #         ControlFlow::Break(())
 //! #     }
 //! # }
-//! use sans_effort::{driver::outbox::Outbox, request::{Asked, Request}};
+//! use sans_effort::{
+//!     driver::{Driver, outbox::Outbox, status::Status},
+//!     reply::handle::ReplyHandle,
+//! };
+//! use std::collections::VecDeque;
 //!
-//! // The host vocabulary: one struct per wait, one per message.
-//! struct ReadLine;
-//! struct WriteLine(String);
-//!
-//! impl Request for ReadLine {
-//!     type Reply = String;
+//! // The host's vocabulary: an effect per wait, carrying the handle that
+//! // answers it, and one per message.
+//! enum Effect {
+//!     ReadLine(ReplyHandle<String>),
+//!     WriteLine(String),
 //! }
 //!
-//! // The reifying context: `Console` holds for any `E` that carries both.
-//! struct Ctx<E> {
-//!     outbox: Outbox<E>,
-//! }
+//! // The reifying context: `ask` builds an effect around a fresh handle and
+//! // awaits the reply; `tell` records one and moves on.
+//! struct Ctx(Outbox<Effect>);
 //!
-//! impl<E: From<Asked<ReadLine>> + From<WriteLine>> Console for Ctx<E> {
+//! impl Console for Ctx {
 //!     async fn read_line(&self) -> String {
-//!         self.outbox.request(ReadLine).await
+//!         self.0.ask(Effect::ReadLine).await
 //!     }
 //!
 //!     fn write_line(&self, line: String) {
-//!         self.outbox.notify(WriteLine(line));
+//!         self.0.tell(Effect::WriteLine(line));
 //!     }
 //! }
 //!
-//! // A host's vocabulary, and the two `From` impls that admit it.
-//! enum Effect {
-//!     ReadLine(Asked<ReadLine>),
-//!     WriteLine(WriteLine),
-//! }
-//!
-//! impl From<Asked<ReadLine>> for Effect {
-//!     fn from(asked: Asked<ReadLine>) -> Self { Effect::ReadLine(asked) }
-//! }
-//!
-//! impl From<WriteLine> for Effect {
-//!     fn from(write: WriteLine) -> Self { Effect::WriteLine(write) }
-//! }
-//!
 //! // Driving it from Rust: match on the effects, reply through the handles.
-//! use sans_effort::driver::{Driver, status::Status};
-//! use std::collections::VecDeque;
-//!
-//! let mut driver = Driver::<Effect>::new(|outbox| Greeter { ctx: Ctx { outbox } }.run());
+//! let mut driver = Driver::new(|outbox| Greeter { ctx: Ctx(outbox) }.run());
 //! let mut queue: VecDeque<Effect> = driver.start().into();
 //! let mut written = Vec::new();
 //!
 //! while let Some(effect) = queue.pop_front() {
 //!     match effect {
-//!         Effect::WriteLine(WriteLine(text)) => written.push(text),
-//!         Effect::ReadLine(Asked { reply, .. }) => {
-//!             queue.extend(driver.reply(reply, "bob".into()));
-//!         }
+//!         Effect::WriteLine(text) => written.push(text),
+//!         Effect::ReadLine(reply) => queue.extend(driver.reply(reply, "bob".into())),
 //!     }
 //! }
 //!
 //! assert_eq!(driver.status(), Status::Complete);
 //! assert_eq!(written, ["Who are you?", "Hello, bob!"]);
 //! ```
+//!
+//! This context names the variants of one enum, so it serves one
+//! vocabulary. A context generic over _any_ vocabulary — so that the host,
+//! not the routine, decides what is on offer, and one context serves every
+//! host — describes each wait as a request value and states what the host
+//! must carry as a `From` bound. That pattern, a reifying context built on
+//! it, and a standard library of capabilities are `sans-effort-effects`.
 //!
 //! A host in another language cannot hold a `ReplyHandle`; see [`boundary`] and
 //! the `sans-effort-host` crate for that path. A host with a runtime needs
@@ -210,14 +197,15 @@
 //!
 //! # Where the vocabulary lives
 //!
-//! The example above keeps the routine free of any effect type, and puts the
-//! vocabulary in the context, chosen by the host. Two other arrangements use
-//! the same mechanism and are documented in the exploration this crate came
-//! from: the routine may own a closed `Effect` enum and call
-//! [`Outbox::ask`](driver::outbox::Outbox::ask) directly (fewest lines; no native path; the
-//! enum is the spec), or state its requirements as `E: From<Asked<…>>` bounds
-//! on the routine itself (host-chosen vocabulary without traits). Pick the
-//! traits-and-context arrangement unless you know why you want another.
+//! The examples above keep the routine free of any effect type and put the
+//! vocabulary in the context. Two other arrangements use the same mechanism
+//! and are documented in the exploration this crate came from: the routine
+//! may own a closed `Effect` enum and call
+//! [`Outbox::ask`](driver::outbox::Outbox::ask) directly (fewest lines; no
+//! native path; the enum is the spec), or state its requirements as `From`
+//! bounds on the routine itself (host-chosen vocabulary without traits; see
+//! `sans-effort-effects`). Pick the traits-and-context arrangement unless you
+//! know why you want another.
 //!
 //! The names, for readers who have them: traits-and-context is the
 //! _tagless-final_ style with the representation pinned to `impl Future` —
@@ -246,7 +234,6 @@ pub mod boundary;
 pub mod driver;
 pub mod join;
 pub mod reply;
-pub mod request;
 pub mod run;
 pub mod select;
 pub mod testing;

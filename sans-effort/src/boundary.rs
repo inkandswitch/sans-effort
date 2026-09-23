@@ -22,7 +22,7 @@
 //! `ABI.md`'s subject.
 //!
 //! ```text
-//!   Full::Lookup(Asked { request: Lookup("bob"), reply: ReplyHandle<String>{id: 2} })
+//!   Effect::Lookup { name: "bob", reply: ReplyHandle<String> { id: 2 } }
 //!         │
 //!         │ HostEffect::split
 //!         ▼

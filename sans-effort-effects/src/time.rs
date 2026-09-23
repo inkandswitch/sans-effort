@@ -2,9 +2,8 @@
 
 pub mod effect;
 
-use crate::ctx::Ctx;
+use crate::{ctx::Ctx, request::Asked};
 use core::time::Duration;
-use sans_effort::request::Asked;
 
 /// Wait for a duration.
 ///

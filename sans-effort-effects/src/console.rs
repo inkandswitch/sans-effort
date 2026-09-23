@@ -2,12 +2,9 @@
 
 pub mod effect;
 
-use crate::ctx::Ctx;
+use crate::{ctx::Ctx, request::Asked};
 use alloc::string::String;
-use sans_effort::{
-    boundary::codec::{Decode, DecodeError, Encode, Reader, Writer},
-    request::Asked,
-};
+use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// Read a line.
 pub trait ReadLine {

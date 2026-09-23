@@ -11,6 +11,12 @@
 //! | [`time`]    | [`Sleep`](time::Sleep)    |
 //! | [`console`] | [`ReadLine`](console::ReadLine), [`WriteLine`](console::WriteLine) |
 //!
+//! Underneath them is [`request`]: [`Request`](request::Request) and
+//! [`Asked`](request::Asked), the pattern that lets one context serve any
+//! host's vocabulary. The mechanism itself only has `ask` and `tell`, where
+//! the caller names a variant of one concrete enum; this crate is the layer
+//! that makes contexts generic over the enum.
+//!
 //! Each module holds the trait, its effect structs (in `effect`), and the impl
 //! of the trait for [`Ctx`] — the reifying context, which records each call
 //! as an effect for a host to perform. [`Ctx`] is generic over the host's
@@ -21,12 +27,12 @@
 //! ```
 //! use sans_effort::{
 //!     driver::{Driver, status::Status},
-//!     request::Asked,
 //!     run::Run,
 //! };
 //! use sans_effort_effects::{
 //!     Ctx,
 //!     console::{ReadLine, ReadLineError, WriteLine, effect},
+//!     request::Asked,
 //! };
 //! use core::ops::ControlFlow;
 //!
@@ -103,6 +109,7 @@ extern crate alloc;
 
 pub mod console;
 pub mod ctx;
+pub mod request;
 pub mod time;
 
 pub use ctx::Ctx;

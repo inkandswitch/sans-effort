@@ -2,7 +2,7 @@
 //! reifying context.
 
 use alloc::string::String;
-use sans_effort::request::Request;
+use sans_effort_effects::request::Request;
 
 /// How many greetings so far. Awaits a `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

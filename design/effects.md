@@ -61,7 +61,7 @@ Each module names its effect structs in an `effect` submodule: `time::Sleep` is 
 
 ### Application capabilities live with their traits
 
-An application's own capabilities implement their traits for the same `Ctx<E>`, through `Ctx::request` and `Ctx::notify` — enough to add a capability without handing out the outbox. Where that impl goes is not a choice: the orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`. So an application lays out its capabilities the way the stdlib lays out a module — trait, effect, and `Ctx` impl together, in the crate that defines the trait — and its vocabulary crate holds only the vocabularies. In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
+An application's own capabilities implement their traits for the same `Ctx<E>`, through `Ctx::request` and `Ctx::notify` — enough to add a capability without handing out the outbox. The orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`. That leaves two places for it: with the trait, or on a local newtype over `Ctx` — which is legal, but must then forward every stdlib capability by hand, because a routine takes one context that provides everything it names. The first is cheaper today, so an application lays out its capabilities the way the stdlib lays out a module — trait, effect, and `Ctx` impl together, in the crate that defines the trait — and its vocabulary crate holds only the vocabularies. A `Reifying` trait with blanket stdlib impls would make the newtype route cheap too (see the open questions). In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
 
 ## Why a crate, and not a feature
 
@@ -123,4 +123,5 @@ Each module has its own small error enum, marked `#[non_exhaustive]` so a new fa
 
 ## Open questions
 
+- A `Reifying` trait (`fn ctx(&self) -> &Ctx<Self::Vocabulary>`) with the stdlib's impls written as blankets over it. Any newtype over `Ctx` would then get every stdlib capability from one method, so a crate could reify a trait it does not own — one whose author never wrote an effect for it — on its own newtype. Decide before `sans-effort-effects` is published: adding blanket impls later breaks anyone with hand-written stdlib impls on a type that then implements `Reifying`.
 - Which modules beyond `time`, `console`, and `actor`: random numbers? logging? A file system?

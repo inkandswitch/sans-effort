@@ -32,7 +32,6 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 | `driver::Driver` | Turns a routine into something a host can drive: `start()`, then `reply(handle, value)` until finished. Each returns a `Step`: the effects, and the ids of requests abandoned along the way |
 | `driver::outbox::Outbox` | What a reifying context writes into: `tell` an effect, or `ask` and await the reply |
 | `reply::{ReplyHandle<T>, Reply}` | The typed, single-use capability to answer one `ask` — unforgeable, infallible to reply through — and the sealed four-kind menu (`str`, `u64`, `unit`, `bytes`) it accepts |
-| `request::{Request, Asked}` | Waits as values, so a context is generic over the host's vocabulary and a host can offer a routine less than everything |
 | `join::join` | Two waits at once — the reason request ids exist |
 | `select::select` | The first of two waits; the other is abandoned, and its id is reported closed |
 | `boundary` | What an effect type implements to cross to a host that cannot hold a Rust value: `HostEffect` (handles → ids), `Encode` (the codec), `Pending` |
@@ -42,7 +41,7 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 
 ```rust
 use core::ops::ControlFlow;
-use sans_effort::{driver::{Driver, outbox::Outbox}, request::{Asked, Request}, run::Run};
+use sans_effort::{driver::{Driver, outbox::Outbox}, reply::handle::ReplyHandle, run::Run};
 
 trait Console {
     async fn read_line(&self) -> String;
@@ -59,27 +58,21 @@ impl<C: Console> Run for Greeter<C> {
     }
 }
 
-// A reifying context: each call becomes a request the host answers by id.
-struct ReadLine;
-struct WriteLine(String);
-impl Request for ReadLine { type Reply = String; }
+// A reifying context: each call becomes an effect the host answers through its handle.
+enum Effect { ReadLine(ReplyHandle<String>), WriteLine(String) }
 
-struct Ctx<E>(Outbox<E>);
+struct Ctx(Outbox<Effect>);
 
-impl<E: From<Asked<ReadLine>> + From<WriteLine>> Console for Ctx<E> {
-    async fn read_line(&self) -> String { self.0.request(ReadLine).await }
-    fn write_line(&self, line: String) { self.0.notify(WriteLine(line)); }
+impl Console for Ctx {
+    async fn read_line(&self) -> String { self.0.ask(Effect::ReadLine).await }
+    fn write_line(&self, line: String) { self.0.tell(Effect::WriteLine(line)); }
 }
 
-enum Effect { ReadLine(Asked<ReadLine>), WriteLine(WriteLine) }
-impl From<Asked<ReadLine>> for Effect { fn from(a: Asked<ReadLine>) -> Self { Effect::ReadLine(a) } }
-impl From<WriteLine> for Effect { fn from(w: WriteLine) -> Self { Effect::WriteLine(w) } }
-
-let mut driver = Driver::<Effect>::new(|outbox| Greeter(Ctx(outbox)).run());
+let mut driver = Driver::new(|outbox| Greeter(Ctx(outbox)).run());
 for effect in driver.start() {
-    if let Effect::ReadLine(Asked { reply, .. }) = effect {
+    if let Effect::ReadLine(reply) = effect {
         for effect in driver.reply(reply, "bob".into()) {
-            if let Effect::WriteLine(WriteLine(text)) = effect {
+            if let Effect::WriteLine(text) = effect {
                 assert_eq!(text, "Hello, bob!");
             }
         }
@@ -87,7 +80,7 @@ for effect in driver.start() {
 }
 ```
 
-A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. An FFI host cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
+This context names the variants of one enum, so it serves one vocabulary. For a context generic over _any_ host's vocabulary — and a standard library of capabilities built on one — see `sans-effort-effects`. A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. An FFI host cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
 
 ## Features
 

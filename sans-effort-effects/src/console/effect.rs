@@ -2,11 +2,9 @@
 //! record under a reifying context.
 
 use super::ReadLineError;
+use crate::request::Request;
 use alloc::{string::String, vec::Vec};
-use sans_effort::{
-    boundary::codec::{Decode, DecodeError, Encode, Reader, Writer},
-    request::Request,
-};
+use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// The next line of input. Awaits `bytes`: an encoded
 /// `Result<String, ReadLineError>`, which [`ReadLine::reply`] builds.

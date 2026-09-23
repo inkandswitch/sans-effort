@@ -1,10 +1,8 @@
 //! What [`Sleep`](super::Sleep) records under a reifying context.
 
+use crate::request::Request;
 use core::time::Duration;
-use sans_effort::{
-    boundary::codec::{Decode, DecodeError, Encode, Reader, Writer},
-    request::Request,
-};
+use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// Wake after a duration. Awaits `unit`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

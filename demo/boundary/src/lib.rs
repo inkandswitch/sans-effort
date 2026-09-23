@@ -84,10 +84,10 @@ use sans_effort::{
         pending::Pending,
     },
     reply::Reply,
-    request::Asked,
 };
 use sans_effort_effects::{
     console::effect::{ReadLine, WriteLine},
+    request::Asked,
     time::effect::Sleep,
 };
 

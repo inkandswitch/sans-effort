@@ -29,8 +29,7 @@
 pub mod effect;
 
 use alloc::string::String;
-use sans_effort::request::Asked;
-use sans_effort_effects::Ctx;
+use sans_effort_effects::{Ctx, request::Asked};
 
 /// Count a greeting.
 pub trait Count {

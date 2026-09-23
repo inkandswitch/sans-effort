@@ -5,10 +5,7 @@ use super::{
     mail::Mail,
     sync::{Arc, Mutex},
 };
-use crate::{
-    reply::{Reply, handle::ReplyHandle, value::Value},
-    request::{Asked, Request},
-};
+use crate::reply::{Reply, handle::ReplyHandle, value::Value};
 use alloc::vec::Vec;
 
 /// The shared half of a [`Driver`](super::Driver): effects go in from the
@@ -30,13 +27,13 @@ use alloc::vec::Vec;
 /// under a native context, where `tokio::time::sleep(d)` is lazy, and the
 /// two must agree.
 ///
-/// # Requests as values
+/// # One vocabulary, or any
 ///
-/// [`request`](Self::request) and [`notify`](Self::notify) are the same two
-/// operations with the wait as a value implementing [`Request`], and the
-/// routine's requirement stated as a `From` bound on the host's vocabulary:
-/// `E: From<Asked<Lookup>>`. That is what lets a reifying context be generic
-/// over `E`, and a host offer a routine less than everything.
+/// Whoever calls `ask` names a variant of `E` — `out.ask(Effect::Lookup)` —
+/// so a context written this way serves one vocabulary. A context generic
+/// over _any_ vocabulary describes each wait as a request value instead, and
+/// states what the host must carry as a `From` bound; that pattern, and the
+/// capabilities built on it, are `sans-effort-effects`.
 pub struct Outbox<E> {
     /// Effects and mailbox behind one lock, not two: every operation touches
     /// one or both, and taking the guard once per operation is most of what a
@@ -70,23 +67,6 @@ impl<E> Outbox<E> {
     pub fn ask<T: Reply, F: FnOnce(ReplyHandle<T>) -> E>(&self, make: F) -> Awaiting<E, T> {
         let reply: ReplyHandle<T> = self.inner.lock().mail.mint();
         Awaiting::new(reply.id(), make(reply), self.clone())
-    }
-
-    /// Ask with a request value, and let the `From` bound say whether the
-    /// host can carry it.
-    pub fn request<R: Request>(&self, request: R) -> Awaiting<E, R::Reply>
-    where
-        E: From<Asked<R>>,
-    {
-        self.ask(|reply| E::from(Asked { request, reply }))
-    }
-
-    /// Tell with a message value, likewise.
-    pub fn notify<M>(&self, message: M)
-    where
-        E: From<M>,
-    {
-        self.tell(E::from(message));
     }
 
     // -- the driver's and the awaiting future's side ------------------------
