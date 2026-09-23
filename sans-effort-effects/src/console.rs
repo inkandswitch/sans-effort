@@ -2,7 +2,7 @@
 
 pub mod effect;
 
-use crate::{ctx::Ctx, request::Asked};
+use crate::{ctx::AsCtx, request::Asked};
 use alloc::string::String;
 use core::future::Future;
 use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
@@ -24,18 +24,24 @@ pub trait WriteLine {
     fn write_line(&self, line: String);
 }
 
-impl<E: From<Asked<effect::ReadLine>>> ReadLine for Ctx<E> {
+impl<C: AsCtx> ReadLine for C
+where
+    C::Vocabulary: From<Asked<effect::ReadLine>>,
+{
     /// A reply that does not decode is a host bug the routine cannot report,
     /// so it reads as [`ReadLineError::Failed`].
     async fn read_line(&self) -> Result<String, ReadLineError> {
-        let bytes = self.request(effect::ReadLine).await;
+        let bytes = self.ctx().request(effect::ReadLine).await;
         Result::<String, ReadLineError>::from_bytes(&bytes).unwrap_or(Err(ReadLineError::Failed))
     }
 }
 
-impl<E: From<effect::WriteLine>> WriteLine for Ctx<E> {
+impl<C: AsCtx> WriteLine for C
+where
+    C::Vocabulary: From<effect::WriteLine>,
+{
     fn write_line(&self, line: String) {
-        self.notify(effect::WriteLine(line));
+        self.ctx().notify(effect::WriteLine(line));
     }
 }
 
@@ -77,6 +83,7 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
+    use crate::ctx::Ctx;
     use alloc::vec::Vec;
     use core::ops::ControlFlow;
     use sans_effort::{

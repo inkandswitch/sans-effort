@@ -5,11 +5,10 @@
 //! wait on from, its environment.
 //!
 //! Laid out like a module of the standard library: each trait, its effect
-//! (in [`effect`]), and its impl for the reifying
-//! [`Ctx`] live together. They must: the orphan
-//! rule allows `impl Count for Ctx<E>` only in the crate that defines `Count`
-//! or the one that defines `Ctx`. The routines themselves (`greeter`,
-//! `fanout`, `ticker`) use only the traits.
+//! (in [`effect`]), and its reifying impl live together. The impl is written
+//! over [`AsCtx`], so it holds for [`Ctx`](sans_effort_effects::ctx::Ctx) and for
+//! any newtype wrapping one. The routines themselves (`greeter`, `fanout`,
+//! `ticker`) use only the traits.
 //!
 //! Methods are spelled `fn … -> impl Future`, as `sans_effort::run::Run`
 //! spells `step`; implementors write `async fn`. Neither says anything about
@@ -24,7 +23,7 @@ pub mod effect;
 
 use alloc::string::String;
 use core::future::Future;
-use sans_effort_effects::{Ctx, request::Asked};
+use sans_effort_effects::{ctx::AsCtx, request::Asked};
 
 /// Count a greeting.
 pub trait Count {
@@ -38,14 +37,20 @@ pub trait Lookup {
     fn lookup(&self, name: String) -> impl Future<Output = String>;
 }
 
-impl<E: From<Asked<effect::Count>>> Count for Ctx<E> {
+impl<C: AsCtx> Count for C
+where
+    C::Vocabulary: From<Asked<effect::Count>>,
+{
     async fn count(&self) -> u64 {
-        self.request(effect::Count).await
+        self.ctx().request(effect::Count).await
     }
 }
 
-impl<E: From<Asked<effect::Lookup>>> Lookup for Ctx<E> {
+impl<C: AsCtx> Lookup for C
+where
+    C::Vocabulary: From<Asked<effect::Lookup>>,
+{
     async fn lookup(&self, name: String) -> String {
-        self.request(effect::Lookup(name)).await
+        self.ctx().request(effect::Lookup(name)).await
     }
 }

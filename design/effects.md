@@ -61,7 +61,21 @@ Each module names its effect structs in an `effect` submodule: `time::Sleep` is 
 
 ### Application capabilities live with their traits
 
-An application's own capabilities implement their traits for the same `Ctx<E>`, through `Ctx::request` and `Ctx::notify` — enough to add a capability without handing out the outbox. The orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`. That leaves two places for it: with the trait, or on a local newtype over `Ctx` — which is legal, but must then forward every stdlib capability by hand, because a routine takes one context that provides everything it names. The first is cheaper today, so an application lays out its capabilities the way the stdlib lays out a module — trait, effect, and `Ctx` impl together, in the crate that defines the trait — and its vocabulary crate holds only the vocabularies. A `Reifying` trait with blanket stdlib impls would make the newtype route cheap too (see the open questions). In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
+An application's own capabilities implement their traits the same way, through `Ctx::request` and `Ctx::notify` — enough to add a capability without handing out the outbox. The orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`, so the impl lives with the trait: an application lays out its capabilities the way the stdlib lays out a module — trait, effect, and reifying impl together — and its vocabulary crate holds only the vocabularies. In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
+
+### `AsCtx`: newtypes over `Ctx`
+
+Every reifying impl — the stdlib's and, by convention, an application's — is written over `AsCtx`, not `Ctx<E>` itself:
+
+```rust
+pub trait AsCtx { type Vocabulary; fn ctx(&self) -> &Ctx<Self::Vocabulary>; }
+
+impl<C: AsCtx> Sleep for C where C::Vocabulary: From<Asked<time::effect::Sleep>> { … }
+```
+
+`Ctx<E>` implements `AsCtx`, and so do references, `Box`, `Rc`, and `Arc` to anything that does. A newtype over `Ctx` implements it with one method and gets every capability — which is how a crate reifies a capability trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Without `AsCtx`, that newtype would have to forward every stdlib trait by hand.
+
+It is opt-in. Routines name capabilities; `Ctx<E>` already implements `AsCtx`; native contexts implement capabilities directly and are unaffected. The price: a type that implements `AsCtx` cannot also implement a stdlib capability by hand, and the stdlib cannot add blanket forwarding impls for `&T` or `Box<T>` on its traits — those would overlap. Forwarding through `AsCtx` for references and smart pointers covers the same ground for reifying contexts.
 
 ## Why a crate, and not a feature
 
@@ -123,5 +137,4 @@ Each module has its own small error enum, marked `#[non_exhaustive]` so a new fa
 
 ## Open questions
 
-- A `Reifying` trait (`fn ctx(&self) -> &Ctx<Self::Vocabulary>`) with the stdlib's impls written as blankets over it. Any newtype over `Ctx` would then get every stdlib capability from one method, so a crate could reify a trait it does not own — one whose author never wrote an effect for it — on its own newtype. Decide before `sans-effort-effects` is published: adding blanket impls later breaks anyone with hand-written stdlib impls on a type that then implements `Reifying`.
 - Which modules beyond `time`, `console`, and `actor`: random numbers? logging? A file system?

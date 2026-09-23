@@ -2,7 +2,7 @@
 //!
 //! `Greeter<Ctx<E>>` is the same routine as under `greeter_tokio`; only
 //! the context differs. The routines are the `routines` crate; the context,
-//! [`Ctx`](sans_effort_effects::Ctx), and the `Sleep`, `ReadLine`, and
+//! [`Ctx`](sans_effort_effects::ctx::Ctx), and the `Sleep`, `ReadLine`, and
 //! `WriteLine` effects are `sans-effort-effects`, the standard library.
 //! `Ctx` serves every wait by recording a request that carries a
 //! [`ReplyHandle`](sans_effort::reply::handle::ReplyHandle) and suspending; a
@@ -48,7 +48,7 @@
 //! use sans_effort::{driver::Driver, run::Run};
 //! use routines::greeter::Greeter;
 //! use greeter_boundary::Quiet;
-//! use sans_effort_effects::Ctx;
+//! use sans_effort_effects::ctx::Ctx;
 //!
 //! // error[E0277]: the trait bound `Ctx<Quiet>: Lookup` is not satisfied
 //! let _ = Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());
@@ -297,7 +297,7 @@ mod tests {
         driver::{Driver, outbox::Outbox, status::Status},
         run::Run,
     };
-    use sans_effort_effects::{Ctx, console::ReadLineError};
+    use sans_effort_effects::{console::ReadLineError, ctx::Ctx};
 
     fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
         Greeter::new(Ctx::new(outbox)).run()

@@ -2,7 +2,7 @@
 
 pub mod effect;
 
-use crate::{ctx::Ctx, request::Asked};
+use crate::{ctx::AsCtx, request::Asked};
 use core::{future::Future, time::Duration};
 
 /// Wait for a duration.
@@ -14,8 +14,11 @@ pub trait Sleep {
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()>;
 }
 
-impl<E: From<Asked<effect::Sleep>>> Sleep for Ctx<E> {
+impl<C: AsCtx> Sleep for C
+where
+    C::Vocabulary: From<Asked<effect::Sleep>>,
+{
     async fn sleep(&self, duration: Duration) {
-        self.request(effect::Sleep(duration)).await;
+        self.ctx().request(effect::Sleep(duration)).await;
     }
 }

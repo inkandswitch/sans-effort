@@ -4,7 +4,7 @@
 //! The mechanism builds an effect around a handle: `outbox.ask(Effect::Ask)`,
 //! where whoever calls `ask` names a variant of one concrete enum. That is
 //! enough when there is one vocabulary and you own it. A context that should
-//! serve _any_ vocabulary — the reifying [`Ctx`](crate::Ctx), and every
+//! serve _any_ vocabulary — the reifying [`Ctx`](crate::ctx::Ctx), and every
 //! capability in this crate — cannot name variants. Instead it describes
 //! each wait as a _request struct_ that names its reply type through
 //! [`Request`], and states what the host must be able to carry as a bound:
@@ -25,8 +25,9 @@
 //! lacks a variant _provably_ never receives that request — attenuation,
 //! checked where the routine is built and visible on the wire.
 //!
-//! The methods live on [`Ctx`](crate::Ctx) as
-//! [`request`](crate::Ctx::request) and [`notify`](crate::Ctx::notify).
+//! The methods live on [`Ctx`](crate::ctx::Ctx) as
+//! [`request`](crate::ctx::Ctx::request) and
+//! [`notify`](crate::ctx::Ctx::notify).
 
 use sans_effort::reply::{Reply, handle::ReplyHandle};
 

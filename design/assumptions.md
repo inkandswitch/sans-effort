@@ -88,7 +88,7 @@ _Consequence of violation:_ not reachable today. Actors spanning processes would
 > [!IMPORTANT]
 > _Assumption:_ request ids — and, when they exist, spawn tokens — are minted per machine, from `1`, increasing, at the moment their effect is recorded.
 
-Replaying a routine re-mints the same ids and tokens, so a recorded transcript still lines up. Minting at first poll rather than at `ask` also makes them gapless: a request dropped before it was polled never takes a number.
+Replaying a routine re-mints the same ids and tokens, so a recorded transcript still lines up. Minting when a request is recorded — when it is awaited, or when `join`, `select`, or `poll_once` start it — rather than when `ask` is called also makes them gapless: a request dropped before it was awaited never takes a number.
 
 _Consequence of violation:_ replay cannot match recorded replies to requests.
 

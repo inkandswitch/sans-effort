@@ -18,11 +18,12 @@
 //! that makes contexts generic over the enum.
 //!
 //! Each module holds the trait, its effect structs (in `effect`), and the impl
-//! of the trait for [`Ctx`] — the reifying context, which records each call
-//! as an effect for a host to perform. [`Ctx`] is generic over the host's
-//! vocabulary `E`, so one impl serves every application: an application
-//! writes its vocabulary enum, with a `From` impl per effect it offers, and
-//! [`Ctx<E>`](Ctx) implements exactly the traits that vocabulary can carry.
+//! of the trait for [`Ctx`](ctx::Ctx) — the reifying context, which records
+//! each call as an effect for a host to perform. `Ctx` is generic over the
+//! host's vocabulary `E`, so one impl serves every application: an
+//! application writes its vocabulary enum, with a `From` impl per effect it
+//! offers, and [`Ctx<E>`](ctx::Ctx) implements exactly the traits that
+//! vocabulary can carry.
 //!
 //! ```
 //! use sans_effort::{
@@ -30,8 +31,8 @@
 //!     run::Run,
 //! };
 //! use sans_effort_effects::{
-//!     Ctx,
 //!     console::{ReadLine, ReadLineError, WriteLine, effect},
+//!     ctx::Ctx,
 //!     request::Asked,
 //! };
 //! use core::ops::ControlFlow;
@@ -82,8 +83,13 @@
 //! assert_eq!(driver.status(), Status::Complete);
 //! ```
 //!
-//! An application's own capabilities implement their traits for the same
-//! [`Ctx`], through [`Ctx::request`] and [`Ctx::notify`].
+//! An application's own capabilities implement their traits the same way,
+//! through [`Ctx::request`](ctx::Ctx::request) and
+//! [`Ctx::notify`](ctx::Ctx::notify). Every impl in this crate is
+//! written over [`AsCtx`](ctx::AsCtx), which `Ctx<E>` implements: `Ctx<E>`
+//! has every capability, and `AsCtx` exists so a newtype over it can too —
+//! one method, and a crate can then reify a capability trait it does not
+//! own on its own newtype. Nothing else needs it.
 //!
 //! # Fallible where the world can fail
 //!
@@ -115,5 +121,3 @@ pub mod console;
 pub mod ctx;
 pub mod request;
 pub mod time;
-
-pub use ctx::Ctx;

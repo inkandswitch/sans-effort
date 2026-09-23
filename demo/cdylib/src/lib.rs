@@ -13,7 +13,7 @@
 use greeter_boundary::{Full, Quiet};
 use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
 use sans_effort::run::Run;
-use sans_effort_effects::Ctx;
+use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
     code::{ABI_VERSION, code_of},
     error::Error,
