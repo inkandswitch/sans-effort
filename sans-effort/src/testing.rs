@@ -1,4 +1,5 @@
-//! Run a routine against a context whose every future is ready at once.
+//! Helpers for testing routines: run one against a context whose every
+//! future is ready at once, or poll a single wait exactly once.
 //!
 //! The cheapest test of a routine needs no driver and no runtime: a test
 //! double implements the routine's traits, each call returns a ready future,
@@ -38,8 +39,8 @@
 //! ```
 
 use core::{
-    future::Future,
-    pin::pin,
+    future::{Future, poll_fn},
+    pin::{Pin, pin},
     task::{Context, Poll, Waker},
 };
 
@@ -72,6 +73,49 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
              a test context, or the routine awaited something no context provides."
         ),
     }
+}
+
+/// Poll `future` exactly once and hand it back, whatever the poll returned.
+///
+/// Under a driver, the first poll of a request records its effect; this is
+/// how a test makes a request record itself and then abandons it, the way
+/// the losing branch of a [`select`](crate::select::select) is abandoned.
+///
+/// ```
+/// use core::ops::ControlFlow;
+/// use sans_effort::{
+///     driver::{Driver, outbox::Outbox},
+///     reply::handle::ReplyHandle,
+///     run::Run,
+///     testing::poll_once,
+/// };
+///
+/// enum Effect {
+///     Ask(ReplyHandle<String>),
+/// }
+///
+/// struct GivesUp(Outbox<Effect>);
+///
+/// impl Run for GivesUp {
+///     async fn step(&mut self) -> ControlFlow<()> {
+///         // Record the request, then drop it without waiting for a reply.
+///         drop(poll_once(self.0.ask(Effect::Ask)).await);
+///         ControlFlow::Break(())
+///     }
+/// }
+///
+/// let mut driver = Driver::new(|outbox| GivesUp(outbox).run());
+/// let step = driver.start();
+/// assert_eq!(step.effects().len(), 1, "the request was recorded");
+/// assert_eq!(step.closed(), [1], "and abandoned");
+/// ```
+pub async fn poll_once<F: Future + Unpin>(mut future: F) -> F {
+    poll_fn(|cx| {
+        drop(Pin::new(&mut future).poll(cx));
+        Poll::Ready(())
+    })
+    .await;
+    future
 }
 
 #[cfg(test)]

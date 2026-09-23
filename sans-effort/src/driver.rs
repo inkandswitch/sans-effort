@@ -175,7 +175,7 @@ mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
-    use crate::run::Run;
+    use crate::{run::Run, testing::poll_once};
     use alloc::string::String;
     use core::{ops::ControlFlow, task::Poll};
 
@@ -273,20 +273,6 @@ mod tests {
         assert_eq!(driver.status(), Status::Awaiting);
     }
 
-    /// Polls a future exactly once, then hands it back — enough to make a
-    /// request record itself without waiting for its reply.
-    struct PollOnce<F>(Option<F>);
-
-    impl<F: Future + Unpin> Future for PollOnce<F> {
-        type Output = F;
-
-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F> {
-            let mut inner = self.0.take().expect("polled once");
-            drop(Pin::new(&mut inner).poll(cx));
-            Poll::Ready(inner)
-        }
-    }
-
     /// Three requests: one never polled (nothing recorded), one polled then
     /// dropped (recorded, then its late reply discarded), then a live one.
     struct Impatient(Outbox<Effect>);
@@ -296,7 +282,7 @@ mod tests {
             let never = self.0.ask(Effect::Ask);
             drop(never);
 
-            let abandoned = PollOnce(Some(self.0.ask(Effect::Ask))).await;
+            let abandoned = poll_once(self.0.ask(Effect::Ask)).await;
             drop(abandoned);
 
             let kept = self.0.ask(Effect::Ask).await;

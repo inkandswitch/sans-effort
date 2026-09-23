@@ -1,7 +1,7 @@
 //! Test routines and a host vocabulary shared by the crate's tests.
 
 use alloc::{format, string::String, vec::Vec};
-use core::{future::Future, ops::ControlFlow};
+use core::ops::ControlFlow;
 use sans_effort::{
     boundary::{
         codec::{Encode, Writer},
@@ -11,6 +11,7 @@ use sans_effort::{
     driver::outbox::Outbox,
     reply::handle::ReplyHandle,
     run::Run,
+    testing::poll_once,
 };
 
 /// Asks once (tag 1), says the answer (tag 2), finishes.
@@ -72,32 +73,11 @@ impl Run for Both {
     }
 }
 
-/// Polls a future exactly once, then hands it back — enough to make a
-/// request record itself without waiting for its reply.
-pub(crate) struct PollOnce<F>(pub(crate) Option<F>);
-
-impl<F: Future + Unpin> Future for PollOnce<F> {
-    type Output = F;
-
-    fn poll(
-        mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<F> {
-        #[expect(
-            clippy::expect_used,
-            reason = "a test fixture that is polled exactly once by construction"
-        )]
-        let mut inner = self.0.take().expect("polled once");
-        drop(core::pin::Pin::new(&mut inner).poll(cx));
-        core::task::Poll::Ready(inner)
-    }
-}
-
 pub(crate) struct Impatient(pub(crate) Outbox<Effect>);
 
 impl Run for Impatient {
     async fn step(&mut self) -> ControlFlow<()> {
-        let abandoned = PollOnce(Some(self.0.ask(Effect::Ask))).await;
+        let abandoned = poll_once(self.0.ask(Effect::Ask)).await;
         drop(abandoned);
 
         let kept = self.0.ask(Effect::Ask).await;
@@ -112,7 +92,7 @@ pub(crate) struct Holds(pub(crate) Outbox<Effect>);
 
 impl Run for Holds {
     async fn step(&mut self) -> ControlFlow<()> {
-        let _held = PollOnce(Some(self.0.ask(Effect::Ask))).await;
+        let _held = poll_once(self.0.ask(Effect::Ask)).await;
         self.0.tell(Effect::Say(String::from("done")));
         ControlFlow::Break(())
     }

@@ -127,8 +127,10 @@ impl Writer {
     ///
     /// # Panics
     ///
-    /// If `b` is 4 GiB or longer: the wire carries a `u32` length, and a
-    /// payload that size is a bug, not a case.
+    /// If `b` is 4 GiB or longer. The ABI caps every length at `u32`
+    /// (`ABI.md` §Frames): data that large crosses as several effects, not
+    /// one, and on wasm32 it could not exist at all. Behind the host layer
+    /// the panic is caught and the machine reports `PANICKED`.
     #[expect(
         clippy::expect_used,
         reason = "a >4 GiB record is a programming error, not a runtime case"

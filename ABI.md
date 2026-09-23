@@ -33,6 +33,8 @@ Closed frames follow the step's other frames. A closed id means the routine no l
 
 A host should check that parsing a payload used exactly `len` bytes. A mismatch means its copy of the tag table disagrees with the routine's, and it is caught at the record where it happens rather than corrupting everything after it.
 
+Every length — a frame's `len`, and the length prefix of a `str` or `bytes` field — is a `u32`, so no frame or field exceeds 2³² − 1 bytes. Data larger than that crosses as several effects, not one. A routine that tries to encode more panics, and the call returns `PANICKED`; the process is not aborted.
+
 ## Versioning
 
 `<prefix>_abi_version()` returns the revision of this document the binding implements; this text is revision `0`: pre-release, nothing published yet. A host checks it once, before `new`, and refuses to continue on a mismatch. The number is independent of the crates' versions: the ABI is meant to outlive them.
