@@ -17,11 +17,13 @@
 //! means "no longer needed", not "did not happen": the losing effect may
 //! already be under way.
 //!
-//! `a` is polled first on every poll, so if both are ready at once, `a`
-//! wins. Put the branch that should win ties first.
+//! Both are converted into futures when `select` starts, `a` first, so two
+//! [`Ask`](crate::driver::ask::Ask)s are recorded in argument order. `a` is
+//! polled first on every poll, so if both are ready at once, `a` wins. Put
+//! the branch that should win ties first.
 
 use core::{
-    future::{Future, poll_fn},
+    future::{Future, IntoFuture, poll_fn},
     pin::pin,
     task::Poll,
 };
@@ -35,9 +37,9 @@ use core::{
 /// let first = run_now(select(async { 1 }, core::future::pending::<&str>()));
 /// assert_eq!(first, Either::Left(1));
 /// ```
-pub async fn select<A: Future, B: Future>(a: A, b: B) -> Either<A::Output, B::Output> {
-    let mut a = pin!(a);
-    let mut b = pin!(b);
+pub async fn select<A: IntoFuture, B: IntoFuture>(a: A, b: B) -> Either<A::Output, B::Output> {
+    let mut a = pin!(a.into_future());
+    let mut b = pin!(b.into_future());
 
     poll_fn(|cx| {
         if let Poll::Ready(v) = a.as_mut().poll(cx) {

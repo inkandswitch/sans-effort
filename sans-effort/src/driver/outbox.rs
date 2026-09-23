@@ -1,7 +1,7 @@
 //! Where a routine's context records what it wants the host to do.
 
 use super::{
-    awaiting::Awaiting,
+    ask::Ask,
     mail::Mail,
     sync::{Arc, Mutex},
 };
@@ -21,9 +21,9 @@ use alloc::vec::Vec;
 ///
 /// # Laziness
 ///
-/// `ask` records nothing until the returned future is first polled, exactly
-/// as a native future does nothing until awaited. `let a = out.ask(..);
-/// drop(a)` sends nothing. This matters because the same routine also runs
+/// `ask` records nothing until the returned [`Ask`] is awaited, exactly as a
+/// native future does nothing until awaited. `let a = out.ask(..); drop(a)`
+/// sends nothing. This matters because the same routine also runs
 /// under a native context, where `tokio::time::sleep(d)` is lazy, and the
 /// two must agree.
 ///
@@ -61,18 +61,23 @@ impl<E> Outbox<E> {
         self.inner.lock().effects.push(effect);
     }
 
-    /// Build an effect that awaits a `T`, and return the future that records
-    /// it on first poll and yields the reply. `make` receives the
-    /// [`ReplyHandle`] the host will answer with.
-    pub fn ask<T: Reply, F: FnOnce(ReplyHandle<T>) -> E>(&self, make: F) -> Awaiting<E, T> {
-        let reply: ReplyHandle<T> = self.inner.lock().mail.mint();
-        Awaiting::new(reply.id(), make(reply), self.clone())
+    /// Ask for a `T`: an [`Ask`] that, when awaited, mints a
+    /// [`ReplyHandle`], builds the effect around it with `make`, records it,
+    /// and then yields the reply. Nothing happens until it is awaited — not
+    /// even numbering.
+    pub fn ask<T: Reply, F: FnOnce(ReplyHandle<T>) -> E>(&self, make: F) -> Ask<E, T, F> {
+        Ask::new(make, self.clone())
     }
 
     // -- the driver's and the awaiting future's side ------------------------
 
-    /// First poll of a request: open its slot and record its effect, under
-    /// one lock.
+    /// Recording a request: the next id, as a handle for its reply.
+    pub(super) fn mint<T>(&self) -> ReplyHandle<T> {
+        self.inner.lock().mail.mint()
+    }
+
+    /// Recording a request: open its slot and record its effect, under one
+    /// lock.
     pub(super) fn open(&self, id: u64, effect: E) {
         let mut inner = self.inner.lock();
         inner.mail.open(id);
@@ -84,7 +89,7 @@ impl<E> Outbox<E> {
         self.inner.lock().mail.collect(id)
     }
 
-    /// The request was dropped after its first poll.
+    /// The request was dropped after it was recorded.
     pub(super) fn close(&self, id: u64) {
         self.inner.lock().mail.close(id);
     }

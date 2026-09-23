@@ -8,14 +8,19 @@
 //! recorded before the next. Both return a [`Step`], which also carries the
 //! ids of any requests the routine abandoned.
 //!
-//! An [`Outbox`] serves every wait the same way: mint a [`ReplyHandle`], build
-//! the effect around it, return an [`Awaiting`](awaiting::Awaiting) future that _holds_ the
-//! effect. Nothing has happened yet — like every Rust future, it is lazy. Its
-//! first poll records the effect, opens a mailbox slot, and returns `Pending`;
-//! the routine suspends; the driver hands the recorded effects to the host.
+//! An [`Outbox`] serves every wait the same way: return an
+//! [`Ask`](ask::Ask) holding the closure that builds the effect. Nothing has
+//! happened yet — like a Rust future, it is lazy. Awaiting it turns it into
+//! an [`Awaiting`](awaiting::Awaiting): that one consuming step mints a
+//! [`ReplyHandle`], builds the effect around it, records it, and opens a
+//! mailbox slot; the first poll returns `Pending`; the routine suspends; the
+//! driver hands the recorded effects to the host. Because ids are minted
+//! there, the ids a host sees are gapless and increase in the order effects
+//! were recorded.
 //! The host replies through the handle, which puts the value in the slot; on
-//! the next poll the future finds it and the routine continues. A future
-//! dropped before its first poll emitted nothing; one dropped after closes its
+//! the next poll the future finds it and the routine continues. An `Ask`
+//! dropped before it is awaited emitted nothing and was never numbered; an
+//! `Awaiting` dropped before its reply closes its
 //! slot, its id is reported in the step's [`closed`](Step::closed), and a late
 //! reply is discarded.
 //!
@@ -49,6 +54,7 @@
 //! you anyway (a `#[wasm_bindgen]` struct, a `PyO3` class, a NIF resource) and
 //! holds a `Send` driver beside them.
 
+pub mod ask;
 pub mod awaiting;
 pub mod outbox;
 pub mod status;
@@ -298,7 +304,7 @@ mod tests {
         let step = driver.start();
         assert_eq!(
             step.closed(),
-            [2],
+            [1],
             "the abandoned request is reported closed, in the step that dropped it"
         );
         let (_, handles) = split(step);
@@ -307,8 +313,8 @@ mod tests {
             .expect("the polled-then-dropped and the live request were recorded; the never-polled one was not");
         assert_eq!(
             (abandoned.id(), live.id()),
-            (2, 3),
-            "ids are minted at ask time, even for the unpolled one"
+            (1, 2),
+            "ids are minted when a request is recorded: the never-awaited one got none"
         );
 
         assert!(driver.reply(abandoned, String::from("lost")).is_empty());
@@ -321,6 +327,32 @@ mod tests {
         let (said, _) = split(driver.reply(live, String::from("kept")));
         assert_eq!(said, ["kept"]);
         assert!(driver.is_finished());
+    }
+
+    /// Asked one way round, polled the other: ids follow the polls, so the
+    /// host sees them in increasing order whatever order they were asked in.
+    struct AskedThenPolledBackwards(Outbox<Effect>);
+
+    impl Run for AskedThenPolledBackwards {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let first_asked = self.0.ask(Effect::Ask);
+            let second_asked = self.0.ask(Effect::Ask);
+            let (b, a) = crate::join::join(second_asked, first_asked).await;
+            self.0.tell(Effect::Say(alloc::format!("{a}{b}")));
+            ControlFlow::Break(())
+        }
+    }
+
+    #[test]
+    fn ids_follow_poll_order_not_ask_order() {
+        let mut driver = Driver::new(|outbox| AskedThenPolledBackwards(outbox).run());
+        let (_, handles) = split(driver.start());
+        let ids: alloc::vec::Vec<u64> = handles.iter().map(ReplyHandle::id).collect();
+        assert_eq!(
+            ids,
+            [1, 2],
+            "the second-asked request was polled first, so it is 1"
+        );
     }
 
     /// Two requests polled in one step record two effects in one batch; the

@@ -39,7 +39,7 @@
 //! ```
 
 use core::{
-    future::{Future, poll_fn},
+    future::{Future, IntoFuture, poll_fn},
     pin::{Pin, pin},
     task::{Context, Poll, Waker},
 };
@@ -75,11 +75,13 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
     }
 }
 
-/// Poll `future` exactly once and hand it back, whatever the poll returned.
+/// Turn `future` into a future, poll it exactly once, and hand it back,
+/// whatever the poll returned.
 ///
-/// Under a driver, the first poll of a request records its effect; this is
-/// how a test makes a request record itself and then abandons it, the way
-/// the losing branch of a [`select`](crate::select::select) is abandoned.
+/// Under a driver, turning an [`Ask`](crate::driver::ask::Ask) into a future
+/// records its effect; this is how a test makes a request record itself and
+/// then abandons it, the way the losing branch of a
+/// [`select`](crate::select::select) is abandoned.
 ///
 /// ```
 /// use core::ops::ControlFlow;
@@ -109,7 +111,8 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
 /// assert_eq!(step.effects().len(), 1, "the request was recorded");
 /// assert_eq!(step.closed(), [1], "and abandoned");
 /// ```
-pub async fn poll_once<F: Future + Unpin>(mut future: F) -> F {
+pub async fn poll_once<F: IntoFuture<IntoFuture: Unpin>>(future: F) -> F::IntoFuture {
+    let mut future = future.into_future();
     poll_fn(|cx| {
         drop(Pin::new(&mut future).poll(cx));
         Poll::Ready(())

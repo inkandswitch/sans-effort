@@ -1,7 +1,10 @@
 //! The reifying context: every call records an effect for a host.
 
 use crate::request::{Asked, Request};
-use sans_effort::driver::{awaiting::Awaiting, outbox::Outbox};
+use sans_effort::{
+    driver::{ask::Ask, outbox::Outbox},
+    reply::handle::ReplyHandle,
+};
 
 /// A context that serves every capability by asking the host.
 ///
@@ -38,7 +41,10 @@ impl<E> Ctx<E> {
     ///     }
     /// }
     /// ```
-    pub fn request<R: Request>(&self, request: R) -> Awaiting<E, R::Reply>
+    pub fn request<R: Request>(
+        &self,
+        request: R,
+    ) -> Ask<E, R::Reply, impl FnOnce(ReplyHandle<R::Reply>) -> E>
     where
         E: From<Asked<R>>,
     {

@@ -15,15 +15,19 @@
 //! ```
 
 use core::{
-    future::{Future, poll_fn},
+    future::{Future, IntoFuture, poll_fn},
     pin::pin,
     task::Poll,
 };
 
 /// Poll `a` and `b` together; resolve when both have.
-pub async fn join<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
-    let mut a = pin!(a);
-    let mut b = pin!(b);
+///
+/// Takes anything that becomes a future, as `.await` does, and converts both
+/// when the join starts, `a` first — so two [`Ask`](crate::driver::ask::Ask)s
+/// are recorded in argument order.
+pub async fn join<A: IntoFuture, B: IntoFuture>(a: A, b: B) -> (A::Output, B::Output) {
+    let mut a = pin!(a.into_future());
+    let mut b = pin!(b.into_future());
     let mut ra = None;
     let mut rb = None;
 

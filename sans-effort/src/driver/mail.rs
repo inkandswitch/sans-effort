@@ -1,6 +1,6 @@
 //! The mailbox: one slot per outstanding request.
 //!
-//! A slot exists from the request's first poll until the future takes its
+//! A slot exists from when the request is recorded until the future takes its
 //! value or is dropped; slots closed by a drop are remembered in `closed`
 //! until a host asks, so that a host keeping its own table of handles can
 //! forget them too.
@@ -44,7 +44,8 @@ impl Mail {
         }
     }
 
-    /// A fresh handle. Its slot is not open yet: that happens on first poll.
+    /// A fresh handle, as a request is recorded. Its slot opens right after,
+    /// once the effect has been built around it.
     pub(super) const fn mint<T>(&mut self) -> ReplyHandle<T> {
         let id = self.next;
         self.next += 1;
@@ -92,8 +93,10 @@ impl Mail {
         }
     }
 
-    /// The routine dropped a polled request. Its slot goes, and its id is
-    /// kept for [`Driver::closed`](super::Driver::closed).
+    /// The routine dropped a polled request. If its slot is still open it
+    /// goes, and its id is reported in the next step's
+    /// [`closed`](super::step::Step::closed); if the reply was already
+    /// collected there is nothing to close.
     pub(super) fn close(&mut self, id: u64) {
         if let Some(at) = self.position(id) {
             self.slots.swap_remove(at);
