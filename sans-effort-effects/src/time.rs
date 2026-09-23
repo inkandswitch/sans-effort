@@ -3,7 +3,7 @@
 pub mod effect;
 
 use crate::{ctx::Ctx, request::Asked};
-use core::time::Duration;
+use core::{future::Future, time::Duration};
 
 /// Wait for a duration.
 ///
@@ -11,7 +11,7 @@ use core::time::Duration;
 /// answer at once, after a real delay, or on a virtual clock.
 pub trait Sleep {
     /// Return after `duration` has passed.
-    async fn sleep(&self, duration: Duration);
+    fn sleep(&self, duration: Duration) -> impl Future<Output = ()>;
 }
 
 impl<E: From<Asked<effect::Sleep>>> Sleep for Ctx<E> {

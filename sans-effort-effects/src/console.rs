@@ -4,6 +4,7 @@ pub mod effect;
 
 use crate::{ctx::Ctx, request::Asked};
 use alloc::string::String;
+use core::future::Future;
 use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// Read a line.
@@ -14,7 +15,7 @@ pub trait ReadLine {
     ///
     /// [`ReadLineError::Closed`] at the end of input;
     /// [`ReadLineError::Failed`] if the input could not be read.
-    async fn read_line(&self) -> Result<String, ReadLineError>;
+    fn read_line(&self) -> impl Future<Output = Result<String, ReadLineError>>;
 }
 
 /// Write a line. Fire-and-forget, so not `async`.

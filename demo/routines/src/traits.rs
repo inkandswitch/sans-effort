@@ -11,36 +11,31 @@
 //! or the one that defines `Ctx`. The routines themselves (`greeter`,
 //! `fanout`, `ticker`) use only the traits.
 //!
-//! Written as `async fn`. rustc warns that this leaves auto traits unstated,
-//! and it is right about what that costs: nothing generic over `C` can also
-//! spawn the routine, because there is no way on stable Rust to write
-//! `C::sleep(..): Send`. This library accepts that and never does it — a
-//! routine is spawned where its context is concrete, and the compiler then
-//! decides `Send` on the real state machine. In exchange, no context is
-//! forced to be `Send`: the `Rc`-based test mock in `recording.rs` compiles,
-//! and so would a context for a target without atomics. Both halves are
-//! pinned in `tests/send.rs`.
-
-#![allow(
-    async_fn_in_trait,
-    reason = "spawn sites are always concrete (tokio::spawn, Driver::new), so Send is inferred there; a bound here would forbid !Send contexts such as the Rc-based test mock"
-)]
+//! Methods are spelled `fn … -> impl Future`, as `sans_effort::run::Run`
+//! spells `step`; implementors write `async fn`. Neither says anything about
+//! `Send`, and nothing generic over `C` can add it later — so nothing here
+//! both takes any `C` and spawns the routine. A routine is spawned where its
+//! context is concrete, and the compiler decides `Send` on the real state
+//! machine. In exchange, no context is forced to be `Send`: the `Rc`-based
+//! test mock in `recording.rs` compiles, and so would a context for a target
+//! without atomics. Both halves are pinned in `tests/send.rs`.
 
 pub mod effect;
 
 use alloc::string::String;
+use core::future::Future;
 use sans_effort_effects::{Ctx, request::Asked};
 
 /// Count a greeting.
 pub trait Count {
     /// One more greeting; how many so far, including this one.
-    async fn count(&self) -> u64;
+    fn count(&self) -> impl Future<Output = u64>;
 }
 
 /// Look a name up.
 pub trait Lookup {
     /// The greeting word for `name`.
-    async fn lookup(&self, name: String) -> String;
+    fn lookup(&self, name: String) -> impl Future<Output = String>;
 }
 
 impl<E: From<Asked<effect::Count>>> Count for Ctx<E> {

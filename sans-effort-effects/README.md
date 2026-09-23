@@ -1,13 +1,14 @@
 # sans-effort-effects
 
-> A standard library of capabilities for `sans-effort` routines
+> A standard library of common capabilities for `sans-effort` routines
 
 A routine names what it needs as traits; a context decides whether each call is a real future or an effect recorded for a host. Most routines want the same few things, and without this crate every application writes each of them three times: the trait, the effect and its reifying impl, and a native impl. Here the first two are written once.
 
-| Module    | Traits                  | Fallible?                                       |
-|-----------|-------------------------|-------------------------------------------------|
-| `time`    | `Sleep`                 | no                                              |
-| `console` | `ReadLine`, `WriteLine` | `read_line` returns `Result<String, ReadLineError>` |
+| Module    | Traits      | Fallible?                       |
+|-----------|-------------|---------------------------------|
+| `time`    | `Sleep`     | No                              |
+| `console` | `WriteLine` | No                              |
+| `console` | `ReadLine`  | `Result<String, ReadLineError>` |
 
 Each module holds the trait, its effect structs (`effect::…`), and the trait's impl for `Ctx<E>`, the reifying context. `Ctx` is generic over the host's vocabulary `E`, so one impl serves every application: an application writes its vocabulary enum with a `From` impl per effect it offers, and `Ctx<E>` implements exactly the traits that vocabulary can carry. An application's own capabilities implement their traits for the same `Ctx` through `Ctx::request` and `Ctx::notify`.
 

@@ -93,6 +93,14 @@
 //! [`sleep`](time::Sleep::sleep) is not. A fallible effect's reply crosses as
 //! `bytes`, encoded with `sans-effort`'s convention for `Result`.
 //!
+//! # Spelling
+//!
+//! Trait methods are `fn … -> impl Future`, as `sans_effort::run::Run`
+//! spells `step`; implementors write `async fn`. No trait says anything about
+//! `Send`: whether a routine can cross threads is decided where its context
+//! is concrete (`Driver::new`, `tokio::spawn`), so a `!Send` context — an
+//! `Rc`-based test mock — works wherever nothing asks.
+//!
 //! # `no_std`
 //!
 //! This crate is `no_std` + `alloc`. Its `std` and `spin` features only
@@ -100,10 +108,6 @@
 //! nothing else should depend with `default-features = false`.
 
 #![cfg_attr(not(test), no_std)]
-#![allow(
-    async_fn_in_trait,
-    reason = "spawn sites are always concrete (tokio::spawn, Driver::new), so Send is inferred there; a bound here would forbid !Send contexts such as an Rc-based test mock"
-)]
 
 extern crate alloc;
 
