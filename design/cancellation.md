@@ -1,11 +1,11 @@
 # Cancellation
 
 > [!NOTE]
-> _Status:_ implemented: `select`, closed frames, `Step`, and the `MALFORMED`/`STALE` codes. The Java demo host cancels on closed frames, but no demo routine races yet; the actor demos' receive-with-timeout will be the first to produce them end to end.
+> _Status:_ implemented: `select`, closed frames, `Step`, and the `MALFORMED`/`STALE` codes. The Java demo host cancels on closed frames, but no demo routine races yet; the channel demos' receive-with-timeout will be the first to produce them end to end.
 
 ## `select`
 
-`join(a, b)` waits for both. Actors keep needing "whichever comes first": a receive with a timeout, a heartbeat, "stop or keep working". `no_std` has no `select!`, so `sans-effort` gets a small combinator next to `join`:
+`join(a, b)` waits for both. Routines that message each other keep needing "whichever comes first": a receive with a timeout, a heartbeat, "stop or keep working". `no_std` has no `select!`, so `sans-effort` gets a small combinator next to `join`:
 
 ```rust
 match select(ctx.receive::<Msg>(), ctx.sleep(TIMEOUT)).await {

@@ -10,7 +10,7 @@ Some documents describe what exists and some describe what is planned. Each one 
 |-----------------------------------|-------------------|--------------------------------------------------------------------------------|
 | [`assumptions`](assumptions.md)   | current + planned | What the design assumes about hosts, routines, and targets                     |
 | [`effects`](effects.md)           | current + planned | A standard library of capabilities: `sans-effort-effects`, `sans-effort-tokio` |
-| [`actors`](actors.md)             | planned           | Messaging, spawning, and the host as the scheduler                             |
+| [`channels`](channels.md)         | planned           | Messaging, spawning, and the host as the scheduler                             |
 | [`capabilities`](capabilities.md) | planned           | Object-capability discipline within a process, given an honest host            |
 | [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
 

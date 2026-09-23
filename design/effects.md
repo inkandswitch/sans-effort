@@ -1,7 +1,7 @@
 # A standard library of effects
 
 > [!NOTE]
-> _Status:_ `sans-effort-effects` exists with `time`, `console`, `Ctx`, and `AsCtx`; `sans-effort-tokio` exists with `TokioClock`, `TokioInput`, `TokioOutput`, and `TokioCtx`; `Decode` and the `Result`/`Option` encoding are in core. `actor` and its tokio side are planned.
+> _Status:_ `sans-effort-effects` exists with `time`, `console`, `Ctx`, and `AsCtx`; `sans-effort-tokio` exists with `TokioClock`, `TokioInput`, `TokioOutput`, and `TokioCtx`; `Decode` and the `Result`/`Option` encoding are in core. `channel` and its tokio side are planned.
 
 `Sleep` and console I/O are things nearly every routine wants, and messaging other routines is close behind. Today a user who wants `Sleep` writes it three times:
 
@@ -22,7 +22,7 @@ The shape is `embedded-hal`'s: one crate of traits, implementations in separate 
 |-----------------------|--------------------------------------------------------------------------------------------------------|----------|
 | `sans-effort`         | The mechanism, unchanged, plus `Decode` and `select`                                                    | `no_std` |
 | `sans-effort-effects` | Per module: the trait, its effect structs (`effect::…`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
-| `sans-effort-tokio`   | One component per capability — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, the actor `Registry`           | `std`    |
+| `sans-effort-tokio`   | One component per capability — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, a channel registry           | `std`    |
 
 Modules in `sans-effort-effects`:
 
@@ -30,7 +30,7 @@ Modules in `sans-effort-effects`:
 |-----------|-----------------------------------------------|
 | `time`    | `Sleep`                                       |
 | `console` | `ReadLine`, `WriteLine`                       |
-| `actor`   | `Post`, `Receive`, `Spawn`, `Me`, and `Address<M>` — see [`actors`](actors.md) |
+| `channel` | `Open`, `Post`, `Receive`, `Spawn`, `Sender<M>`, and `Receiver<M>` — see [`channels`](channels.md) |
 
 The vocabulary enum and its tags stay the application's. A host decides what it offers; the stdlib only makes the offer cheap to write.
 
@@ -120,18 +120,18 @@ It returns `Result` rather than `Option`: parse, don't validate. `Reader`'s prim
 
 `ABI.md` already says "a richer reply crosses as `bytes` and is decoded on the routine's side". `Decode` gives that a type. It is needed for:
 
-- _Actor messages._ Nearly always enums with fields, often carrying addresses:
+- _Channel messages._ Nearly always enums with fields, often carrying senders:
 
   ```rust
-  enum Counter { Incr(u64), Get { reply_to: Address<u64> } }
+  enum Counter { Incr(u64), Get { reply_to: channel::Sender<u64> } }
   ```
 
 - _Structured replies to ordinary requests._ `Stat(path) → Metadata`, `HttpGet(url) → Response`, `Lookup(name) → Option<String>` — there is no reply kind for "absent".
 - _Fallible effects._ Every effect so far is infallible from the routine's side. Real ones fail: a missing file, a reset connection. The honest signature is `async fn read(&self, path) -> Result<Vec<u8>, IoError>`, and a `Result` can only cross as `bytes`.
 
-### All actor messages are bytes on the wire
+### All channel messages are bytes on the wire
 
-A message that is just a `String` could, in principle, cross as the `str` kind. It does not, because the host routes messages without looking at them. If a body could be any of four kinds, the host would have to know which kind each receiver expects. With every body as `bytes`, routing is `post(to, body) → reply(receive_id, body)`, whatever the types.
+A message that is just a `String` could, in principle, cross as the `str` kind. It does not, because the host routes messages without looking at them. If a body could be any of four kinds, the host would have to know which kind each receiver expects. With every body as `bytes`, routing is `post(channel, body) → reply(receive_id, body)`, whatever the types.
 
 The simple cases cost nothing: core implements `Encode` and `Decode` for `String`, `u64`, `()`, and `Vec<u8>`. Under tokio none of this happens: messages are values in a channel.
 
@@ -152,4 +152,4 @@ Each module has its own small error enum, marked `#[non_exhaustive]` so a new fa
 
 ## Open questions
 
-- Which modules beyond `time`, `console`, and `actor`: random numbers? logging? A file system?
+- Which modules beyond `time`, `console`, and `channel`: random numbers? logging? A file system?
