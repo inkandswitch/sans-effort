@@ -18,7 +18,7 @@ use sans_effort_effects::{
 
 /// A capability the stdlib does not have.
 trait Locate {
-    fn locate(&self) -> impl Future<Output = String>;
+    fn locate(&self) -> impl Future<Output = String> + Send;
 }
 
 struct Where;
@@ -38,7 +38,7 @@ impl<E> AsCtx for HostCtx<E> {
     }
 }
 
-impl<E: From<Asked<Where>>> Locate for HostCtx<E> {
+impl<E: From<Asked<Where>> + Send> Locate for HostCtx<E> {
     async fn locate(&self) -> String {
         self.ctx().request(Where).await
     }
@@ -112,7 +112,8 @@ fn a_newtype_gets_the_stdlib_and_adds_its_own() {
 }
 
 /// Capabilities follow through references and smart pointers to any
-/// `AsCtx`, so a context can be lent or shared.
+/// `AsCtx`, so a context can be lent or shared. Not through `Rc`: it is never
+/// `Sync`, and a capability's future borrows its context across threads.
 #[test]
 fn references_and_smart_pointers_forward() {
     fn capabilities<C: Sleep + WriteLine>(_: &C) {}
@@ -120,9 +121,9 @@ fn references_and_smart_pointers_forward() {
     drop(Driver::<Effect>::new(|outbox| {
         let ctx = HostCtx(Ctx::new(outbox));
         capabilities(&&ctx);
-        capabilities(&std::rc::Rc::new(&ctx));
         let boxed: Box<HostCtx<Effect>> = Box::new(ctx);
         capabilities(&boxed);
+        capabilities(&std::sync::Arc::new(boxed));
         async {}
     }));
 }

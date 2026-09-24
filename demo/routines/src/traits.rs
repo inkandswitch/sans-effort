@@ -28,27 +28,27 @@ use sans_effort_effects::{ctx::AsCtx, request::Asked};
 /// Count a greeting.
 pub trait Count {
     /// One more greeting; how many so far, including this one.
-    fn count(&self) -> impl Future<Output = u64>;
+    fn count(&self) -> impl Future<Output = u64> + Send;
 }
 
 /// Look a name up.
 pub trait Lookup {
     /// The greeting word for `name`.
-    fn lookup(&self, name: String) -> impl Future<Output = String>;
+    fn lookup(&self, name: String) -> impl Future<Output = String> + Send;
 }
 
-impl<C: AsCtx> Count for C
+impl<C: AsCtx + Sync> Count for C
 where
-    C::Vocabulary: From<Asked<effect::Count>>,
+    C::Vocabulary: From<Asked<effect::Count>> + Send,
 {
     async fn count(&self) -> u64 {
         self.ctx().request(effect::Count).await
     }
 }
 
-impl<C: AsCtx> Lookup for C
+impl<C: AsCtx + Sync> Lookup for C
 where
-    C::Vocabulary: From<Asked<effect::Lookup>>,
+    C::Vocabulary: From<Asked<effect::Lookup>> + Send,
 {
     async fn lookup(&self, name: String) -> String {
         self.ctx().request(effect::Lookup(name)).await

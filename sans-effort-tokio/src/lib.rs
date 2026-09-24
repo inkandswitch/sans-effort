@@ -11,6 +11,7 @@
 //! | [`TokioClock`](clock::TokioClock)    | `Sleep`            |
 //! | [`TokioInput`](console::TokioInput)  | `ReadLine`         |
 //! | [`TokioOutput`](console::TokioOutput) | `WriteLine`       |
+//! | [`TokioSpawner`](spawn::TokioSpawner) | `Spawn`, for the contexts built on it |
 //! | [`TokioCtx`](ctx::TokioCtx)          | all of the above   |
 //!
 //! [`TokioCtx`](ctx::TokioCtx) is the ready-made context: one value with
@@ -22,10 +23,11 @@
 //! ```
 //! use sans_effort_effects::console::WriteLine;
 //! use sans_effort_tokio::ctx::TokioCtx;
+//! use tokio_util::task::LocalPoolHandle;
 //!
-//! let ctx = TokioCtx::new(&b""[..], Vec::new());
+//! let ctx = TokioCtx::new(&b""[..], Vec::new(), LocalPoolHandle::new(1));
 //! ctx.write_line("hello".into());
-//! let (_, written) = ctx.into_parts();
+//! let Ok((_, written)) = ctx.into_parts() else { unreachable!("no child shares it") };
 //! assert_eq!(written, b"hello\n");
 //! ```
 //!
@@ -37,7 +39,7 @@
 //! ones — one line each:
 //!
 //! ```
-//! use core::time::Duration;
+//! use core::{future::Future, time::Duration};
 //! use sans_effort_effects::time::Sleep;
 //! use sans_effort_tokio::ctx::TokioCtx;
 //!
@@ -46,8 +48,8 @@
 //! }
 //!
 //! impl<R, W> Sleep for AppCtx<R, W> {
-//!     async fn sleep(&self, duration: Duration) {
-//!         self.tokio.sleep(duration).await;
+//!     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send {
+//!         self.tokio.sleep(duration)
 //!     }
 //! }
 //! ```
@@ -61,3 +63,4 @@
 pub mod clock;
 pub mod console;
 pub mod ctx;
+pub mod spawn;

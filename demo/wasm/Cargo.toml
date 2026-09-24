@@ -14,6 +14,7 @@ rust-version.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+async-channel = { workspace = true }
 sans-effort = { workspace = true, features = ["std"] }
 sans-effort-effects = { workspace = true, features = ["std"] }
 js-sys = { workspace = true }

@@ -7,16 +7,18 @@
 //! read a name, look up a greeting, pause, greet, count, repeat; `quit` or
 //! the end of input ends it. [`fanout::Fanout`] is the same conversation
 //! with two waits in flight at once. [`ticker::Ticker`] needs only two of
-//! the five traits, which is the point of it.
+//! the five traits, which is the point of it. [`ping_pong::PingPong`]
+//! spawns a child and talks to it over plain `async-channel`s: two machines,
+//! and messages that are never effects.
 //!
 //! A routine owns a context `C` and asks nothing of it beyond its trait
 //! bounds. It does not know whether `read_line` awaits a tokio channel, pops
 //! a line off a test script, or records an effect for a Python host and
 //! suspends; each of those is a different `C`, and the routine is the same
 //! code under all of them. This crate imports [`Run`](sans_effort::run::Run)
-//! and [`join`](sans_effort::join::join) from the mechanism and the traits
-//! from the standard library, and nothing else — no effect, no handle, no
-//! driver — and it is `no_std`.
+//! and [`join`](sans_effort::join::join) from the mechanism, the traits from
+//! the standard library, and `async-channel`, and nothing else — no effect,
+//! no handle, no driver — and it is `no_std`.
 //!
 //! ```text
 //!   Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine>: Run
@@ -26,18 +28,23 @@
 //!        └── C = Recording  (tests)           ready at once; one poll
 //! ```
 //!
-//! No `Send` appears in the traits. Whether a routine's `run()` is `Send` is
-//! decided by `C`, and the compiler works it out where `C` is concrete —
-//! `tokio::spawn` accepts a `Greeter<TokioCtx>` because tokio's handles are
-//! `Send`; `Driver::new` accepts a `Greeter<Ctx<E>>` for the same
-//! reason; and the `Rc`-based test mock is accepted by nothing that asks.
+//! The capability traits declare their futures `Send`, so every context is
+//! `Sync` and a routine over one is `Send`: `tokio::spawn` accepts a
+//! `Greeter<TokioCtx>`, `Driver::new` a `Greeter<Ctx<E>>`, and `PingPong`,
+//! generic as it is, can `spawn` a child that may run on any thread. A
+//! context over a value tied to one thread keeps it behind a task of its own
+//! and talks to it over a channel, as `greeter_wasm`'s `JsCtx` does.
 
 #![no_std]
 
 extern crate alloc;
 
+#[cfg(test)]
+extern crate std;
+
 pub mod fanout;
 pub mod greeter;
+pub mod ping_pong;
 pub mod ticker;
 pub mod traits;
 

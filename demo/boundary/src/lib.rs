@@ -70,6 +70,15 @@
 //! | 3   | `ReadLine · id`          | `4 id bytes` |
 //! | 4   | `Sleep(u64 millis) · id` | `3 id`     |
 //! | 5   | `WriteLine(str)`         | —          |
+//! | 6   | `Spawned(u64 handle)`    | —          |
+//! | 7   | `SpawnedPinned(u64 handle)` | —       |
+//!
+//! Tags 6 and 7 name a child the routine spawned, already registered in
+//! `sans-effort-host`'s table: the host starts it. A `SpawnedPinned` child
+//! stays on the thread that starts it; a `Spawned` one may migrate. They exist
+//! with the `table` feature (the default), because registering a child needs
+//! the table, and the table needs `std`; without it, `Full` offers no
+//! spawning and the crate is `no_std`.
 
 #![no_std]
 
@@ -91,6 +100,9 @@ use sans_effort_effects::{
     time::effect::Sleep,
 };
 
+#[cfg(feature = "table")]
+use sans_effort_effects::spawn::effect::{Spawn, SpawnPinned};
+
 // ---- Full: a host that offers everything ----------------------------------
 
 /// The vocabulary of a host that offers all five capabilities.
@@ -106,6 +118,26 @@ pub enum Full {
     Sleep(Asked<Sleep>),
     /// Tag 5.
     WriteLine(WriteLine),
+    /// Tag 6.
+    #[cfg(feature = "table")]
+    Spawn(Spawn<Full>),
+    /// Tag 7.
+    #[cfg(feature = "table")]
+    SpawnPinned(SpawnPinned<Full>),
+}
+
+#[cfg(feature = "table")]
+impl From<Spawn<Full>> for Full {
+    fn from(spawn: Spawn<Full>) -> Self {
+        Full::Spawn(spawn)
+    }
+}
+
+#[cfg(feature = "table")]
+impl From<SpawnPinned<Full>> for Full {
+    fn from(spawn: SpawnPinned<Full>) -> Self {
+        Full::SpawnPinned(spawn)
+    }
 }
 
 impl From<Asked<Count>> for Full {
@@ -170,6 +202,16 @@ pub enum View {
         /// What to show.
         text: String,
     },
+    /// Tag 6: a child that may migrate between threads. Start it.
+    Spawned {
+        /// The child's machine.
+        handle: u64,
+    },
+    /// Tag 7: a child pinned to the thread that starts it. Start it there.
+    SpawnedPinned {
+        /// The child's machine.
+        handle: u64,
+    },
 }
 
 impl HostEffect for Full {
@@ -205,6 +247,20 @@ impl HostEffect for Full {
                 Some(<()>::pending(reply)),
             ),
             Full::WriteLine(WriteLine(text)) => (View::WriteLine { text }, None),
+            #[cfg(feature = "table")]
+            Full::Spawn(Spawn(child)) => (
+                View::Spawned {
+                    handle: sans_effort_host::table::new_boxed(move |outbox| child.start(outbox)),
+                },
+                None,
+            ),
+            #[cfg(feature = "table")]
+            Full::SpawnPinned(SpawnPinned(child)) => (
+                View::SpawnedPinned {
+                    handle: sans_effort_host::table::park_pinned(move |outbox| child.start(outbox)),
+                },
+                None,
+            ),
         }
     }
 }
@@ -233,6 +289,14 @@ impl Encode for View {
             View::WriteLine { text } => {
                 w.u8(5);
                 w.str(text);
+            }
+            View::Spawned { handle } => {
+                w.u8(6);
+                w.u64(*handle);
+            }
+            View::SpawnedPinned { handle } => {
+                w.u8(7);
+                w.u64(*handle);
             }
         }
     }
@@ -357,6 +421,8 @@ mod tests {
                     greeted += 1;
                     driver.reply(reply, greeted)
                 }
+                #[cfg(feature = "table")]
+                Full::Spawn(_) | Full::SpawnPinned(_) => panic!("the greeter never spawns"),
             };
             queue.extend(more);
         }
@@ -404,7 +470,7 @@ mod tests {
                 | View::Lookup { id, .. }
                 | View::ReadLine { id }
                 | View::Sleep { id, .. } => Some(*id),
-                View::WriteLine { .. } => None,
+                View::WriteLine { .. } | View::Spawned { .. } | View::SpawnedPinned { .. } => None,
             })
             .collect();
         assert_eq!(ids, [1, 2, 3, 4, 5]);
@@ -513,5 +579,147 @@ mod tests {
             .try_into()
             .ok()
             .unwrap_or_else(|| panic!("expected a batch of {N}, got {len}"))
+    }
+
+    /// A deterministic Rust host for machines that spawn and message each
+    /// other: every request answered at once, spawned children started in
+    /// the order they appear, and — when nothing is queued — every idle
+    /// machine resumed once, in the order it was created.
+    #[cfg(feature = "table")]
+    mod router {
+        use super::*;
+        use routines::ping_pong::PingPong;
+        use sans_effort::{
+            driver::{LocalDriver, step::Step},
+            reply::{Reply, handle::ReplyHandle},
+        };
+
+        /// A machine the router drives: migrating or pinned. All run on the
+        /// test's one thread.
+        enum Machine {
+            Migrating(Driver<Full>),
+            Pinned(LocalDriver<Full>),
+        }
+
+        impl Machine {
+            fn start(&mut self) -> Step<Full> {
+                match self {
+                    Machine::Migrating(d) => d.start(),
+                    Machine::Pinned(d) => d.start(),
+                }
+            }
+
+            fn resume(&mut self) -> Step<Full> {
+                match self {
+                    Machine::Migrating(d) => d.resume(),
+                    Machine::Pinned(d) => d.resume(),
+                }
+            }
+
+            fn reply<T: Reply>(&mut self, handle: ReplyHandle<T>, value: T) -> Step<Full> {
+                match self {
+                    Machine::Migrating(d) => d.reply(handle, value),
+                    Machine::Pinned(d) => d.reply(handle, value),
+                }
+            }
+
+            fn status(&self) -> Status {
+                match self {
+                    Machine::Migrating(d) => d.status(),
+                    Machine::Pinned(d) => d.status(),
+                }
+            }
+        }
+
+        /// Run `root` and everything it spawns until nothing can progress:
+        /// what each wrote, in order, and whether every machine completed.
+        fn route(root: Driver<Full>) -> (Vec<String>, bool) {
+            let mut root = Machine::Migrating(root);
+            let mut queue: VecDeque<(usize, Full)> =
+                root.start().into_iter().map(|e| (0, e)).collect();
+            let mut machines = vec![root];
+            let mut written = Vec::new();
+
+            loop {
+                while let Some((at, effect)) = queue.pop_front() {
+                    let (from, more) = match effect {
+                        Full::WriteLine(WriteLine(text)) => {
+                            written.push(text);
+                            continue;
+                        }
+                        Full::Spawn(Spawn(child)) => adopt(
+                            &mut machines,
+                            Machine::Migrating(Driver::from_boxed(|outbox| child.start(outbox))),
+                        ),
+                        Full::SpawnPinned(SpawnPinned(child)) => adopt(
+                            &mut machines,
+                            Machine::Pinned(LocalDriver::from_boxed(|outbox| child.start(outbox))),
+                        ),
+                        Full::Sleep(Asked { reply, .. }) => {
+                            (at, nth(&mut machines, at).reply(reply, ()))
+                        }
+                        Full::ReadLine(Asked { reply, .. }) => (
+                            at,
+                            nth(&mut machines, at)
+                                .reply(reply, ReadLine::reply(Err(ReadLineError::Closed))),
+                        ),
+                        Full::Lookup(Asked { reply, .. }) => (
+                            at,
+                            nth(&mut machines, at).reply(reply, String::from("Hello")),
+                        ),
+                        Full::Count(Asked { reply, .. }) => {
+                            (at, nth(&mut machines, at).reply(reply, 0))
+                        }
+                    };
+                    queue.extend(more.into_iter().map(|e| (from, e)));
+                }
+
+                // Nothing queued: resume every idle machine once. A resume
+                // that records nothing and leaves the machine idle made no
+                // progress; a round with none anywhere is a stall, or the end.
+                let mut progressed = false;
+                for (at, machine) in machines.iter_mut().enumerate() {
+                    if machine.status() == Status::Idle {
+                        let step = machine.resume();
+                        progressed |= !step.is_empty() || machine.status() != Status::Idle;
+                        queue.extend(step.into_iter().map(|e| (at, e)));
+                    }
+                }
+
+                if !progressed {
+                    let done = machines.iter().all(|m| m.status() == Status::Complete);
+                    return (written, done);
+                }
+            }
+        }
+
+        /// Start a spawned machine and keep it: its index, and its first step.
+        fn adopt(machines: &mut Vec<Machine>, mut machine: Machine) -> (usize, Step<Full>) {
+            let step = machine.start();
+            machines.push(machine);
+            (machines.len() - 1, step)
+        }
+
+        fn nth(machines: &mut [Machine], at: usize) -> &mut Machine {
+            machines.get_mut(at).expect("an index the router issued")
+        }
+
+        #[test]
+        fn ping_pong_across_two_machines() {
+            let root = Driver::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run());
+            let (written, done) = route(root);
+            assert_eq!(
+                written,
+                [
+                    "pong 1",
+                    "ping 1, pong 1",
+                    "pong 2",
+                    "ping 2, pong 2",
+                    "pong 3",
+                    "ping 3, pong 3",
+                ]
+            );
+            assert!(done, "the parent returned, so the child's pings ended too");
+        }
     }
 }

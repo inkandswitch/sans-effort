@@ -1,6 +1,6 @@
 //! Time, from tokio's timer.
 
-use core::time::Duration;
+use core::{future::Future, time::Duration};
 use sans_effort_effects::time::Sleep;
 
 /// `Sleep` as `tokio::time::sleep`.
@@ -11,8 +11,8 @@ use sans_effort_effects::time::Sleep;
 pub struct TokioClock;
 
 impl Sleep for TokioClock {
-    async fn sleep(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
+    fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send {
+        tokio::time::sleep(duration)
     }
 }
 

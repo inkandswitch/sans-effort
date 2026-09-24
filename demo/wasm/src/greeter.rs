@@ -1,6 +1,9 @@
 //! The greeter as a JS class.
 
-use crate::{ctx::JsCtx, host::JsHost};
+use crate::{
+    ctx::{Drained, JsCtx},
+    host::JsHost,
+};
 use routines::greeter::Greeter;
 use sans_effort::run::Run;
 use wasm_bindgen::prelude::*;
@@ -10,6 +13,7 @@ use wasm_bindgen::prelude::*;
 #[derive(Debug)]
 pub struct JsGreeter {
     routine: Greeter<JsCtx>,
+    drained: Drained,
 }
 
 #[wasm_bindgen(js_class = Greeter)]
@@ -18,8 +22,10 @@ impl JsGreeter {
     #[wasm_bindgen(constructor)]
     #[must_use]
     pub fn new(host: JsHost) -> Self {
+        let (ctx, drained) = JsCtx::new(host);
         Self {
-            routine: Greeter::new(JsCtx::new(host)),
+            routine: Greeter::new(ctx),
+            drained,
         }
     }
 
@@ -27,5 +33,6 @@ impl JsGreeter {
     /// the returned `Promise` resolves when it is over.
     pub async fn run(self) {
         self.routine.run().await;
+        self.drained.wait().await;
     }
 }

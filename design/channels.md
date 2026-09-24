@@ -70,8 +70,8 @@ pub trait Spawn {
 }
 ```
 
-- `spawn` starts a child that may move between threads after it starts. Its future must be `Send`, which the compiler can prove only where the child's context is a concrete type: a routine generic over its context cannot, because each capability call returns an opaque future. Such routines use `spawn_pinned`.
-- `spawn_pinned` starts a child that stays on the thread that starts it. Only the closure must be `Send` — its future need not be. Every context can implement it, so a routine that uses it runs everywhere.
+- `spawn` starts a child that may move between threads after it starts. Its future must be `Send`. Every capability declares its futures `Send`, so a routine generic over its context can prove it: `C::Child: Send + Sync`. The price is that every context is `Sync`; one over a value tied to its thread — a `JsValue` — keeps it behind a dispatcher task and talks to it over a channel.
+- `spawn_pinned` starts a child that stays on the thread that starts it. Only the closure must be `Send` — its future need not be — so the child may hold an `Rc` or a foreign handle across an `.await`.
 
 Two methods, because even a multithreaded application sometimes holds data that is not `Send` — an `Rc`, a foreign handle. `spawn_pinned` gives those children a home while the rest move freely, in one build.
 

@@ -15,7 +15,8 @@ rust-version.workspace = true
 
 [dependencies]
 sans-effort-effects = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["io-std", "io-util", "sync", "time"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

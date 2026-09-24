@@ -15,7 +15,7 @@ pub trait ReadLine {
     ///
     /// [`ReadLineError::Closed`] at the end of input;
     /// [`ReadLineError::Failed`] if the input could not be read.
-    fn read_line(&self) -> impl Future<Output = Result<String, ReadLineError>>;
+    fn read_line(&self) -> impl Future<Output = Result<String, ReadLineError>> + Send;
 }
 
 /// Write a line. Fire-and-forget, so not `async`.
@@ -24,9 +24,9 @@ pub trait WriteLine {
     fn write_line(&self, line: String);
 }
 
-impl<C: AsCtx> ReadLine for C
+impl<C: AsCtx + Sync> ReadLine for C
 where
-    C::Vocabulary: From<Asked<effect::ReadLine>>,
+    C::Vocabulary: From<Asked<effect::ReadLine>> + Send,
 {
     /// A reply that does not decode is a host bug the routine cannot report,
     /// so it reads as [`ReadLineError::Failed`].

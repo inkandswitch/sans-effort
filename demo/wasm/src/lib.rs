@@ -67,20 +67,16 @@
 //!
 //! # `Send`
 //!
-//! `JsCtx` holds a `JsValue`, which is `!Send`, so `Greeter<JsCtx>::run()` is
-//! `!Send` too. Nothing here asks: `future_to_promise` needs only `'static`,
-//! because wasm32 in a JS host is single-threaded. The same routine is
-//! `Send` under `TokioCtx`; the traits never had to say either way.
+//! Capability futures must be `Send`, and a `JsValue` is not, so
+//! [`ctx::JsCtx`] holds none: it talks over a channel to a dispatcher task
+//! that owns the host object. `Greeter<JsCtx>::run()` is then `Send`, like
+//! the same routine under `TokioCtx` — though nothing here needs it to be:
+//! wasm32 in a JS host is single-threaded, and every task is local.
 //!
 //! # Panics
 //!
 //! `wasm32-unknown-unknown` is `panic = "abort"`: a panicking routine traps,
 //! the promise never settles, and the host sees a `RuntimeError`.
-
-#![expect(
-    clippy::missing_const_for_fn,
-    reason = "wasm-bindgen cannot export `const fn`"
-)]
 
 pub mod ctx;
 pub mod fanout;

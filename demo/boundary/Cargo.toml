@@ -13,7 +13,15 @@ rust-version.workspace = true
 [dependencies]
 sans-effort = { workspace = true }
 sans-effort-effects = { workspace = true }
+sans-effort-host = { workspace = true, optional = true }
 routines = { version = "0.1.0", path = "../routines" }
+
+[features]
+default = ["table"]
+## `Full`'s spawn tags (6 and 7): registering a spawned child needs
+## `sans-effort-host`'s table, and so `std`. Without it the crate is `no_std`
+## and `Full` offers no spawning.
+table = ["dep:sans-effort-host"]
 
 [dev-dependencies]
 bolero = { workspace = true }

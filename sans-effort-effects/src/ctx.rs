@@ -1,7 +1,7 @@
 //! The reifying context: every call records an effect for a host.
 
 use crate::request::{Asked, Request};
-use alloc::{boxed::Box, rc::Rc};
+use alloc::boxed::Box;
 use sans_effort::{
     driver::{ask::Ask, outbox::Outbox},
     reply::handle::ReplyHandle,
@@ -116,14 +116,6 @@ impl<C: AsCtx + ?Sized> AsCtx for &C {
 }
 
 impl<C: AsCtx + ?Sized> AsCtx for Box<C> {
-    type Vocabulary = C::Vocabulary;
-
-    fn ctx(&self) -> &Ctx<Self::Vocabulary> {
-        (**self).ctx()
-    }
-}
-
-impl<C: AsCtx + ?Sized> AsCtx for Rc<C> {
     type Vocabulary = C::Vocabulary;
 
     fn ctx(&self) -> &Ctx<Self::Vocabulary> {

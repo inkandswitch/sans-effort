@@ -8,9 +8,8 @@
 //! Compare `../cdylib` and `../wasm`, where the identical `Greeter` runs
 //! behind a `Driver` because the poller is not Rust.
 //!
-//! `tokio::spawn` needs the future to be `Send`. Nothing in the traits says
-//! so; the compiler infers it from the context's fields, because at this
-//! call site the context is concrete.
+//! `tokio::spawn` needs the future to be `Send`. The capability traits
+//! declare their futures `Send`, and the context is `Send`, so it is.
 //!
 //! ```sh
 //! printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio
@@ -27,10 +26,13 @@ use ctx::DemoCtx;
 use routines::{fanout::Fanout, greeter::Greeter};
 use sans_effort::run::Run;
 use sans_effort_tokio::ctx::TokioCtx;
+use tokio_util::task::LocalPoolHandle;
 
 #[tokio::main]
 async fn main() -> Result<(), tokio::task::JoinError> {
-    let ctx = DemoCtx::new(TokioCtx::stdio());
+    // Workers for pinned children. Neither demo routine spawns one; the pool
+    // is the application's to size, and one thread is plenty here.
+    let ctx = DemoCtx::new(TokioCtx::stdio(LocalPoolHandle::new(1)));
 
     if std::env::args().any(|a| a == "--fanout") {
         tokio::spawn(Fanout::new(ctx).run()).await
@@ -72,9 +74,14 @@ mod tests {
         P: core::future::Future<Output = ()> + Send + 'static,
     {
         let out = Shared::default();
-        tokio::spawn(routine(DemoCtx::new(TokioCtx::new(input, out.clone()))))
-            .await
-            .expect("finished");
+        let pool = LocalPoolHandle::new(1);
+        tokio::spawn(routine(DemoCtx::new(TokioCtx::new(
+            input,
+            out.clone(),
+            pool,
+        ))))
+        .await
+        .expect("finished");
         let written = out.0.lock().expect("unpoisoned").clone();
         String::from_utf8(written).expect("UTF-8")
     }
@@ -83,9 +90,8 @@ mod tests {
     /// anywhere — and its sleeps are tokio's: under a paused clock, three
     /// 50 ms pauses take no wall time and advance virtual time by 150 ms.
     ///
-    /// The traits say nothing about `Send`; `tokio::spawn` accepts the future
-    /// because the concrete context is `Send`, and the compiler works that
-    /// out here.
+    /// `tokio::spawn` accepts the future: the capability traits declare
+    /// their futures `Send`, and the context is `Send`.
     #[tokio::test(start_paused = true)]
     async fn greeter_runs_natively_in_virtual_time() {
         let started = Instant::now();
@@ -122,5 +128,17 @@ mod tests {
 
         assert_eq!(written, "Who are you?\nHi, bob! (#1)\nBye, carol.\n");
         assert_eq!(virtual_start.elapsed().as_millis(), 50);
+    }
+
+    /// Ping-pong's child is spawned with `spawn`, so under tokio it is an
+    /// ordinary task that may run on any worker; the transcript alternates
+    /// because each side waits for the other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ping_pong_spawns_a_task() {
+        let written = transcript(b"", |ctx| routines::ping_pong::PingPong::new(ctx, 3).run()).await;
+        assert_eq!(
+            written,
+            "pong 1\nping 1, pong 1\npong 2\nping 2, pong 2\npong 3\nping 3, pong 3\n"
+        );
     }
 }

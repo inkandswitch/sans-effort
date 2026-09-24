@@ -102,12 +102,15 @@
 //!
 //! # Spelling
 //!
-//! Trait methods are `fn … -> impl Future`, as `sans_effort::run::Run`
-//! spells `step`; implementors write `async fn`. Only one method says
-//! anything about `Send`: [`Spawn::spawn`](spawn::Spawn::spawn), whose child
-//! may move between threads. Otherwise whether a routine can cross threads is
-//! decided where its context is concrete (`Driver::new`, `tokio::spawn`), so
-//! a `!Send` context — an `Rc`-based test mock — works wherever nothing asks.
+//! Trait methods are `fn … -> impl Future<Output = T> + Send`, as
+//! `sans_effort::run::Run` spells `step` but with `Send`; implementors write
+//! `async fn`. Declaring `Send` is what lets a routine generic over its
+//! context prove a child it spawns is `Send`: otherwise each capability's
+//! future is opaque, and nothing in generic code could say it may cross
+//! threads. The price is that a context's futures must be `Send`, so a
+//! context is `Sync`: one that holds a value tied to its thread — a
+//! `JsValue`, an `Rc` — keeps that value behind a task of its own and talks
+//! to it over a channel.
 //!
 //! # `no_std`
 //!

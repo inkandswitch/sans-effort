@@ -11,6 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-channel = { workspace = true }
 sans-effort = { workspace = true }
 sans-effort-effects = { workspace = true }
 

@@ -39,7 +39,7 @@ impl<R> TokioInput<R> {
     }
 }
 
-impl<R: AsyncBufRead + Unpin> ReadLine for TokioInput<R> {
+impl<R: AsyncBufRead + Unpin + Send> ReadLine for TokioInput<R> {
     /// The next line without its line ending (`\n` or `\r\n`); `Closed` at
     /// the end of input; `Failed` on a read error.
     async fn read_line(&self) -> Result<String, ReadLineError> {

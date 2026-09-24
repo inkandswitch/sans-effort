@@ -1,6 +1,9 @@
 //! The fan-out greeter as a JS class.
 
-use crate::{ctx::JsCtx, host::JsHost};
+use crate::{
+    ctx::{Drained, JsCtx},
+    host::JsHost,
+};
 use routines::fanout::Fanout;
 use sans_effort::run::Run;
 use wasm_bindgen::prelude::*;
@@ -11,6 +14,7 @@ use wasm_bindgen::prelude::*;
 #[derive(Debug)]
 pub struct JsFanout {
     routine: Fanout<JsCtx>,
+    drained: Drained,
 }
 
 #[wasm_bindgen(js_class = Fanout)]
@@ -19,8 +23,10 @@ impl JsFanout {
     #[wasm_bindgen(constructor)]
     #[must_use]
     pub fn new(host: JsHost) -> Self {
+        let (ctx, drained) = JsCtx::new(host);
         Self {
-            routine: Fanout::new(JsCtx::new(host)),
+            routine: Fanout::new(ctx),
+            drained,
         }
     }
 
@@ -28,5 +34,6 @@ impl JsFanout {
     /// resolves when it is over.
     pub async fn run(self) {
         self.routine.run().await;
+        self.drained.wait().await;
     }
 }

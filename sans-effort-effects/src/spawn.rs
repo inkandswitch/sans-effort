@@ -41,27 +41,20 @@
 //!
 //! # Two Methods
 //!
-//! [`spawn_pinned`](Spawn::spawn_pinned) starts a child that stays on the
-//! thread that starts it: only the closure must be `Send`, so the child's
-//! future may hold an `Rc` or a value tied to its thread. Every context can
-//! implement it, so a routine that uses it runs anywhere.
-//!
 //! [`spawn`](Spawn::spawn) starts a child that may move between threads
 //! after it starts — work-stealing under tokio — so its future must be
-//! `Send` too. The compiler can prove that only where it can see the child's
-//! future: where the child's context is a concrete type. A routine generic
-//! over its context usually cannot, because each capability call returns an
-//! opaque future whose `Send`-ness depends on the context; such a routine
-//! uses `spawn_pinned`.
+//! `Send`. Every capability in this crate declares its futures `Send`, so a
+//! routine generic over its context proves that with `C::Child: Send + Sync`
+//! (`Sync` because a routine's methods borrow it across `.await`s):
 //!
-//! ```compile_fail,E0277
+//! ```
 //! use core::{ops::ControlFlow, time::Duration};
 //! use sans_effort::run::Run;
 //! use sans_effort_effects::{spawn::Spawn, time::Sleep};
 //!
-//! struct Child<C>(C);
+//! struct Napper<C>(C);
 //!
-//! impl<C: Sleep> Run for Child<C> {
+//! impl<C: Sleep> Run for Napper<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         self.0.sleep(Duration::from_millis(1)).await;
 //!         ControlFlow::Break(())
@@ -76,16 +69,15 @@
 //!     C::Child: Sleep + Send + Sync + 'static,
 //! {
 //!     async fn step(&mut self) -> ControlFlow<()> {
-//!         // error[E0277]: `impl Future<Output = ()>` cannot be sent between
-//!         // threads safely — the future `sleep` returns is opaque here.
-//!         self.0.spawn(|child_ctx| Child(child_ctx).run());
+//!         self.0.spawn(|child_ctx| Napper(child_ctx).run());
 //!         ControlFlow::Break(())
 //!     }
 //! }
 //! ```
 //!
-//! Naming the bound that would allow it, "the future `C::Child::sleep`
-//! returns is `Send`", needs return-type notation, which is not yet stable.
+//! [`spawn_pinned`](Spawn::spawn_pinned) starts a child that stays on the
+//! thread that starts it: only the closure must be `Send`, so the child's
+//! future may hold an `Rc` or a value tied to its thread.
 
 pub mod effect;
 
