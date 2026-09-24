@@ -92,17 +92,23 @@ pub trait Spawn {
     type Child;
 
     /// Start a child that may move between threads after it starts.
-    fn spawn<F, Fut>(&self, f: F)
-    where
+    fn spawn<
         F: FnOnce(Self::Child) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static;
+        Fut: Future<Output = ()> + Send + 'static,
+    >(
+        &self,
+        f: F,
+    );
 
     /// Start a child that stays on the thread that starts it. Its future need
     /// not be `Send`.
-    fn spawn_pinned<F, Fut>(&self, f: F)
-    where
+    fn spawn_pinned<
         F: FnOnce(Self::Child) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + 'static;
+        Fut: Future<Output = ()> + 'static,
+    >(
+        &self,
+        f: F,
+    );
 }
 
 /// A reifying context records the child for the host. The child's context is
@@ -117,21 +123,25 @@ where
 {
     type Child = Ctx<C::Vocabulary>;
 
-    fn spawn<F, Fut>(&self, f: F)
-    where
+    fn spawn<
         F: FnOnce(Self::Child) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
-    {
+    >(
+        &self,
+        f: F,
+    ) {
         let child =
             effect::Child::new(move |outbox| -> BoxedRoutine { Box::pin(f(Ctx::new(outbox))) });
         self.ctx().notify(effect::Spawn(child));
     }
 
-    fn spawn_pinned<F, Fut>(&self, f: F)
-    where
+    fn spawn_pinned<
         F: FnOnce(Self::Child) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
-    {
+    >(
+        &self,
+        f: F,
+    ) {
         let child = effect::PinnedChild::new(move |outbox| -> LocalBoxedRoutine {
             Box::pin(f(Ctx::new(outbox)))
         });

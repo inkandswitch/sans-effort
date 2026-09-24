@@ -9,6 +9,13 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/python/main.py            # alice, bob, then end of input
     python3 demo/python/main.py --fanout   # two waits per batch
     python3 demo/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
+    python3 demo/python/main.py --ping-pong    # a parent and the child it spawns (tag 6)
+    python3 demo/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
+
+With spawning, the loop is a small scheduler: it keeps every machine by
+handle, starts each child it is told about, and — when nothing else is queued
+— resumes every IDLE machine once. A message between two routines never
+passes through here; resuming is how the receiver finds it.
 """
 
 import ctypes
@@ -24,7 +31,7 @@ ABI_VERSION = 0
 FRAME_TELL, FRAME_ASK, FRAME_CLOSED = 1, 2, 3
 OK = AWAITING = 0
 COMPLETE, IDLE = 1, 2
-ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT", -7: "MALFORMED", -8: "STALE"}
+ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT", -7: "MALFORMED", -8: "STALE", -9: "WRONG_THREAD"}
 
 # Reply records: kind, then request id, then payload.
 
@@ -87,7 +94,7 @@ def frames(data: bytes) -> list[tuple[int, bytes]]:
 
 
 class Library:
-    """`abi_version / new / start / reply / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
+    """`abi_version / new / start / reply / resume / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
 
     def __init__(self, path: Path):
         self.lib = ctypes.CDLL(str(path))
@@ -97,6 +104,8 @@ class Library:
         self.lib.greeter_new.restype = ctypes.c_uint64
         self.lib.greeter_new_fanout.restype = ctypes.c_uint64
         self.lib.greeter_new_ticker.restype = ctypes.c_uint64
+        self.lib.greeter_new_ping_pong.restype = ctypes.c_uint64
+        self.lib.greeter_new_front_desk.restype = ctypes.c_uint64
         self.lib.greeter_start.restype = ctypes.c_int32
         self.lib.greeter_start.argtypes = [
             ctypes.c_uint64,
@@ -111,11 +120,19 @@ class Library:
             ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
             ctypes.POINTER(ctypes.c_size_t),
         ]
+        self.lib.greeter_resume.restype = ctypes.c_int32
+        self.lib.greeter_resume.argtypes = self.lib.greeter_start.argtypes
         self.lib.greeter_free.restype = ctypes.c_int32
         self.lib.greeter_buf_free.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
 
     def new(self, kind: str) -> int:
-        return {"greeter": self.lib.greeter_new, "fanout": self.lib.greeter_new_fanout, "ticker": self.lib.greeter_new_ticker}[kind]()
+        return {
+            "greeter": self.lib.greeter_new,
+            "fanout": self.lib.greeter_new_fanout,
+            "ticker": self.lib.greeter_new_ticker,
+            "ping-pong": self.lib.greeter_new_ping_pong,
+            "front-desk": self.lib.greeter_new_front_desk,
+        }[kind]()
 
     def start(self, handle: int) -> tuple[int, bytes]:
         """Run to the first wait; (status, effect bytes) out. Raises on an error code."""
@@ -129,6 +146,13 @@ class Library:
         out_ptr = ctypes.POINTER(ctypes.c_uint8)()
         out_len = ctypes.c_size_t()
         code = self.lib.greeter_reply(handle, record, len(record), ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)
+
+    def resume(self, handle: int) -> tuple[int, bytes]:
+        """Poll again with nothing to deliver; (status, effect bytes) out. Harmless when nothing changed."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_resume(handle, ctypes.byref(out_ptr), ctypes.byref(out_len))
         return self._collect(code, out_ptr, out_len)
 
     def _collect(self, code: int, out_ptr, out_len) -> tuple[int, bytes]:
@@ -146,7 +170,7 @@ class Library:
 
 # ---- the greeter's tag table (the program's, not the ABI's) ---------------
 
-TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line"}
+TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line", 6: "spawned", 7: "spawned_pinned"}
 
 
 def read_line_reply(id_: int, line: str | None) -> bytes:
@@ -185,6 +209,8 @@ def decode(data: bytes) -> list[dict]:
             effects.append({"kind": kind, "millis": r.u64(), "id": r.u64()})
         elif kind == "write_line":
             effects.append({"kind": kind, "text": r.str()})
+        elif kind in ("spawned", "spawned_pinned"):
+            effects.append({"kind": kind, "handle": r.u64()})
         if not r.done():
             raise ValueError(f"frame {n} ({kind}) has {len(payload) - r.at} bytes this host did not expect: its tag table disagrees with the routine's")
     return effects
@@ -195,34 +221,61 @@ def decode(data: bytes) -> list[dict]:
 GREETINGS = {"alice": "Hello", "bob": "Hi", "carol": "Hey"}
 
 
-def drive(lib: Library, handle: int, script: list[str]) -> list[str]:
-    """Perform each effect and reply by id until the routine completes."""
+def drive(lib: Library, root: int, script: list[str]) -> list[str]:
+    """Perform each effect and reply by id; start every child a machine
+    spawns; resume idle machines when nothing else is queued; free each
+    machine as it completes. Every call comes from this one thread, so a
+    pinned child stays on the thread that started it."""
     lines, written, greeted = iter(script), [], 0
-    status, data = lib.start(handle)
-    queue = deque(decode(data))
+    machines: dict[int, int] = {}  # handle → status of its last call
+    queue: deque[tuple[int, dict]] = deque()
 
-    while queue:
-        e = queue.popleft()
-        if e["kind"] == "closed":
-            continue  # nothing to cancel: this host performs each effect before replying
-        if e["kind"] == "write_line":
-            written.append(e["text"])
-            print(e["text"])
-            continue
-        if e["kind"] == "read_line":
-            record = read_line_reply(e["id"], next(lines, None))
-        elif e["kind"] == "lookup":
-            record = reply_str(e["id"], GREETINGS.get(e["name"], "Greetings"))
-        elif e["kind"] == "sleep":
-            time.sleep(e["millis"] / 1000)
-            record = reply_unit(e["id"])
-        elif e["kind"] == "count":
-            greeted += 1
-            record = reply_u64(e["id"], greeted)
-        status, data = lib.reply(handle, record)
-        queue.extend(decode(data))
+    def ran(handle: int, result: tuple[int, bytes]) -> None:
+        status, data = result
+        machines[handle] = status
+        queue.extend((handle, e) for e in decode(data))
+        if status == COMPLETE:
+            lib.free(handle)
 
-    assert status == COMPLETE, f"routine ended with status {status}"
+    ran(root, lib.start(root))
+
+    while True:
+        while queue:
+            handle, e = queue.popleft()
+            if e["kind"] == "closed":
+                continue  # nothing to cancel: this host performs each effect before replying
+            if e["kind"] == "write_line":
+                written.append(e["text"])
+                print(e["text"])
+                continue
+            if e["kind"] in ("spawned", "spawned_pinned"):
+                ran(e["handle"], lib.start(e["handle"]))
+                continue
+            if e["kind"] == "read_line":
+                record = read_line_reply(e["id"], next(lines, None))
+            elif e["kind"] == "lookup":
+                record = reply_str(e["id"], GREETINGS.get(e["name"], "Greetings"))
+            elif e["kind"] == "sleep":
+                time.sleep(e["millis"] / 1000)
+                record = reply_unit(e["id"])
+            elif e["kind"] == "count":
+                greeted += 1
+                record = reply_u64(e["id"], greeted)
+            ran(handle, lib.reply(handle, record))
+
+        # Nothing queued: every idle machine may have a message waiting.
+        # A resume that records nothing and leaves the machine idle made no
+        # progress; a round in which none did is the end, or a stall.
+        progressed = False
+        for handle in [h for h, status in machines.items() if status == IDLE]:
+            before = len(queue)
+            ran(handle, lib.resume(handle))
+            progressed |= len(queue) > before or machines[handle] != IDLE
+        if not progressed:
+            break
+
+    stuck = [h for h, status in machines.items() if status != COMPLETE]
+    assert not stuck, f"stalled: machines {stuck} can never progress"
     return written
 
 
@@ -237,11 +290,8 @@ def find_library() -> Path:
 
 
 if __name__ == "__main__":
-    kind = "fanout" if "--fanout" in sys.argv else "ticker" if "--ticker" in sys.argv else "greeter"
-    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": []}[kind]
+    kinds = ("fanout", "ticker", "ping-pong", "front-desk")
+    kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"]}[kind]
     lib = Library(find_library())
-    handle = lib.new(kind)
-    try:
-        drive(lib, handle, script)
-    finally:
-        lib.free(handle)
+    drive(lib, lib.new(kind), script)

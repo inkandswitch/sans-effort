@@ -31,11 +31,10 @@ impl TokioSpawner {
     /// Build a future with `make` on one of the pool's workers and run it
     /// there, detached. Only `make` crosses threads; the future it returns
     /// never does.
-    pub fn spawn_pinned<F, Fut>(&self, make: F)
-    where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
+    pub fn spawn_pinned<F: FnOnce() -> Fut + Send + 'static, Fut: Future<Output = ()> + 'static>(
+        &self,
+        make: F,
+    ) {
         drop(self.pinned.spawn_pinned(make));
     }
 }

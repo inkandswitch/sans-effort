@@ -75,11 +75,9 @@ struct Parked<E, M> {
     _effect: PhantomData<fn() -> E>,
 }
 
-impl<E, M> Park for Parked<E, M>
+impl<E: HostEffect + 'static, M: FnOnce(Outbox<E>) -> LocalBoxedRoutine> Park for Parked<E, M>
 where
-    E: HostEffect + 'static,
     E::View: Encode,
-    M: FnOnce(Outbox<E>) -> LocalBoxedRoutine,
 {
     fn build(self: Box<Self>) -> Box<dyn Stepped> {
         Box::new(Encoded::new(Machine::new(LocalDriver::from_boxed(
@@ -157,23 +155,26 @@ fn table() -> MutexGuard<'static, Table> {
 /// Register a migrating routine. `make` receives the outbox the routine's
 /// context should write into and returns the routine's future, which must be
 /// `Send`. Returns a handle, never `0` and never reused, valid on any thread.
-pub fn new<E, F, M>(make: M) -> u64
-where
+pub fn new<
     E: HostEffect + Send + 'static,
-    E::View: Encode,
     F: Future<Output = ()> + Send + 'static,
     M: FnOnce(Outbox<E>) -> F,
+>(
+    make: M,
+) -> u64
+where
+    E::View: Encode,
 {
     insert(Box::new(Encoded::new(Machine::from_routine(make))))
 }
 
 /// As [`new`], for a routine already boxed — a spawned child, say — so it is
 /// not boxed twice.
-pub fn new_boxed<E, M>(make: M) -> u64
+pub fn new_boxed<E: HostEffect + Send + 'static, M: FnOnce(Outbox<E>) -> BoxedRoutine>(
+    make: M,
+) -> u64
 where
-    E: HostEffect + Send + 'static,
     E::View: Encode,
-    M: FnOnce(Outbox<E>) -> BoxedRoutine,
 {
     insert(Box::new(Encoded::new(Machine::from_boxed(make))))
 }
@@ -181,11 +182,14 @@ where
 /// Park a pinned routine, unstarted. Its future is built by whichever thread
 /// calls [`start`] for the returned handle, and stays on that thread. Until
 /// then, [`free`] from any thread drops it.
-pub fn park_pinned<E, M>(make: M) -> u64
-where
+pub fn park_pinned<
     E: HostEffect + 'static,
-    E::View: Encode,
     M: FnOnce(Outbox<E>) -> LocalBoxedRoutine + Send + 'static,
+>(
+    make: M,
+) -> u64
+where
+    E::View: Encode,
 {
     let mut table = table();
     let handle = table.issue();

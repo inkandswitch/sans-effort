@@ -9,7 +9,8 @@
 //! with two waits in flight at once. [`ticker::Ticker`] needs only two of
 //! the five traits, which is the point of it. [`ping_pong::PingPong`]
 //! spawns a child and talks to it over plain `async-channel`s: two machines,
-//! and messages that are never effects.
+//! and messages that are never effects. [`front_desk::FrontDesk`] spawns a
+//! clerk per visitor, each replying on a one-shot channel.
 //!
 //! A routine owns a context `C` and asks nothing of it beyond its trait
 //! bounds. It does not know whether `read_line` awaits a tokio channel, pops
@@ -43,6 +44,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod fanout;
+pub mod front_desk;
 pub mod greeter;
 pub mod ping_pong;
 pub mod ticker;

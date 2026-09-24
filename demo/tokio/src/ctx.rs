@@ -99,19 +99,17 @@ impl<R, W: io::Write> WriteLine for DemoCtx<R, W> {
 impl<R: Send + 'static, W: Send + 'static> Spawn for DemoCtx<R, W> {
     type Child = Self;
 
-    fn spawn<F, Fut>(&self, f: F)
-    where
-        F: FnOnce(Self) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
+    fn spawn<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + Send + 'static>(
+        &self,
+        f: F,
+    ) {
         self.tokio.spawner().spawn(f(self.clone()));
     }
 
-    fn spawn_pinned<F, Fut>(&self, f: F)
-    where
-        F: FnOnce(Self) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
+    fn spawn_pinned<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + 'static>(
+        &self,
+        f: F,
+    ) {
         let child = self.clone();
         self.tokio.spawner().spawn_pinned(move || f(child));
     }

@@ -56,6 +56,8 @@
 //!
 //! `Fanout` has the same constructor; its `run` awaits two host promises at
 //! once, so `lookup` and `count` are in flight together.
+//! `PingPong` and `FrontDesk` have it too, and spawn children of their own;
+//! each `run` resolves once every child has finished.
 //!
 //! Compare `../cdylib` and `../python`: there Python cannot poll a Rust
 //! future, so the routine runs behind a `Driver` and Python replies by id. A
@@ -80,5 +82,7 @@
 
 pub mod ctx;
 pub mod fanout;
+pub mod front_desk;
 pub mod greeter;
 pub mod host;
+pub mod ping_pong;

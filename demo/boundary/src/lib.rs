@@ -588,7 +588,7 @@ mod tests {
     #[cfg(feature = "table")]
     mod router {
         use super::*;
-        use routines::ping_pong::PingPong;
+        use routines::{front_desk::FrontDesk, ping_pong::PingPong};
         use sans_effort::{
             driver::{LocalDriver, step::Step},
             reply::{Reply, handle::ReplyHandle},
@@ -633,7 +633,8 @@ mod tests {
 
         /// Run `root` and everything it spawns until nothing can progress:
         /// what each wrote, in order, and whether every machine completed.
-        fn route(root: Driver<Full>) -> (Vec<String>, bool) {
+        fn route(root: Driver<Full>, script: &[&str]) -> (Vec<String>, bool) {
+            let mut lines = script.iter().copied();
             let mut root = Machine::Migrating(root);
             let mut queue: VecDeque<(usize, Full)> =
                 root.start().into_iter().map(|e| (0, e)).collect();
@@ -658,15 +659,27 @@ mod tests {
                         Full::Sleep(Asked { reply, .. }) => {
                             (at, nth(&mut machines, at).reply(reply, ()))
                         }
-                        Full::ReadLine(Asked { reply, .. }) => (
-                            at,
-                            nth(&mut machines, at)
-                                .reply(reply, ReadLine::reply(Err(ReadLineError::Closed))),
-                        ),
-                        Full::Lookup(Asked { reply, .. }) => (
-                            at,
-                            nth(&mut machines, at).reply(reply, String::from("Hello")),
-                        ),
+                        Full::ReadLine(Asked { reply, .. }) => {
+                            let line = lines.next().ok_or(ReadLineError::Closed);
+                            (
+                                at,
+                                nth(&mut machines, at).reply(reply, ReadLine::reply(line)),
+                            )
+                        }
+                        Full::Lookup(Asked {
+                            request: Lookup(name),
+                            reply,
+                        }) => {
+                            let greeting = match name.as_str() {
+                                "alice" => "Hello",
+                                "bob" => "Hi",
+                                _ => "Greetings",
+                            };
+                            (
+                                at,
+                                nth(&mut machines, at).reply(reply, String::from(greeting)),
+                            )
+                        }
                         Full::Count(Asked { reply, .. }) => {
                             (at, nth(&mut machines, at).reply(reply, 0))
                         }
@@ -707,7 +720,7 @@ mod tests {
         #[test]
         fn ping_pong_across_two_machines() {
             let root = Driver::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run());
-            let (written, done) = route(root);
+            let (written, done) = route(root, &[]);
             assert_eq!(
                 written,
                 [
@@ -720,6 +733,17 @@ mod tests {
                 ]
             );
             assert!(done, "the parent returned, so the child's pings ended too");
+        }
+
+        #[test]
+        fn front_desk_greets_in_arrival_order() {
+            let root = Driver::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run());
+            let (written, done) = route(root, &["alice", "bob", "zed"]);
+            assert_eq!(
+                written,
+                ["Hello, alice!", "Hi, bob!", "Greetings, zed!", "Closed."]
+            );
+            assert!(done, "every clerk replied and finished");
         }
     }
 }

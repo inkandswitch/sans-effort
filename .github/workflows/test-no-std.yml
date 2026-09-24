@@ -47,5 +47,5 @@ jobs:
       - name: Check thumbv6m (no CAS, no 64-bit atomics)
         run: cargo check -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
 
-      - name: Check the demo routine and wire crate are no_std (wasm32)
-        run: cargo check -p routines -p greeter_boundary --features sans-effort/spin --target wasm32-unknown-unknown
+      - name: Check the demo routines and vocabulary crate are no_std (wasm32)
+        run: cargo check -p routines -p greeter_boundary --no-default-features --features sans-effort/spin --target wasm32-unknown-unknown

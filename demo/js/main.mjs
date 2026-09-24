@@ -8,13 +8,13 @@
 // routine step by step over the C ABI.
 //
 //   nix develop --command demo:wasm
-//   node demo/js/main.mjs [--fanout]
+//   node demo/js/main.mjs [--fanout | --ping-pong | --front-desk]
 
 import { createRequire } from "node:module";
 
 // `wasm-bindgen --target nodejs` emits CommonJS.
 const require = createRequire(import.meta.url);
-const { Greeter, Fanout } = require("./pkg/greeter_wasm.js");
+const { Greeter, Fanout, PingPong, FrontDesk } = require("./pkg/greeter_wasm.js");
 
 const GREETINGS = { alice: "Hello", bob: "Hi", carol: "Hey" };
 
@@ -32,5 +32,12 @@ function host(script) {
   };
 }
 
-const fanout = process.argv.includes("--fanout");
-await (fanout ? new Fanout(host(["bob", "carol"])) : new Greeter(host(["alice", "bob"]))).run();
+const mode = (flag) => process.argv.includes(flag);
+const routine = mode("--fanout")
+  ? new Fanout(host(["bob", "carol"]))
+  : mode("--ping-pong")
+    ? new PingPong(host([]))
+    : mode("--front-desk")
+      ? new FrontDesk(host(["alice", "bob", "carol"]))
+      : new Greeter(host(["alice", "bob"]));
+await routine.run();

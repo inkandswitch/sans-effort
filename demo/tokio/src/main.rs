@@ -14,6 +14,8 @@
 //! ```sh
 //! printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio
 //! cargo run -p greeter_tokio -- --fanout    # two waits at a time
+//! cargo run -p greeter_tokio -- --ping-pong # a parent and the child it spawns
+//! printf 'alice\nbob\n' | cargo run -p greeter_tokio -- --front-desk
 //! ```
 //!
 //! The tests at the bottom run the same routines under tokio's paused clock,
@@ -23,19 +25,24 @@
 mod ctx;
 
 use ctx::DemoCtx;
-use routines::{fanout::Fanout, greeter::Greeter};
+use routines::{fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong};
 use sans_effort::run::Run;
 use sans_effort_tokio::ctx::TokioCtx;
 use tokio_util::task::LocalPoolHandle;
 
 #[tokio::main]
 async fn main() -> Result<(), tokio::task::JoinError> {
-    // Workers for pinned children. Neither demo routine spawns one; the pool
-    // is the application's to size, and one thread is plenty here.
+    // Workers for pinned children — the front desk's clerks. The pool is the
+    // application's to size; one thread is plenty here.
     let ctx = DemoCtx::new(TokioCtx::stdio(LocalPoolHandle::new(1)));
+    let mode = |flag: &str| std::env::args().any(|a| a == flag);
 
-    if std::env::args().any(|a| a == "--fanout") {
+    if mode("--fanout") {
         tokio::spawn(Fanout::new(ctx).run()).await
+    } else if mode("--ping-pong") {
+        tokio::spawn(PingPong::new(ctx, 3).run()).await
+    } else if mode("--front-desk") {
+        tokio::spawn(FrontDesk::new(ctx).run()).await
     } else {
         tokio::spawn(Greeter::new(ctx).run()).await
     }
@@ -68,11 +75,13 @@ mod tests {
     }
 
     /// Runs `routine` on a context over `input`, and returns what it wrote.
-    async fn transcript<F, P>(input: &'static [u8], routine: F) -> String
-    where
+    async fn transcript<
         F: FnOnce(DemoCtx<&'static [u8], Shared>) -> P,
         P: core::future::Future<Output = ()> + Send + 'static,
-    {
+    >(
+        input: &'static [u8],
+        routine: F,
+    ) -> String {
         let out = Shared::default();
         let pool = LocalPoolHandle::new(1);
         tokio::spawn(routine(DemoCtx::new(TokioCtx::new(
@@ -135,10 +144,18 @@ mod tests {
     /// because each side waits for the other.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ping_pong_spawns_a_task() {
-        let written = transcript(b"", |ctx| routines::ping_pong::PingPong::new(ctx, 3).run()).await;
+        let written = transcript(b"", |ctx| PingPong::new(ctx, 3).run()).await;
         assert_eq!(
             written,
             "pong 1\nping 1, pong 1\npong 2\nping 2, pong 2\npong 3\nping 3, pong 3\n"
         );
+    }
+
+    /// The front desk's clerks are pinned: each runs on the context's local
+    /// pool, while the receptionist is an ordinary task.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn front_desk_pins_its_clerks() {
+        let written = transcript(b"alice\nbob\ncarol\n", |ctx| FrontDesk::new(ctx).run()).await;
+        assert_eq!(written, "Hello, alice!\nHi, bob!\nHey, carol!\nClosed.\n");
     }
 }

@@ -103,19 +103,17 @@ impl WriteLine for JsCtx {
 impl Spawn for JsCtx {
     type Child = Self;
 
-    fn spawn<F, Fut>(&self, f: F)
-    where
-        F: FnOnce(Self) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
+    fn spawn<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + Send + 'static>(
+        &self,
+        f: F,
+    ) {
         spawn_local(f(self.clone()));
     }
 
-    fn spawn_pinned<F, Fut>(&self, f: F)
-    where
-        F: FnOnce(Self) -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
+    fn spawn_pinned<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + 'static>(
+        &self,
+        f: F,
+    ) {
         spawn_local(f(self.clone()));
     }
 }

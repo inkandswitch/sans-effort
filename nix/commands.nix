@@ -46,10 +46,11 @@ in {
     ${cargo} check -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
 
     echo ""
-    echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
+    echo "===> Checking the demo routines and their vocabulary crate are no_std too (wasm32)..."
     # Neither crate picks a lock — that is the binary's decision — so checking
-    # them as leaves means standing in for the binary here.
-    ${cargo} check -p routines -p greeter_boundary --features sans-effort/spin --target wasm32-unknown-unknown
+    # them as leaves means standing in for the binary here. No default
+    # features: the vocabulary's `table` feature (spawning) needs std.
+    ${cargo} check -p routines -p greeter_boundary --no-default-features --features sans-effort/spin --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"
@@ -70,19 +71,20 @@ in {
     echo "demo/js/pkg ready"
   '';
 
-  "demo" = cmd "Run the greeter natively on tokio and on Node, and drive it from Python and Java over the C ABI; transcripts must agree" ''
+  "demo" = cmd "Run the demo routines natively on tokio and on Node, and drive them from Python and Java over the C ABI; transcripts must agree" ''
     set -e
 
     echo "===> Building the cdylib and the wasm module..."
     ${cargo} build -q -p greeter_cdylib
     demo:wasm
 
-    for variant in "" "--fanout"; do
-      if [ -z "$variant" ]; then
-        script='alice\nbob\nquit\n'
-      else
-        script='bob\ncarol\n'
-      fi
+    for variant in "" "--fanout" "--ping-pong" "--front-desk"; do
+      case "$variant" in
+        "") script='alice\nbob\nquit\n' ;;
+        --fanout) script='bob\ncarol\n' ;;
+        --ping-pong) script="" ;;
+        --front-desk) script='alice\nbob\ncarol\n' ;;
+      esac
 
       echo ""
       echo "===> tokio, natively (no driver) $variant"

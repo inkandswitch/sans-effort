@@ -1,4 +1,5 @@
-//! C ABI over the greeter: `abi_version`, `new`, `start`, `reply`, `free`.
+//! C ABI over the greeter: `abi_version`, `new`, `start`, `reply`, `resume`,
+//! `free`.
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
 //! table and the type check on replies are `sans-effort-host`. This crate
@@ -11,7 +12,9 @@
 //! host that speaks it with a byte buffer and no library.
 
 use greeter_boundary::{Full, Quiet};
-use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
+use routines::{
+    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ticker::Ticker,
+};
 use sans_effort::run::Run;
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
@@ -46,6 +49,20 @@ pub extern "C" fn greeter_new_fanout() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_ticker() -> u64 {
     table::new(|outbox| Ticker::new(Ctx::<Quiet>::new(outbox), 3).run())
+}
+
+/// Create three rounds of ping-pong. Its first batch spawns a child (tag 6):
+/// start it, then resume whichever of the two is `IDLE` until both complete.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_ping_pong() -> u64 {
+    table::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run())
+}
+
+/// Create a front desk: it reads names and spawns a pinned clerk per name
+/// (tag 7). Start each clerk on the thread that will drive it from then on.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_front_desk() -> u64 {
+    table::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
 }
 
 /// Run the routine to its first wait and receive the effects it recorded plus

@@ -27,9 +27,8 @@ impl<C> PingPong<C> {
     }
 }
 
-impl<C> Run for PingPong<C>
+impl<C: Spawn + WriteLine> Run for PingPong<C>
 where
-    C: Spawn + WriteLine,
     C::Child: WriteLine + Send + 'static,
 {
     async fn step(&mut self) -> ControlFlow<()> {
