@@ -14,7 +14,7 @@ rust-version.workspace = true
 sans-effort = { workspace = true }
 sans-effort-effects = { workspace = true }
 sans-effort-host = { workspace = true, optional = true }
-routines = { version = "0.1.0", path = "../routines" }
+routines = { version = "0.1.0", path = "../../routines" }
 
 [features]
 default = ["table"]

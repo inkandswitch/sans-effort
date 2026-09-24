@@ -26,7 +26,7 @@ Everything but `table` is `no_std` + `alloc`; the table needs a process-wide `st
 
 ## Two Kinds of Binding
 
-The raw path: a `cdylib` exports the functions over `table`, and any language that can `dlopen` and hand over a byte buffer drives the routine, decoding effects from a tag table the routine's author documents. The generated path: a `PyO3` or Rustler class holds a `Machine` directly and converts `View`s to native objects — no handle table, no codec, a per-language toolchain. (A JS host with wasm-bindgen usually needs neither: the event loop is an executor, so a routine runs there natively, as `demo/wasm` shows.) The routine cannot tell which it is under.
+The raw path: a `cdylib` exports the functions over `table`, and any language that can `dlopen` and hand over a byte buffer drives the routine, decoding effects from a tag table the routine's author documents. The generated path: a `PyO3` or Rustler class holds a `Machine` directly and converts `View`s to native objects — no handle table, no codec, a per-language toolchain. (A JS host with wasm-bindgen usually needs neither: the event loop is an executor, so a routine runs there natively, as `demo/native/wasm` shows.) The routine cannot tell which it is under.
 
 ## License
 

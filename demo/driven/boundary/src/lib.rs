@@ -13,7 +13,7 @@
 //! else.
 //! Stepping, the handle table, and the type check on replies are
 //! `sans-effort-host`; the `extern "C"` surface is the _binding_ over both,
-//! in `../cdylib`. (`../wasm` needs neither: JS is a runtime host.)
+//! in `../cdylib`. (`../../native/wasm` needs neither: JS is a runtime host.)
 //!
 //! ```text
 //!   routines               Greeter<C>: Step; Count, Lookup

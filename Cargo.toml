@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
-  "demo/boundary",
-  "demo/cdylib",
+  "demo/driven/boundary",
+  "demo/driven/cdylib",
   "demo/routines",
-  "demo/tokio",
-  "demo/wasm",
+  "demo/native/tokio",
+  "demo/native/wasm",
   "sans-effort",
   "sans-effort-effects",
   "sans-effort-host",

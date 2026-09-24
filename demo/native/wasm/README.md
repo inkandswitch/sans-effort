@@ -12,8 +12,8 @@ The greeter in Node or a browser, with no driver. JS is a runtime host like toki
 ## Build
 
 ```sh
-nix develop --command demo:wasm        # cargo build --target wasm32 + wasm-bindgen --target nodejs → ../js/pkg
-node ../js/main.mjs                    # or --fanout
+nix develop --command demo:wasm   # cargo build --target wasm32 + wasm-bindgen --target nodejs → demo/native/js/pkg
+node demo/native/js/main.mjs     # or --fanout, --ping-pong, --front-desk, --ring
 ```
 
 For a page, run `wasm-bindgen --target web` instead and `await init()` before constructing.

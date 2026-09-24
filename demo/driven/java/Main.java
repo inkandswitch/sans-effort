@@ -32,11 +32,11 @@
 /// machine's writes after its call returns, so writes from two machines polled
 /// at once would interleave by timing.
 ///
-/// Compare `../js/main.mjs`, where the event loop is an executor and the same
+/// Compare `../../native/js/main.mjs`, where the event loop is an executor and the same
 /// routine runs natively.
 ///
 ///     cargo build -p greeter_cdylib
-///     java --enable-native-access=ALL-UNNAMED demo/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring] [--trace]
+///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring] [--trace]
 ///
 /// `--trace` logs every call to stderr — thread, call, handle, status — to
 /// show which worker polled what.

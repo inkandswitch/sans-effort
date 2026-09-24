@@ -18,7 +18,7 @@ async-channel = { workspace = true }
 sans-effort = { workspace = true, features = ["std"] }
 sans-effort-effects = { workspace = true, features = ["std"] }
 js-sys = { workspace = true }
-routines = { version = "0.1.0", path = "../routines" }
+routines = { version = "0.1.0", path = "../../routines" }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 

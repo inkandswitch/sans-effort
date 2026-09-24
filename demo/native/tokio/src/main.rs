@@ -5,7 +5,7 @@
 //! future: `tokio::spawn` polls it, `tokio::time::sleep` wakes it, stdin
 //! delivers its lines. There is no effect enum, no reply loop, no host — the
 //! routine _is_ the task.
-//! Compare `../cdylib` and `../wasm`, where the identical `Greeter` runs
+//! Compare `../../driven/cdylib` and `../wasm`, where the identical `Greeter` runs
 //! behind a `Driver` because the poller is not Rust.
 //!
 //! `tokio::spawn` needs the future to be `Send`. The capability traits

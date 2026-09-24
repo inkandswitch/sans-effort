@@ -59,13 +59,13 @@
 //! `PingPong` and `FrontDesk` have it too, and spawn children of their own;
 //! each `run` resolves once every child has finished.
 //!
-//! Compare `../cdylib` and `../python`: there Python cannot poll a Rust
+//! Compare `../../driven/cdylib` and `../../driven/python`: there Python cannot poll a Rust
 //! future, so the routine runs behind a `Driver` and Python replies by id. A
 //! JS host _could_ be driven the same way — hold a `Machine` in a
 //! `#[wasm_bindgen]` class and step it — and would want to be for a
 //! deterministic scheduler or a replay harness; the exploration this library
 //! came from has one. For running a routine in a page, the native form is
-//! the idiomatic one, and it is what `demo/js/main.mjs` uses.
+//! the idiomatic one, and it is what `demo/native/js/main.mjs` uses.
 //!
 //! # `Send`
 //!

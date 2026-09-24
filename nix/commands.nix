@@ -62,13 +62,13 @@ in {
     ${cargo} test --workspace --all-features -- --nocapture
   '';
 
-  "demo:wasm" = cmd "Build the wasm-bindgen module and generate the JS glue into demo/js/pkg" ''
+  "demo:wasm" = cmd "Build the wasm-bindgen module and generate the JS glue into demo/native/js/pkg" ''
     set -e
     ${cargo} build -q -p greeter_wasm --release --target wasm32-unknown-unknown
-    mkdir -p demo/js/pkg
-    ${wasm-bindgen} --target nodejs --out-dir demo/js/pkg \
+    mkdir -p demo/native/js/pkg
+    ${wasm-bindgen} --target nodejs --out-dir demo/native/js/pkg \
       target/wasm32-unknown-unknown/release/greeter_wasm.wasm
-    echo "demo/js/pkg ready"
+    echo "demo/native/js/pkg ready"
   '';
 
   "demo" = cmd "Run the demo routines natively on tokio and on Node, and drive them from Python and Java over the C ABI; transcripts must agree" ''
@@ -93,15 +93,15 @@ in {
 
       echo ""
       echo "===> Python host $variant"
-      ${python} demo/python/main.py $variant | tee /tmp/sans-effort-python.txt
+      ${python} demo/driven/python/main.py $variant | tee /tmp/sans-effort-python.txt
 
       echo ""
       echo "===> Node, natively (no driver) $variant"
-      ${node} demo/js/main.mjs $variant | tee /tmp/sans-effort-js.txt
+      ${node} demo/native/js/main.mjs $variant | tee /tmp/sans-effort-js.txt
 
       echo ""
       echo "===> Java host (Panama, C ABI) $variant"
-      ${java} --enable-native-access=ALL-UNNAMED demo/java/Main.java $variant | tee /tmp/sans-effort-java.txt
+      ${java} --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java $variant | tee /tmp/sans-effort-java.txt
 
       echo ""
       diff /tmp/sans-effort-rust.txt /tmp/sans-effort-python.txt
@@ -112,7 +112,7 @@ in {
 
     echo ""
     echo "===> Python host, a Quiet machine (ticker): only tags 4 and 5 can appear"
-    ${python} demo/python/main.py --ticker
+    ${python} demo/driven/python/main.py --ticker
   '';
 
   "ci:quick" = cmd "Run quick CI checks (fmt, clippy, test)" ''

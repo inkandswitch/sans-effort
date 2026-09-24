@@ -6,12 +6,12 @@ table (which byte means which effect) is the one thing that is the program's
 rather than the ABI's, and it is `TAGS` below.
 
     cargo build -p greeter_cdylib
-    python3 demo/python/main.py            # alice, bob, then end of input
-    python3 demo/python/main.py --fanout   # two waits per batch
-    python3 demo/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
-    python3 demo/python/main.py --ping-pong    # a parent and the child it spawns (tag 6)
-    python3 demo/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
-    python3 demo/python/main.py --ring         # 16 machines passing a counter: woke frames only
+    python3 demo/driven/python/main.py            # alice, bob, then end of input
+    python3 demo/driven/python/main.py --fanout   # two waits per batch
+    python3 demo/driven/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
+    python3 demo/driven/python/main.py --ping-pong    # a parent and the child it spawns (tag 6)
+    python3 demo/driven/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
+    python3 demo/driven/python/main.py --ring         # 16 machines passing a counter: woke frames only
 
 With spawning, the loop is a small scheduler: it keeps every machine by
 handle, resumes each child it is told about to begin it, and each machine a `woke`
@@ -288,7 +288,7 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
 
 
 def find_library() -> Path:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     for profile in ("debug", "release"):
         for name in ("libgreeter_cdylib.so", "libgreeter_cdylib.dylib", "greeter_cdylib.dll"):
             p = root / "target" / profile / name

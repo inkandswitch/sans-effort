@@ -8,7 +8,7 @@
 // routine step by step over the C ABI.
 //
 //   nix develop --command demo:wasm
-//   node demo/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring]
+//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring]
 
 import { createRequire } from "node:module";
 

@@ -25,7 +25,7 @@
 //! ```text
 //!   Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine>: Step
 //!        │
-//!        ├── C = TokioCtx   (../tokio)        tokio futures; no driver
+//!        ├── C = TokioCtx   (../native/tokio) tokio futures; no driver
 //!        ├── C = Ctx<E>     (effects stdlib)  records effects; a Driver polls
 //!        └── C = Recording  (tests)           ready at once; one poll
 //! ```
