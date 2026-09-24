@@ -3,7 +3,8 @@
 //!
 //! `abi_version()`, then `new(routine) → handle`, `start(handle) → effects`,
 //! `reply(handle, record) → effects` — or `resume(handle) → effects` for a
-//! routine waiting on something in the process — then `free(handle)`. A reply record is
+//! routine waiting on something in the process, which a `woke` frame in some
+//! call's output (or `wakes()`) names — then `free(handle)`. A reply record is
 //! `kind · id · payload`, where the id came out on the wire with the effect
 //! and the kind is one of the reply menu's four
 //! ([`Kind`](sans_effort::reply::kind::Kind)).
@@ -39,6 +40,7 @@
 //!   #[no_mangle] start(h, out*)    ─────────▶  table::start(h)          -> Result<(Vec<u8>, Status), Error>
 //!   #[no_mangle] reply(h, in*, out*) ───────▶  table::reply(h, &[u8])   -> Result<(Vec<u8>, Status), Error>
 //!   #[no_mangle] resume(h, out*)   ─────────▶  table::resume(h)         -> Result<(Vec<u8>, Status), Error>
+//!   #[no_mangle] wakes(out*)       ─────────▶  table::wakes()           -> Vec<u8>
 //!                                  ◀─────────  (bytes, status)   — app writes the out-pointers
 //! ```
 //!

@@ -6,7 +6,8 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
   routines/  the routines, one per module: greeter (the conversation), fanout (two
              waits at once), ticker (needs only Sleep + WriteLine), ping_pong (spawns
              a child and plays over two async-channels), front_desk (spawns a pinned
-             clerk per name; each replies on a one-shot channel). no_std.
+             clerk per name; each replies on a one-shot channel), ring (16 routines
+             pass a counter 4000 hops; the cost of a hop). no_std.
              traits.rs: the demo's own capabilities, Count and Lookup, each with
              its effect and its Ctx impl beside it (the orphan rule puts them
              there), like a module of the standard library. The routines
@@ -32,11 +33,14 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
              allowing unsafe.
   python/    a ctypes host that speaks ABI.md with a byte buffer and no library;
              the smallest loop: perform each effect, then reply; start spawned
-             children; resume IDLE machines when nothing else is queued.
+             children; resume each machine a woke frame names; ask wakes() when
+             nothing is queued.
   java/      a Panama (java.lang.foreign) host: the same ABI, downcalls only, no JNI.
-             Shaped like a production host: asks run on virtual threads, replies
-             arrive as effects finish, closed frames cancel, one driver thread calls in
-             — and so starts and keeps every pinned child.
+             Shaped like a production host, and parallel: a pool of driver threads
+             polls different machines at once (migrating machines move between them,
+             pinned ones stay on the worker that started them); asks run on virtual
+             threads; woke frames schedule resumes; closed frames cancel. --trace
+             logs which thread polled what.
 
   wasm/      the second native path. JsCtx implements the traits by calling a JS
              object the caller supplies, awaiting Promises; the event loop is the
@@ -56,4 +60,4 @@ nix develop --command demo:wasm && node demo/js/main.mjs           # wasm-bindge
 nix develop --command demo                                         # all four, diffed
 ```
 
-`--fanout` on any host runs the two-waits-per-batch variant; `--ping-pong` and `--front-desk` run the spawning routines; `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
+`--fanout` on any host runs the two-waits-per-batch variant; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.

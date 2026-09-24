@@ -33,11 +33,14 @@
 //!   .await → Ready("bob")  ◀────── take mail[7]         ◀──resume──
 //! ```
 //!
-//! There is no waker. `Pending` from the routine means "a request is
-//! outstanding" — or, if none is, [`Status::Idle`]: the routine is waiting on
-//! something inside the process, such as a channel another routine sends on.
-//! Nothing wakes it; the host polls it again with
-//! [`resume`](Driver::resume).
+//! `Pending` from the routine means "a request is outstanding" — or, if none
+//! is, [`Status::Idle`]: the routine is waiting on something inside the
+//! process, such as a channel another routine sends on. Each driver polls
+//! with a waker of its own; when whatever the routine waits on calls it, the
+//! driver calls the hook set by [`on_wake`](Driver::on_wake) — once per wait
+//! — and whoever set it polls again with [`resume`](Driver::resume). A host
+//! layer turns that into "machine 9 can run"; with no hook, a wake is simply
+//! not reported, and resuming idle machines still works.
 //!
 //! # Threading
 //!
@@ -65,6 +68,7 @@ pub mod step;
 mod mail;
 mod stepper;
 mod sync;
+mod wake;
 
 use self::{outbox::Outbox, status::Status, step::Step, stepper::Stepper};
 use crate::reply::{Reply, handle::ReplyHandle};
@@ -72,10 +76,17 @@ use alloc::boxed::Box;
 use core::{future::Future, pin::Pin};
 
 /// A routine's future, boxed and `Send`: what a [`Driver`] steps.
+///
+/// Any `Future<Output = ()> + Send + 'static` fits; in practice it is a
+/// routine's `run()`. The same type as `futures-core`'s
+/// `BoxFuture<'static, ()>`, so the two interchange freely.
 pub type BoxedRoutine = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// A routine's future, boxed, not necessarily `Send`: what a [`LocalDriver`]
 /// steps.
+///
+/// Any `Future<Output = ()> + 'static` fits. The same type as
+/// `futures-core`'s `LocalBoxFuture<'static, ()>`.
 pub type LocalBoxedRoutine = Pin<Box<dyn Future<Output = ()>>>;
 
 /// One suspended routine plus the outbox its context writes into.
@@ -157,6 +168,15 @@ impl<E> Driver<E> {
         self.stepper.poll()
     }
 
+    /// Call `hook` when the routine, suspended with nothing outstanding for
+    /// the host, may be able to progress — something it waits on in the
+    /// process has changed. Called at most once per poll, possibly from
+    /// another thread, possibly during another machine's poll; it should only
+    /// note the fact. Replaces any earlier hook.
+    pub fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
+        self.stepper.on_wake(alloc::boxed::Box::new(hook));
+    }
+
     /// What the last poll reported.
     #[must_use]
     pub const fn status(&self) -> Status {
@@ -230,6 +250,11 @@ impl<E> LocalDriver<E> {
         self.stepper.poll()
     }
 
+    /// As [`Driver::on_wake`].
+    pub fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
+        self.stepper.on_wake(alloc::boxed::Box::new(hook));
+    }
+
     /// What the last poll reported.
     #[must_use]
     pub const fn status(&self) -> Status {
@@ -261,7 +286,7 @@ mod tests {
     use alloc::string::String;
     use core::{
         ops::ControlFlow,
-        task::{Context, Poll},
+        task::{Context, Poll, Waker},
     };
 
     #[derive(Debug)]
@@ -624,5 +649,200 @@ mod tests {
         assert_eq!(said, ["hi 1"]);
         assert!(driver.is_finished());
         assert_eq!(seen.get(), 1);
+    }
+
+    /// A queue that stores the waiter's waker when empty and calls it on the
+    /// next send — the part of a real channel that matters here.
+    #[derive(Clone, Default)]
+    struct Signal(
+        std::sync::Arc<std::sync::Mutex<(alloc::collections::VecDeque<String>, Option<Waker>)>>,
+    );
+
+    impl Signal {
+        fn send(&self, message: &str) {
+            let waiter = {
+                let mut inner = self.0.lock().expect("signal");
+                inner.0.push_back(String::from(message));
+                inner.1.take()
+            };
+            if let Some(waker) = waiter {
+                waker.wake();
+            }
+        }
+
+        fn waiter(&self) -> Option<Waker> {
+            self.0.lock().expect("signal").1.clone()
+        }
+
+        fn recv(&self) -> impl Future<Output = String> + '_ {
+            core::future::poll_fn(|cx| {
+                let mut inner = self.0.lock().expect("signal");
+                inner.0.pop_front().map_or_else(
+                    || {
+                        inner.1 = Some(cx.waker().clone());
+                        Poll::Pending
+                    },
+                    Poll::Ready,
+                )
+            })
+        }
+    }
+
+    /// Says every message it receives, `n` times.
+    struct Hearer {
+        outbox: Outbox<Effect>,
+        signal: Signal,
+        n: u32,
+    }
+
+    impl Run for Hearer {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let message = self.signal.recv().await;
+            self.outbox.tell(Effect::Say(message));
+            self.n -= 1;
+            if self.n == 0 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        }
+    }
+
+    fn counting() -> (
+        std::sync::Arc<core::sync::atomic::AtomicUsize>,
+        impl Fn() + Send + Sync + 'static,
+    ) {
+        let count = std::sync::Arc::new(core::sync::atomic::AtomicUsize::new(0));
+        let hook = {
+            let count = std::sync::Arc::clone(&count);
+            move || {
+                count.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        (count, hook)
+    }
+
+    fn woken(count: &core::sync::atomic::AtomicUsize) -> usize {
+        count.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_wake_is_reported_once_per_wait() {
+        let signal = Signal::default();
+        let mut hearer = Driver::new({
+            let signal = signal.clone();
+            move |outbox| {
+                Hearer {
+                    outbox,
+                    signal,
+                    n: 2,
+                }
+                .run()
+            }
+        });
+        let (count, hook) = counting();
+        hearer.on_wake(hook);
+
+        assert!(hearer.start().is_empty());
+        assert_eq!(hearer.status(), Status::Idle);
+        let waker = signal.waiter().expect("the hearer is waiting");
+        waker.wake_by_ref();
+        waker.wake_by_ref();
+        assert_eq!(
+            woken(&count),
+            1,
+            "the second wake before a poll is not news"
+        );
+
+        assert!(
+            hearer.resume().is_empty(),
+            "woken, but nothing sent: harmless"
+        );
+        signal.send("once");
+        assert_eq!(woken(&count), 2, "after a poll, a wake is news again");
+        let (said, _) = split(hearer.resume());
+        assert_eq!(said, ["once"]);
+    }
+
+    /// Relays what the host tells it to `signal`, during its own poll.
+    struct Teller {
+        outbox: Outbox<Effect>,
+        signal: Signal,
+    }
+
+    impl Run for Teller {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let message = self.outbox.ask(Effect::Ask).await;
+            self.signal.send(&message);
+            ControlFlow::Break(())
+        }
+    }
+
+    #[test]
+    fn a_send_during_another_machines_poll_wakes_the_receiver() {
+        let signal = Signal::default();
+        let mut hearer = Driver::new({
+            let signal = signal.clone();
+            move |outbox| {
+                Hearer {
+                    outbox,
+                    signal,
+                    n: 1,
+                }
+                .run()
+            }
+        });
+        let mut teller = Driver::new({
+            let signal = signal.clone();
+            move |outbox| Teller { outbox, signal }.run()
+        });
+        let (count, hook) = counting();
+        hearer.on_wake(hook);
+
+        assert!(hearer.start().is_empty());
+        let (_, handles) = split(teller.start());
+        assert_eq!(woken(&count), 0);
+        drop(teller.reply(one(handles), String::from("hi")));
+        assert_eq!(woken(&count), 1, "woken inside the teller's poll");
+
+        let (said, _) = split(hearer.resume());
+        assert_eq!(said, ["hi"]);
+        assert!(hearer.is_finished());
+    }
+
+    /// Wakes itself once and suspends — a yield — then finishes.
+    struct Yielder(Outbox<Effect>);
+
+    impl Run for Yielder {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let mut yielded = false;
+            core::future::poll_fn(|cx| {
+                if yielded {
+                    Poll::Ready(())
+                } else {
+                    yielded = true;
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            })
+            .await;
+            self.0.tell(Effect::Say(String::from("again")));
+            ControlFlow::Break(())
+        }
+    }
+
+    #[test]
+    fn a_routine_that_wakes_itself_reports_itself() {
+        let mut driver = Driver::new(|outbox| Yielder(outbox).run());
+        let (count, hook) = counting();
+        driver.on_wake(hook);
+
+        assert!(driver.start().is_empty());
+        assert_eq!(driver.status(), Status::Idle);
+        assert_eq!(woken(&count), 1, "a wake during its own poll is not lost");
+
+        let (said, _) = split(driver.resume());
+        assert_eq!(said, ["again"]);
+        assert!(driver.is_finished());
     }
 }

@@ -12,19 +12,30 @@
 //! [`Error::WrongThread`]: nothing changes, and the host routes the call where
 //! it belongs.
 //!
+//! A machine waiting on something inside the process — a channel another
+//! routine sends on — is `IDLE`. When whatever it waits on wakes it, the
+//! table reports its handle as a [`FRAME_WOKE`] frame: at the end of the
+//! output of the call whose poll caused the wake — the sender's, typically —
+//! or, for a wake outside any call (a sender dropped by [`free`], a panic),
+//! in the output of [`wakes`]. The host resumes that machine when it chooses.
+//!
 //! A panicking routine is caught, removed, and reported as
 //! [`Error::Panicked`]; the host must not touch that handle again. Handles
 //! are never `0` and never reused, so a stale one is [`Error::BadHandle`]
 //! rather than a fault.
 
 use crate::{
+    contract::FRAME_WOKE,
     encoded::Encoded,
     error::Error,
     machine::{Drive, Machine},
     status::Status,
 };
 use sans_effort::{
-    boundary::{codec::Encode, host_effect::HostEffect},
+    boundary::{
+        codec::{Encode, Writer},
+        host_effect::HostEffect,
+    },
     driver::{BoxedRoutine, LocalBoxedRoutine, LocalDriver, outbox::Outbox},
 };
 use std::{
@@ -45,6 +56,7 @@ trait Stepped {
     fn start(&mut self) -> Result<(Vec<u8>, Status), Error>;
     fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error>;
     fn resume(&mut self) -> Result<(Vec<u8>, Status), Error>;
+    fn on_wake(&self, hook: Box<dyn Fn() + Send + Sync>);
 }
 
 impl<E: HostEffect, D: Drive<E>> Stepped for Encoded<E, D>
@@ -61,6 +73,10 @@ where
 
     fn resume(&mut self) -> Result<(Vec<u8>, Status), Error> {
         Encoded::resume(self)
+    }
+
+    fn on_wake(&self, hook: Box<dyn Fn() + Send + Sync>) {
+        Encoded::on_wake(self, hook);
     }
 }
 
@@ -143,6 +159,74 @@ static TABLE: LazyLock<Mutex<Table>> = LazyLock::new(|| Mutex::new(Table::new())
 thread_local! {
     /// This thread's started pinned machines.
     static LOCAL: RefCell<HashMap<u64, LocalEntry>> = RefCell::new(HashMap::new());
+
+    /// The machines woken during the call this thread is making, if it is
+    /// making one: they are reported in that call's output.
+    static CALL: RefCell<Option<Vec<u64>>> = const { RefCell::new(None) };
+}
+
+/// Machines woken outside any call, until [`wakes`] reports them.
+static WAKES: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+/// The hook every machine's driver calls when it wakes: note `handle` for the
+/// current call, or for [`wakes`] if there is none.
+fn woke(handle: u64) {
+    let noted = CALL.with(|call| {
+        call.borrow_mut()
+            .as_mut()
+            .map(|woken| woken.push(handle))
+            .is_some()
+    });
+    if !noted {
+        WAKES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(handle);
+    }
+}
+
+/// Run one call, collecting the wakes its poll causes: appended to its output
+/// as [`FRAME_WOKE`] frames, or — if it fails, and so has no output — queued
+/// for [`wakes`].
+fn reporting_wakes(
+    call: impl FnOnce() -> Result<(Vec<u8>, Status), Error>,
+) -> Result<(Vec<u8>, Status), Error> {
+    let outer = CALL.with(|woken| woken.replace(Some(Vec::new())));
+    let result = call();
+    let woken = CALL.with(|woken| woken.replace(outer)).unwrap_or_default();
+
+    match result {
+        Ok((mut bytes, status)) => {
+            bytes.extend(woke_frames(&woken));
+            Ok((bytes, status))
+        }
+        Err(e) => {
+            WAKES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(woken);
+            Err(e)
+        }
+    }
+}
+
+fn woke_frames(handles: &[u64]) -> Vec<u8> {
+    let mut w = Writer::new();
+    for handle in handles {
+        w.u8(FRAME_WOKE);
+        w.bytes(&handle.to_le_bytes());
+    }
+    w.finish()
+}
+
+/// The machines woken outside any call since the last time — a receiver whose
+/// sender was dropped by [`free`], say — as [`FRAME_WOKE`] frames. Call it
+/// when there is nothing else to do; a host that finds no calls to make, no
+/// requests outstanding, and nothing here has reached the end, or a stall.
+#[must_use]
+pub fn wakes() -> Vec<u8> {
+    let woken = core::mem::take(&mut *WAKES.lock().unwrap_or_else(PoisonError::into_inner));
+    woke_frames(&woken)
 }
 
 /// The table, with a poisoned lock recovered: a panic while holding it can
@@ -206,6 +290,7 @@ where
 fn insert(machine: Box<dyn Stepped + Send>) -> u64 {
     let mut table = table();
     let handle = table.issue();
+    machine.on_wake(Box::new(move || woke(handle)));
     table.machines.insert(handle, Entry::new(machine));
     handle
 }
@@ -237,14 +322,15 @@ pub fn start(handle: u64) -> Result<(Vec<u8>, Status), Error> {
                 table().pinned.remove(&handle);
                 return Err(Error::Panicked);
             };
+            machine.on_wake(Box::new(move || woke(handle)));
             LOCAL.with(|local| {
                 local
                     .borrow_mut()
                     .insert(handle, Rc::new(RefCell::new(machine)));
             });
-            guarded(handle, |m| m.start())
+            reporting_wakes(|| guarded(handle, |m| m.start()))
         }
-        None => guarded(handle, |m| m.start()),
+        None => reporting_wakes(|| guarded(handle, |m| m.start())),
     }
 }
 
@@ -257,7 +343,7 @@ pub fn start(handle: u64) -> Result<(Vec<u8>, Status), Error> {
 /// [`Error::WrongThread`], [`Error::BadInput`] for a parked routine not yet
 /// started, or whatever [`Encoded::reply`] returns.
 pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
-    guarded(handle, |m| m.reply(record))
+    reporting_wakes(|| guarded(handle, |m| m.reply(record)))
 }
 
 /// Run the routine to its next wait without delivering anything: the effects
@@ -269,7 +355,7 @@ pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
 /// As [`reply`], except that the machine's own errors are those of
 /// [`Encoded::resume`].
 pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
-    guarded(handle, |m| m.resume())
+    reporting_wakes(|| guarded(handle, |m| m.resume()))
 }
 
 /// Drop a routine, including any request it had outstanding. A parked pinned
@@ -541,5 +627,97 @@ mod tests {
 
         assert_eq!(result, Err(Error::Panicked));
         assert_eq!(start(h), Err(Error::BadHandle), "removed from both tables");
+    }
+
+    fn frames_of(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+        let mut r = sans_effort::boundary::codec::Reader::new(bytes);
+        let mut out = Vec::new();
+        while !r.is_empty() {
+            let kind = r.u8().expect("kind");
+            out.push((kind, r.bytes().expect("payload").to_vec()));
+        }
+        out
+    }
+
+    fn woken_in(bytes: &[u8]) -> Vec<u64> {
+        frames_of(bytes)
+            .into_iter()
+            .filter(|(kind, _)| *kind == FRAME_WOKE)
+            .map(|(_, payload)| u64::from_le_bytes(payload.try_into().expect("a u64")))
+            .collect()
+    }
+
+    #[test]
+    fn the_sender_s_output_names_the_machine_it_woke() {
+        let (tx, rx) = async_channel::unbounded::<String>();
+        let listener = new(move |outbox: Outbox<Effect>| async move {
+            if let Ok(message) = rx.recv().await {
+                outbox.tell(Effect::Say(message));
+            }
+        });
+        let relay = new(move |outbox: Outbox<Effect>| async move {
+            let message = outbox.ask(Effect::Ask).await;
+            drop(tx.send(message).await);
+        });
+
+        assert_eq!(start(listener), Ok((Vec::new(), Status::Idle)));
+        drop(start(relay).expect("start"));
+        let (bytes, status) = reply(relay, &reply_str_record(1, "hi")).expect("reply");
+        assert_eq!(status, Status::Complete);
+        assert_eq!(
+            woken_in(&bytes),
+            [listener],
+            "the relay's own output says who it woke"
+        );
+
+        assert_eq!(
+            resume(listener),
+            Ok((framed(&[View::Say(String::from("hi"))]), Status::Complete))
+        );
+        free(listener).expect("free");
+        free(relay).expect("free");
+    }
+
+    #[test]
+    fn a_wake_outside_any_call_is_reported_by_wakes() {
+        let (tx, rx) = async_channel::unbounded::<String>();
+        let listener = new(move |outbox: Outbox<Effect>| async move {
+            let closed = rx.recv().await.is_err();
+            outbox.tell(Effect::Say(format!("closed: {closed}")));
+        });
+        // Holds the sender while it waits for a reply that never comes.
+        let holder = new(move |outbox: Outbox<Effect>| async move {
+            let _tx = tx;
+            drop(outbox.ask(Effect::Ask).await);
+        });
+
+        assert_eq!(start(listener), Ok((Vec::new(), Status::Idle)));
+        drop(start(holder).expect("start"));
+        free(holder).expect("free: drops the sender, which wakes the listener");
+        assert!(
+            woken_in(&wakes()).contains(&listener),
+            "no call was running, so the wake waited for `wakes`"
+        );
+
+        assert_eq!(
+            resume(listener),
+            Ok((
+                framed(&[View::Say(String::from("closed: true"))]),
+                Status::Complete
+            ))
+        );
+        free(listener).expect("free");
+    }
+
+    #[test]
+    fn a_woke_frame_is_kind_length_handle() {
+        assert_eq!(
+            woke_frames(&[5]),
+            [
+                4, // FRAME_WOKE
+                8, 0, 0, 0, // payload length
+                5, 0, 0, 0, 0, 0, 0, 0, // the handle
+            ]
+        );
     }
 }

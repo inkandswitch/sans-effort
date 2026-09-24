@@ -12,7 +12,7 @@
 //! time — and exists to give the outbox a `Sync` impl and a happens-before
 //! edge between a `reply` on one thread and the next poll on another.
 //!
-//! `AtomicU64` and `Arc` are `core`'s and `alloc`'s unless the
+//! The atomics, `Arc`, and `Wake` are `core`'s and `alloc`'s unless the
 //! `portable-atomic` feature is on, for targets without native CAS or 64-bit
 //! atomics — where `alloc::sync` does not exist at all.
 
@@ -42,13 +42,13 @@ impl<T> Mutex<T> {
 pub(super) type Mutex<T> = spin::Mutex<T>;
 
 #[cfg(feature = "portable-atomic")]
-pub(super) use portable_atomic::AtomicU64;
+pub(super) use portable_atomic::{AtomicBool, AtomicU64};
 
 #[cfg(feature = "portable-atomic")]
-pub(super) use portable_atomic_util::Arc;
+pub(super) use portable_atomic_util::{Arc, task::Wake};
 
 #[cfg(not(feature = "portable-atomic"))]
-pub(super) use core::sync::atomic::AtomicU64;
+pub(super) use core::sync::atomic::{AtomicBool, AtomicU64};
 
 #[cfg(not(feature = "portable-atomic"))]
-pub(super) use alloc::sync::Arc;
+pub(super) use alloc::{sync::Arc, task::Wake};

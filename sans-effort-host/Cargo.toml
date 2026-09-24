@@ -29,6 +29,7 @@ std = ["sans-effort/std"]
 spin = ["sans-effort/spin"]
 
 [dev-dependencies]
+async-channel = { workspace = true }
 bolero = { workspace = true }
 
 [lints]

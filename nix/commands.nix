@@ -78,12 +78,13 @@ in {
     ${cargo} build -q -p greeter_cdylib
     demo:wasm
 
-    for variant in "" "--fanout" "--ping-pong" "--front-desk"; do
+    for variant in "" "--fanout" "--ping-pong" "--front-desk" "--ring"; do
       case "$variant" in
         "") script='alice\nbob\nquit\n' ;;
         --fanout) script='bob\ncarol\n' ;;
         --ping-pong) script="" ;;
         --front-desk) script='alice\nbob\ncarol\n' ;;
+        --ring) script="" ;;
       esac
 
       echo ""

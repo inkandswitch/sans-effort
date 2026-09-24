@@ -1,5 +1,5 @@
 //! C ABI over the greeter: `abi_version`, `new`, `start`, `reply`, `resume`,
-//! `free`.
+//! `wakes`, `free`.
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
 //! table and the type check on replies are `sans-effort-host`. This crate
@@ -13,12 +13,13 @@
 
 use greeter_boundary::{Full, Quiet};
 use routines::{
-    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ticker::Ticker,
+    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
+    ticker::Ticker,
 };
 use sans_effort::run::Run;
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
-    contract::{REVISION, code_of},
+    contract::{OK, REVISION, code_of},
     error::Error,
     status::Status,
     table,
@@ -56,6 +57,14 @@ pub extern "C" fn greeter_new_ticker() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_ping_pong() -> u64 {
     table::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run())
+}
+
+/// Create a ring of 16 routines passing a counter 250 times around: 4000 hops,
+/// every one a message between two machines that no effect reports — only
+/// `woke` frames tell the host whom to resume.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_ring() -> u64 {
+    table::new(|outbox| Ring::new(Ctx::<Full>::new(outbox), 16, 250).run())
 }
 
 /// Create a front desk: it reads names and spawns a pinned clerk per name
@@ -131,6 +140,21 @@ pub unsafe extern "C" fn greeter_resume(
     unsafe { deliver(table::resume(handle), out_ptr, out_len) }
 }
 
+/// Receive the machines woken outside any call — a receiver whose sender was
+/// dropped by `free`, say — as `woke` frames. Call it when there is nothing
+/// else to do. Always `OK`.
+///
+/// # Safety
+///
+/// `out_ptr` and `out_len` must be valid for writes. Free the buffer with
+/// [`greeter_buf_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn greeter_wakes(out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
+    // SAFETY: caller contract.
+    unsafe { write_out(table::wakes(), out_ptr, out_len) };
+    OK
+}
+
 /// Drop a greeter, including any request it had outstanding.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_free(handle: u64) -> i32 {
@@ -169,14 +193,24 @@ unsafe fn deliver(
 ) -> i32 {
     match result {
         Ok((bytes, status)) => {
-            let boxed = bytes.into_boxed_slice();
             // SAFETY: caller guarantees both out-pointers are writable.
-            unsafe {
-                *out_len = boxed.len();
-                *out_ptr = Box::into_raw(boxed).cast::<u8>();
-            }
+            unsafe { write_out(bytes, out_ptr, out_len) };
             status.code()
         }
         Err(e) => e.code(),
+    }
+}
+
+/// Hand `bytes` to the host through the out-pointers.
+///
+/// # Safety
+///
+/// Both out-pointers must be valid for writes.
+unsafe fn write_out(bytes: Vec<u8>, out_ptr: *mut *mut u8, out_len: *mut usize) {
+    let boxed = bytes.into_boxed_slice();
+    // SAFETY: caller guarantees both out-pointers are writable.
+    unsafe {
+        *out_len = boxed.len();
+        *out_ptr = Box::into_raw(boxed).cast::<u8>();
     }
 }

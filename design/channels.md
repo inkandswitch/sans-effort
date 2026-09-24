@@ -1,7 +1,7 @@
 # Channels and Spawning
 
 > [!NOTE]
-> _Status:_ planned, in two stages. Stage 1: `resume`, `IDLE`, `Spawn`, and pinned machines. Stage 2: a real waker and `woke` frames. An actor layer on top — an implicit inbox per routine, supervision — may come later, and so may host-routed channels.
+> _Status:_ implemented, in two stages: `resume`, `IDLE`, `Spawn`, and pinned machines; then a real waker and `woke` frames. The demo's ping-pong, front desk, and ring run on tokio, Node, Python, and a parallel Java host. An actor layer on top — an implicit inbox per routine, supervision — may come later, and so may host-routed channels.
 
 Routines that send each other messages and spawn new routines, on different threads, without a scheduler in the library.
 
@@ -42,9 +42,9 @@ The message never passes through the host. A spurious `resume` is harmless — t
 
 ### Knowing When: Wakers
 
-Every poll in Rust is handed a waker, the executor's "call me when this can progress". A channel stores the receiver's waker when it has nothing to give, and calls it on the next send. Under tokio the waker requeues the task. A driver's waker, in stage 1, does nothing: the host resumes idle machines when it has nothing else to do.
+Every poll in Rust is handed a waker, the executor's "call me when this can progress". A channel stores the receiver's waker when it has nothing to give, and calls it on the next send. Under tokio the waker requeues the task. Resuming every idle machine whenever there is nothing else to do would work too, slowly — but a host cannot tell a machine that progressed silently (it only sent a message) from a stalled one, so it cannot know when to stop.
 
-In stage 2 the driver's waker records the wake instead. The host crate turns it into a frame, `woke · handle`, in the output of the call whose poll caused it — the sender's — or, for wakes outside any call, in the output of a separate `wakes` call. The host then resumes exactly the machines that can run. It is still pull-only: the host learns from output it asked for; nothing calls out to it.
+The driver's waker records the wake instead. The host crate turns it into a frame, `woke · handle`, in the output of the call whose poll caused it — the sender's — or, for wakes outside any call, in the output of a separate `wakes` call. The host then resumes exactly the machines that can run. It is still pull-only: the host learns from output it asked for; nothing calls out to it.
 
 | | Effect | Wake |
 |---|---|---|
@@ -106,7 +106,7 @@ Natively:
 
 ## Replay and Determinism
 
-Messages bypass the host, so the order they arrive in depends on the host's schedule. A run is reproduced by the host's replies _and_ its `resume`s, in order; in stage 2 the `woke` frames also record which step woke which machine. The demo hosts poll deterministically, so their transcripts still agree.
+Messages bypass the host, so the order they arrive in depends on the host's schedule. A host prints a machine's writes after its call returns, so under a host that polls machines in parallel, writes from two machines interleave by timing: a transcript is comparable across hosts only when one machine writes it — which is why the demo's ping-pong child and ring nodes are silent. A run is reproduced by the host's replies _and_ its `resume`s, in order; the `woke` frames also record which step woke which machine. The demo's transcripts agree across all four hosts — the Java one polling machines in parallel on a pool of threads — because in each demo one machine writes.
 
 ## Knowing When a Routine Ends
 
@@ -114,7 +114,7 @@ A routine can hold a guard whose `Drop` sends on a channel a watcher holds. Mess
 
 ## Stalls, Spins, and the Outside World
 
-- _A stall_ — no request outstanding anywhere, nothing runnable, and a round of resumes makes no progress. The host can detect it: it sees every request and schedules every machine. This reads current state; it does not predict what code will do, so the halting problem does not apply. It is not part of the ABI.
+- _A stall_ — no request outstanding anywhere, no `woke` frame left to act on, and nothing from `wakes`. The host can detect it: it sees every request and is told of every wake. (Without wakes it could not: a machine that only sends a message looks, from outside, exactly like one that did nothing.) This reads current state; it does not predict what code will do, so the halting problem does not apply. It is not part of the ABI.
 - _A spin_ — a routine looping inside a step without awaiting. That breaks the assumption that steps return promptly; only a timeout helps.
 - _The outside world_ — a routine waiting on input that never comes. No host can know whether it will. A timeout, as policy.
 
@@ -137,6 +137,8 @@ Messages never pass through the host, so the host cannot see their contents: no 
 
 ## Demos
 
-- _Ping-pong_ — a parent spawns a child; a channel each way; N rounds.
-- _Front desk_ — a receptionist reads names and spawns a greeter for each; each greeter looks up a greeting and sends it back on a one-shot channel. Its transcript joins the tokio = Python = Java comparison.
-- _Ring_ — N routines in a ring pass a token M times (stage 2): the cost of one hop on each host.
+- _Ping-pong_ — a parent spawns a child (`spawn`) and plays three rounds over a channel each way; only the parent writes.
+- _Front desk_ — a receptionist reads names and spawns a pinned clerk for each (`spawn_pinned`); each clerk looks a greeting up and sends it back on a one-shot channel.
+- _Ring_ — 16 routines pass a counter 250 times around; no effect reports any of the 4000 hops, only `woke` frames. Each host prints its cost per hop.
+
+All three join the greeter in the comparison: tokio = Node = Python = Java, byte for byte.

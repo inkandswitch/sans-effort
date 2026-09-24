@@ -11,11 +11,14 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
     python3 demo/python/main.py --ping-pong    # a parent and the child it spawns (tag 6)
     python3 demo/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
+    python3 demo/python/main.py --ring         # 16 machines passing a counter: woke frames only
 
 With spawning, the loop is a small scheduler: it keeps every machine by
-handle, starts each child it is told about, and — when nothing else is queued
-— resumes every IDLE machine once. A message between two routines never
-passes through here; resuming is how the receiver finds it.
+handle, starts each child it is told about, and resumes each machine a `woke`
+frame names. A message between two routines never passes through here; the
+sender's call reports whom it woke, and resuming is how the receiver finds
+the message. When nothing is queued it asks `wakes` for anything woken
+outside a call; if that is empty too, the run is over — or stalled.
 """
 
 import ctypes
@@ -28,7 +31,7 @@ from pathlib import Path
 # ---- ABI.md, as code ------------------------------------------------------
 
 ABI_VERSION = 0
-FRAME_TELL, FRAME_ASK, FRAME_CLOSED = 1, 2, 3
+FRAME_TELL, FRAME_ASK, FRAME_CLOSED, FRAME_WOKE = 1, 2, 3, 4
 OK = AWAITING = 0
 COMPLETE, IDLE = 1, 2
 ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT", -7: "MALFORMED", -8: "STALE", -9: "WRONG_THREAD"}
@@ -94,7 +97,7 @@ def frames(data: bytes) -> list[tuple[int, bytes]]:
 
 
 class Library:
-    """`abi_version / new / start / reply / resume / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
+    """`abi_version / new / start / reply / resume / wakes / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
 
     def __init__(self, path: Path):
         self.lib = ctypes.CDLL(str(path))
@@ -106,6 +109,7 @@ class Library:
         self.lib.greeter_new_ticker.restype = ctypes.c_uint64
         self.lib.greeter_new_ping_pong.restype = ctypes.c_uint64
         self.lib.greeter_new_front_desk.restype = ctypes.c_uint64
+        self.lib.greeter_new_ring.restype = ctypes.c_uint64
         self.lib.greeter_start.restype = ctypes.c_int32
         self.lib.greeter_start.argtypes = [
             ctypes.c_uint64,
@@ -122,6 +126,8 @@ class Library:
         ]
         self.lib.greeter_resume.restype = ctypes.c_int32
         self.lib.greeter_resume.argtypes = self.lib.greeter_start.argtypes
+        self.lib.greeter_wakes.restype = ctypes.c_int32
+        self.lib.greeter_wakes.argtypes = self.lib.greeter_start.argtypes[1:]
         self.lib.greeter_free.restype = ctypes.c_int32
         self.lib.greeter_buf_free.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
 
@@ -132,6 +138,7 @@ class Library:
             "ticker": self.lib.greeter_new_ticker,
             "ping-pong": self.lib.greeter_new_ping_pong,
             "front-desk": self.lib.greeter_new_front_desk,
+            "ring": self.lib.greeter_new_ring,
         }[kind]()
 
     def start(self, handle: int) -> tuple[int, bytes]:
@@ -154,6 +161,13 @@ class Library:
         out_len = ctypes.c_size_t()
         code = self.lib.greeter_resume(handle, ctypes.byref(out_ptr), ctypes.byref(out_len))
         return self._collect(code, out_ptr, out_len)
+
+    def wakes(self) -> bytes:
+        """The machines woken outside any call, as `woke` frames."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_wakes(ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)[1]
 
     def _collect(self, code: int, out_ptr, out_len) -> tuple[int, bytes]:
         if code < 0:
@@ -190,6 +204,9 @@ def decode(data: bytes) -> list[dict]:
         if frame == FRAME_CLOSED:
             effects.append({"kind": "closed", "id": Reader(payload).u64()})
             continue
+        if frame == FRAME_WOKE:
+            effects.append({"kind": "woke", "handle": Reader(payload).u64()})
+            continue
         if frame not in (FRAME_TELL, FRAME_ASK):
             continue  # a reserved frame kind: a newer binding's record, safe to skip
         r = Reader(payload)
@@ -223,9 +240,9 @@ GREETINGS = {"alice": "Hello", "bob": "Hi", "carol": "Hey"}
 
 def drive(lib: Library, root: int, script: list[str]) -> list[str]:
     """Perform each effect and reply by id; start every child a machine
-    spawns; resume idle machines when nothing else is queued; free each
-    machine as it completes. Every call comes from this one thread, so a
-    pinned child stays on the thread that started it."""
+    spawns; resume each machine a `woke` frame names; free each machine as it
+    completes. Every call comes from this one thread, so a pinned child stays
+    on the thread that started it."""
     lines, written, greeted = iter(script), [], 0
     machines: dict[int, int] = {}  # handle → status of its last call
     queue: deque[tuple[int, dict]] = deque()
@@ -251,6 +268,10 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
             if e["kind"] in ("spawned", "spawned_pinned"):
                 ran(e["handle"], lib.start(e["handle"]))
                 continue
+            if e["kind"] == "woke":
+                if e["handle"] in machines and machines[e["handle"]] != COMPLETE:
+                    ran(e["handle"], lib.resume(e["handle"]))
+                continue
             if e["kind"] == "read_line":
                 record = read_line_reply(e["id"], next(lines, None))
             elif e["kind"] == "lookup":
@@ -263,16 +284,12 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
                 record = reply_u64(e["id"], greeted)
             ran(handle, lib.reply(handle, record))
 
-        # Nothing queued: every idle machine may have a message waiting.
-        # A resume that records nothing and leaves the machine idle made no
-        # progress; a round in which none did is the end, or a stall.
-        progressed = False
-        for handle in [h for h, status in machines.items() if status == IDLE]:
-            before = len(queue)
-            ran(handle, lib.resume(handle))
-            progressed |= len(queue) > before or machines[handle] != IDLE
-        if not progressed:
+        # Nothing queued: anything woken outside a call? If not, nothing can
+        # happen again — the end, or a stall.
+        woken = decode(lib.wakes())
+        if not woken:
             break
+        queue.extend((0, e) for e in woken)
 
     stuck = [h for h, status in machines.items() if status != COMPLETE]
     assert not stuck, f"stalled: machines {stuck} can never progress"
@@ -290,8 +307,12 @@ def find_library() -> Path:
 
 
 if __name__ == "__main__":
-    kinds = ("fanout", "ticker", "ping-pong", "front-desk")
+    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring")
     kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
-    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"]}[kind]
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": []}[kind]
     lib = Library(find_library())
+    began = time.perf_counter()
     drive(lib, lib.new(kind), script)
+    if kind == "ring":
+        hops, elapsed = 16 * 250, time.perf_counter() - began
+        print(f"{hops} hops in {elapsed * 1e3:.1f} ms: {elapsed * 1e6 / hops:.2f} µs per hop", file=sys.stderr)

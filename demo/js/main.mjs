@@ -8,13 +8,13 @@
 // routine step by step over the C ABI.
 //
 //   nix develop --command demo:wasm
-//   node demo/js/main.mjs [--fanout | --ping-pong | --front-desk]
+//   node demo/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring]
 
 import { createRequire } from "node:module";
 
 // `wasm-bindgen --target nodejs` emits CommonJS.
 const require = createRequire(import.meta.url);
-const { Greeter, Fanout, PingPong, FrontDesk } = require("./pkg/greeter_wasm.js");
+const { Greeter, Fanout, PingPong, FrontDesk, Ring } = require("./pkg/greeter_wasm.js");
 
 const GREETINGS = { alice: "Hello", bob: "Hi", carol: "Hey" };
 
@@ -37,7 +37,15 @@ const routine = mode("--fanout")
   ? new Fanout(host(["bob", "carol"]))
   : mode("--ping-pong")
     ? new PingPong(host([]))
-    : mode("--front-desk")
-      ? new FrontDesk(host(["alice", "bob", "carol"]))
-      : new Greeter(host(["alice", "bob"]));
+    : mode("--ring")
+      ? new Ring(host([]))
+      : mode("--front-desk")
+        ? new FrontDesk(host(["alice", "bob", "carol"]))
+        : new Greeter(host(["alice", "bob"]));
+const began = performance.now();
 await routine.run();
+if (mode("--ring")) {
+  const hops = 16 * 250;
+  const ms = performance.now() - began;
+  console.error(`${hops} hops in ${ms.toFixed(1)} ms: ${((ms * 1e3) / hops).toFixed(2)} µs per hop`);
+}

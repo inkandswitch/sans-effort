@@ -583,8 +583,8 @@ mod tests {
 
     /// A deterministic Rust host for machines that spawn and message each
     /// other: every request answered at once, spawned children started in
-    /// the order they appear, and — when nothing is queued — every idle
-    /// machine resumed once, in the order it was created.
+    /// the order they appear, and machines resumed in the order their drivers
+    /// report them woken — the same hooks the host table installs.
     #[cfg(feature = "table")]
     mod router {
         use super::*;
@@ -629,16 +629,29 @@ mod tests {
                     Machine::Pinned(d) => d.status(),
                 }
             }
+
+            /// Report wakes as this machine's index in `woken`.
+            fn report_wakes(&self, at: usize, woken: &Woken) {
+                let woken = Woken::clone(woken);
+                let hook = move || woken.lock().expect("woken").push_back(at);
+                match self {
+                    Machine::Migrating(d) => d.on_wake(hook),
+                    Machine::Pinned(d) => d.on_wake(hook),
+                }
+            }
         }
+
+        /// Which machines woke, in order, by index.
+        type Woken = std::sync::Arc<std::sync::Mutex<VecDeque<usize>>>;
 
         /// Run `root` and everything it spawns until nothing can progress:
         /// what each wrote, in order, and whether every machine completed.
         fn route(root: Driver<Full>, script: &[&str]) -> (Vec<String>, bool) {
             let mut lines = script.iter().copied();
-            let mut root = Machine::Migrating(root);
-            let mut queue: VecDeque<(usize, Full)> =
-                root.start().into_iter().map(|e| (0, e)).collect();
-            let mut machines = vec![root];
+            let woken = Woken::default();
+            let mut machines = Vec::new();
+            let (at, first) = adopt(&mut machines, Machine::Migrating(root), &woken);
+            let mut queue: VecDeque<(usize, Full)> = first.into_iter().map(|e| (at, e)).collect();
             let mut written = Vec::new();
 
             loop {
@@ -651,10 +664,12 @@ mod tests {
                         Full::Spawn(Spawn(child)) => adopt(
                             &mut machines,
                             Machine::Migrating(Driver::from_boxed(|outbox| child.start(outbox))),
+                            &woken,
                         ),
                         Full::SpawnPinned(SpawnPinned(child)) => adopt(
                             &mut machines,
                             Machine::Pinned(LocalDriver::from_boxed(|outbox| child.start(outbox))),
+                            &woken,
                         ),
                         Full::Sleep(Asked { reply, .. }) => {
                             (at, nth(&mut machines, at).reply(reply, ()))
@@ -687,30 +702,29 @@ mod tests {
                     queue.extend(more.into_iter().map(|e| (from, e)));
                 }
 
-                // Nothing queued: resume every idle machine once. A resume
-                // that records nothing and leaves the machine idle made no
-                // progress; a round with none anywhere is a stall, or the end.
-                let mut progressed = false;
-                for (at, machine) in machines.iter_mut().enumerate() {
-                    if machine.status() == Status::Idle {
-                        let step = machine.resume();
-                        progressed |= !step.is_empty() || machine.status() != Status::Idle;
-                        queue.extend(step.into_iter().map(|e| (at, e)));
-                    }
-                }
-
-                if !progressed {
+                // Nothing queued: resume the next machine that woke. None
+                // woke, and nothing is queued: nothing can happen again.
+                let next = woken.lock().expect("woken").pop_front();
+                let Some(at) = next else {
                     let done = machines.iter().all(|m| m.status() == Status::Complete);
                     return (written, done);
-                }
+                };
+                let step = nth(&mut machines, at).resume();
+                queue.extend(step.into_iter().map(|e| (at, e)));
             }
         }
 
         /// Start a spawned machine and keep it: its index, and its first step.
-        fn adopt(machines: &mut Vec<Machine>, mut machine: Machine) -> (usize, Step<Full>) {
+        fn adopt(
+            machines: &mut Vec<Machine>,
+            mut machine: Machine,
+            woken: &Woken,
+        ) -> (usize, Step<Full>) {
+            let at = machines.len();
+            machine.report_wakes(at, woken);
             let step = machine.start();
             machines.push(machine);
-            (machines.len() - 1, step)
+            (at, step)
         }
 
         fn nth(machines: &mut [Machine], at: usize) -> &mut Machine {
@@ -723,14 +737,7 @@ mod tests {
             let (written, done) = route(root, &[]);
             assert_eq!(
                 written,
-                [
-                    "pong 1",
-                    "ping 1, pong 1",
-                    "pong 2",
-                    "ping 2, pong 2",
-                    "pong 3",
-                    "ping 3, pong 3",
-                ]
+                ["ping 1, pong 1", "ping 2, pong 2", "ping 3, pong 3"]
             );
             assert!(done, "the parent returned, so the child's pings ended too");
         }

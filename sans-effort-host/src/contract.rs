@@ -23,6 +23,12 @@ pub const FRAME_ASK: u8 = 2;
 /// A frame holding one `u64` request id the routine no longer needs a reply
 /// to. The host may stop that work; a late reply is refused as [`STALE`].
 pub const FRAME_CLOSED: u8 = 3;
+/// A frame holding one `u64` machine handle: that machine may be able to
+/// progress — something it waits on in the process changed — so `resume` it.
+/// Found at the end of the output of the call whose poll caused the wake, or
+/// in the output of `wakes`. A host that ignores these and resumes its idle
+/// machines some other way is still correct.
+pub const FRAME_WOKE: u8 = 4;
 
 /// Success, for calls that carry no status (`free`).
 pub const OK: i32 = 0;

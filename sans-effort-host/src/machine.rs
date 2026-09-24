@@ -26,6 +26,8 @@ pub trait Drive<E>: sealed::Sealed {
     fn status(&self) -> DriveStatus;
     /// `true` once the routine has returned.
     fn is_finished(&self) -> bool;
+    /// Call `hook` when the routine may be able to progress without a reply.
+    fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H);
 }
 
 mod sealed {
@@ -54,6 +56,10 @@ impl<E> Drive<E> for Driver<E> {
     fn is_finished(&self) -> bool {
         Driver::is_finished(self)
     }
+
+    fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
+        Driver::on_wake(self, hook);
+    }
 }
 
 impl<E> Drive<E> for LocalDriver<E> {
@@ -75,6 +81,10 @@ impl<E> Drive<E> for LocalDriver<E> {
 
     fn is_finished(&self) -> bool {
         LocalDriver::is_finished(self)
+    }
+
+    fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
+        LocalDriver::on_wake(self, hook);
     }
 }
 
@@ -267,6 +277,13 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// As [`reply`](Self::reply).
     pub fn reply_bytes(&mut self, id: u64, value: Vec<u8>) -> Result<Step<E::View>, Error> {
         self.reply(id, value)
+    }
+
+    /// Call `hook` when the routine, `Idle`, may be able to progress: once
+    /// per wait, possibly from another thread, possibly during another
+    /// machine's poll. See [`Driver::on_wake`].
+    pub fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
+        self.driver.on_wake(hook);
     }
 
     /// What the last poll reported.

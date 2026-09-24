@@ -3,7 +3,13 @@
 //! outbox, polled once per call. The two differ only in whether the future
 //! is `Send`, so this is generic over the (unsized) future type.
 
-use super::{outbox::Outbox, status::Status, step::Step};
+use super::{
+    outbox::Outbox,
+    status::Status,
+    step::Step,
+    sync::Arc,
+    wake::{Hook, Wakeup},
+};
 use crate::reply::{Reply, handle::ReplyHandle};
 use alloc::boxed::Box;
 use core::{
@@ -17,15 +23,24 @@ pub(super) struct Stepper<E, F: ?Sized> {
     future: Option<Pin<Box<F>>>,
     outbox: Outbox<E>,
     status: Status,
+    wakeup: Arc<Wakeup>,
+    waker: Waker,
 }
 
 impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
-    pub(super) const fn new(future: Pin<Box<F>>, outbox: Outbox<E>) -> Self {
+    pub(super) fn new(future: Pin<Box<F>>, outbox: Outbox<E>) -> Self {
+        let (wakeup, waker) = Wakeup::new();
         Self {
             future: Some(future),
             outbox,
             status: Status::Awaiting,
+            wakeup,
+            waker,
         }
+    }
+
+    pub(super) fn on_wake(&self, hook: Hook) {
+        self.wakeup.set_hook(hook);
     }
 
     pub(super) fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
@@ -49,9 +64,8 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
             return Step::default();
         };
 
-        let poll = future
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()));
+        self.wakeup.clear();
+        let poll = future.as_mut().poll(&mut Context::from_waker(&self.waker));
         let (effects, outstanding) = self.outbox.drain();
 
         self.status = Status::classify(poll, outstanding);

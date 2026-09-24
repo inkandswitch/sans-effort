@@ -72,6 +72,11 @@ where
         Ok((encode(&shown), self.0.status()))
     }
 
+    /// As [`Machine::on_wake`].
+    pub fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
+        self.0.on_wake(hook);
+    }
+
     /// Poll again without delivering anything: the effects recorded before
     /// the next wait, encoded, and the status.
     ///

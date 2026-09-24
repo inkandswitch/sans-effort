@@ -6,24 +6,39 @@
 /// little-endian codec, the greeter's tag table, and the loop.
 ///
 /// Where the Python host performs each effect before replying, this one is
-/// shaped like a production host: every ask runs on its own virtual thread,
-/// completions come back through a queue, and one driver thread makes every
-/// call into the library (the ABI allows one caller per handle at a time).
-/// Replies therefore arrive in whatever order the effects finish, and a
-/// closed frame cancels the effect's thread. The transcript must still match
-/// every other host's byte for byte.
+/// shaped like a production host, and it is parallel:
 ///
-/// With spawning, the driver thread is a small scheduler: it keeps every
-/// machine by handle, starts each child it is told about (tag 6, or tag 7 for
-/// a child pinned to the thread that starts it — this one), and when no
-/// completion is waiting, resumes every IDLE machine once. Messages between
-/// routines never pass through here; resuming is how a receiver finds one.
+/// - A pool of driver threads — platform threads, one per core — makes the
+///   calls into the library, so different machines are polled at the same
+///   time. Each machine takes one event at a time from its own inbox (start,
+///   reply, resume), so no two threads ever call one handle and `BUSY` cannot
+///   happen.
+/// - A machine the library can move (tag 6) is polled on whichever worker is
+///   next, so its calls migrate between threads. A pinned one (tag 7) is
+///   polled only on the worker that started it, so `WRONG_THREAD` cannot
+///   happen either.
+/// - Every ask runs on its own virtual thread; its reply becomes an event in
+///   the machine's inbox, in whatever order the effects finish, and a closed
+///   frame cancels it.
+/// - A message between routines never passes through here. The call whose
+///   routine sent it reports whom that woke, as a `woke` frame, and the host
+///   resumes that machine. When everything has drained — no events queued, no
+///   asks in flight — it asks `wakes` for anything woken outside a call; if
+///   that is empty too, the run is over, or stalled.
+///
+/// The transcript must still match every other host's byte for byte. It can,
+/// because in each demo one machine does the writing: a host prints a
+/// machine's writes after its call returns, so writes from two machines polled
+/// at once would interleave by timing.
 ///
 /// Compare `../js/main.mjs`, where the event loop is an executor and the same
 /// routine runs natively.
 ///
 ///     cargo build -p greeter_cdylib
-///     java --enable-native-access=ALL-UNNAMED demo/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk]
+///     java --enable-native-access=ALL-UNNAMED demo/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring] [--trace]
+///
+/// `--trace` logs every call to stderr — thread, call, handle, status — to
+/// show which worker polled what.
 
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
@@ -33,13 +48,16 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Main {
     // ---- ABI.md, as code --------------------------------------------------
 
     static final byte ABI_VERSION = 0;
-    static final int FRAME_TELL = 1, FRAME_ASK = 2, FRAME_CLOSED = 3;
+    static final int FRAME_TELL = 1, FRAME_ASK = 2, FRAME_CLOSED = 3, FRAME_WOKE = 4;
     static final int AWAITING = 0, COMPLETE = 1, IDLE = 2;
     static final Map<Integer, String> ERRORS = Map.of(
         -1, "BUSY", -2, "FINISHED", -3, "WRONG_KIND", -4, "PANICKED", -5, "BAD_HANDLE", -6, "BAD_INPUT",
@@ -82,10 +100,11 @@ public class Main {
         boolean done() { return !buf.hasRemaining(); }
     }
 
-    /** `abi_version / new / start / reply / resume / free / buf_free` over the loaded cdylib, prefix `greeter_`. */
+    /** `abi_version / new / start / reply / resume / wakes / free / buf_free` over the loaded cdylib, prefix `greeter_`. */
     static final class Library {
-        final Arena arena = Arena.ofConfined();
-        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, start, reply, resume, free, bufFree;
+        /** Shared: the symbols are called from every driver thread. */
+        final Arena arena = Arena.ofShared();
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, start, reply, resume, wakes, free, bufFree;
 
         Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
@@ -100,9 +119,11 @@ public class Main {
             newTicker  = linker.downcallHandle(lib.find("greeter_new_ticker").get(), FunctionDescriptor.of(u64));
             newPingPong  = linker.downcallHandle(lib.find("greeter_new_ping_pong").get(), FunctionDescriptor.of(u64));
             newFrontDesk = linker.downcallHandle(lib.find("greeter_new_front_desk").get(), FunctionDescriptor.of(u64));
+            newRing      = linker.downcallHandle(lib.find("greeter_new_ring").get(), FunctionDescriptor.of(u64));
             start      = linker.downcallHandle(lib.find("greeter_start").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             resume     = linker.downcallHandle(lib.find("greeter_resume").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
+            wakes      = linker.downcallHandle(lib.find("greeter_wakes").get(), FunctionDescriptor.of(i32, ptr, ptr));
             free       = linker.downcallHandle(lib.find("greeter_free").get(), FunctionDescriptor.of(i32, u64));
             bufFree    = linker.downcallHandle(lib.find("greeter_buf_free").get(), FunctionDescriptor.ofVoid(ptr, u64));
 
@@ -116,12 +137,13 @@ public class Main {
                 case "ticker" -> (long) newTicker.invokeExact();
                 case "ping-pong" -> (long) newPingPong.invokeExact();
                 case "front-desk" -> (long) newFrontDesk.invokeExact();
+                case "ring" -> (long) newRing.invokeExact();
                 default -> (long) newGreeter.invokeExact();
             };
         }
 
-        /** Run to the first wait; the effect bytes out. Status via {@link #status}. */
-        byte[] start(long handle) throws Throwable {
+        /** Run to the first wait. */
+        Outcome start(long handle) throws Throwable {
             try (Arena call = Arena.ofConfined()) {
                 MemorySegment outPtr = call.allocate(ValueLayout.ADDRESS);
                 MemorySegment outLen = call.allocate(ValueLayout.JAVA_LONG);
@@ -130,8 +152,8 @@ public class Main {
             }
         }
 
-        /** One reply record in; the effect bytes out. */
-        byte[] reply(long handle, byte[] record) throws Throwable {
+        /** One reply record in; the next batch out. */
+        Outcome reply(long handle, byte[] record) throws Throwable {
             try (Arena call = Arena.ofConfined()) {
                 MemorySegment in = call.allocate(record.length);
                 in.copyFrom(MemorySegment.ofArray(record));
@@ -142,8 +164,8 @@ public class Main {
             }
         }
 
-        /** Poll again with nothing to deliver; the effect bytes out. Harmless when nothing changed. */
-        byte[] resume(long handle) throws Throwable {
+        /** Poll again with nothing to deliver. Harmless when nothing changed. */
+        Outcome resume(long handle) throws Throwable {
             try (Arena call = Arena.ofConfined()) {
                 MemorySegment outPtr = call.allocate(ValueLayout.ADDRESS);
                 MemorySegment outLen = call.allocate(ValueLayout.JAVA_LONG);
@@ -152,16 +174,23 @@ public class Main {
             }
         }
 
-        int status;
+        /** The machines woken outside any call, as `woke` frames. */
+        byte[] wakes() throws Throwable {
+            try (Arena call = Arena.ofConfined()) {
+                MemorySegment outPtr = call.allocate(ValueLayout.ADDRESS);
+                MemorySegment outLen = call.allocate(ValueLayout.JAVA_LONG);
+                int code = (int) wakes.invokeExact(outPtr, outLen);
+                return collect(code, outPtr, outLen).data();
+            }
+        }
 
-        private byte[] collect(int code, MemorySegment outPtr, MemorySegment outLen) throws Throwable {
+        private Outcome collect(int code, MemorySegment outPtr, MemorySegment outLen) throws Throwable {
             if (code < 0) throw new RuntimeException(ERRORS.getOrDefault(code, "code " + code));
-            status = code;
             long len = outLen.get(ValueLayout.JAVA_LONG, 0);
             MemorySegment ptr = outPtr.get(ValueLayout.ADDRESS, 0).reinterpret(len);
             byte[] data = ptr.toArray(ValueLayout.JAVA_BYTE);
             bufFree.invokeExact(ptr, len);
-            return data;
+            return new Outcome(code, data);
         }
 
         void free(long handle) throws Throwable {
@@ -170,9 +199,12 @@ public class Main {
         }
     }
 
+    /** What a call returned: its status code and the batch of effect bytes. */
+    record Outcome(int status, byte[] data) {}
+
     // ---- the greeter's tag table (the program's, not the ABI's) ------------
 
-    /** One decoded effect. `id` is a request id, or the child's handle for `spawned`/`spawned_pinned`. */
+    /** One decoded effect. `id` is a request id, or a machine's handle for `spawned`/`spawned_pinned`/`woke`. */
     record Effect(String kind, long id, String name, long millis, String text) {}
 
     /**
@@ -207,6 +239,10 @@ public class Main {
                 out.add(new Effect("closed", new Reader(f.payload()).u64(), null, 0, null));
                 continue;
             }
+            if (f.kind() == FRAME_WOKE) {
+                out.add(new Effect("woke", new Reader(f.payload()).u64(), null, 0, null));
+                continue;
+            }
             if (f.kind() != FRAME_TELL && f.kind() != FRAME_ASK) continue; // reserved: safe to skip
             Reader r = new Reader(f.payload());
             int tag = r.u8();
@@ -238,64 +274,181 @@ public class Main {
     /** A request in flight: request ids are per machine, so the handle is part of its name. */
     record Request(long handle, long id) {}
 
-    /** A finished effect: the request it answers and the reply record for it. */
-    record Completion(Request request, byte[] record) {}
+    /** What a machine's inbox holds: something to call the library with. */
+    sealed interface Event permits Start, Reply, Resume {}
+    record Start() implements Event {}
+    record Reply(long id, byte[] record) implements Event {}
+    record Resume() implements Event {}
 
-    /** Performs asks concurrently; the driver thread alone talks to the library. */
-    static final class Host implements AutoCloseable {
+    /**
+     * Drives every machine a root spawns, in parallel. Workers make the calls;
+     * virtual threads perform the asks; the coordinating thread only waits for
+     * quiet and asks `wakes`.
+     */
+    static final class Scheduler implements AutoCloseable {
         final Library lib;
         final Iterator<String> lines;
         final AtomicLong greeted = new AtomicLong();
-        final ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
-        final BlockingQueue<Completion> done = new LinkedBlockingQueue<>();
-        final Map<Request, Future<?>> inFlight = new HashMap<>();
-        /** Every live machine, by handle, and the status of its last call. Insertion order is resume order. */
-        final Map<Long, Integer> machines = new LinkedHashMap<>();
+        final ExecutorService[] workers;
+        final AtomicInteger nextWorker = new AtomicInteger();
+        final ExecutorService effects = Executors.newVirtualThreadPerTaskExecutor();
+        final Map<Long, Machine> machines = new ConcurrentHashMap<>();
+        final Map<Request, InFlight> inFlight = new ConcurrentHashMap<>();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
 
-        Host(Library lib, List<String> script) { this.lib = lib; lines = script.iterator(); }
+        /** Events queued or running, plus asks in flight: zero means quiet. */
+        int pending;
 
-        /** Record what a call on `handle` returned, act on its effects, and free the machine if it completed. */
-        void ran(long handle, byte[] data) throws Throwable {
-            machines.put(handle, lib.status);
-            dispatch(handle, decode(data));
-            if (lib.status == COMPLETE) {
-                machines.remove(handle);
-                lib.free(handle);
+        /** One machine: its handle, where it may run, and its inbox. */
+        final class Machine {
+            final long handle;
+            final boolean pinned;
+            /** The worker a pinned machine was started on; -1 until then, and always for a migrating one. */
+            int worker = -1;
+            volatile int status = AWAITING;
+            final ArrayDeque<Event> inbox = new ArrayDeque<>();
+            boolean running;
+
+            Machine(long handle, boolean pinned) { this.handle = handle; this.pinned = pinned; }
+        }
+
+        /** An ask being performed (`task` is null for the moment before it is submitted), settled exactly once: by its task, or by a cancel before it ran. */
+        record InFlight(Future<?> task, AtomicBoolean settled) {}
+
+        Scheduler(Library lib, List<String> script, int threads) {
+            this.lib = lib;
+            lines = script.iterator();
+            workers = new ExecutorService[threads];
+            for (int i = 0; i < threads; i++) workers[i] = Executors.newSingleThreadExecutor(Thread.ofPlatform().name("driver-" + i).factory());
+        }
+
+        void busy() { synchronized (this) { pending++; } }
+
+        void settle() {
+            synchronized (this) {
+                if (--pending == 0) notifyAll();
             }
         }
 
-        /** Tells run here, in order; each child starts here, on the driver thread; each ask starts on its own thread; closed ids are cancelled. */
-        void dispatch(long handle, List<Effect> effects) throws Throwable {
-            for (Effect e : effects) {
-                switch (e.kind()) {
-                    case "write_line" -> System.out.println(e.text());
-                    case "spawned", "spawned_pinned" -> ran(e.id(), lib.start(e.id()));
-                    case "closed" -> {
-                        Future<?> work = inFlight.remove(new Request(handle, e.id()));
-                        if (work != null) work.cancel(true);
-                    }
-                    default -> {
-                        Request request = new Request(handle, e.id());
-                        inFlight.put(request, pool.submit(() -> {
-                            done.put(new Completion(request, perform(e)));
-                            return null;
-                        }));
-                    }
+        /** Wait until no event is queued or running and no ask is in flight. */
+        void awaitQuiet() throws Throwable {
+            synchronized (this) {
+                while (pending > 0 && failure.get() == null) wait();
+            }
+            if (failure.get() != null) throw failure.get();
+        }
+
+        /** Queue `event` for `m`, and schedule its inbox if it is not already running. */
+        void post(Machine m, Event event) {
+            busy();
+            boolean schedule;
+            synchronized (m) {
+                m.inbox.add(event);
+                schedule = !m.running;
+                m.running = true;
+            }
+            if (schedule) worker(m).execute(() -> drain(m));
+        }
+
+        /** A pinned machine's own worker (chosen when it starts); any worker for a migrating one. */
+        ExecutorService worker(Machine m) {
+            synchronized (m) {
+                if (!m.pinned) return workers[Math.floorMod(nextWorker.getAndIncrement(), workers.length)];
+                if (m.worker < 0) m.worker = Math.floorMod(nextWorker.getAndIncrement(), workers.length);
+                return workers[m.worker];
+            }
+        }
+
+        /**
+         * Handle this machine's events one at a time, on this worker, until its
+         * inbox is empty. A migrating machine's next batch may run elsewhere.
+         */
+        void drain(Machine m) {
+            while (true) {
+                Event event;
+                synchronized (m) {
+                    event = m.inbox.poll();
+                    if (event == null) { m.running = false; return; }
+                }
+                try {
+                    handle(m, event);
+                } catch (Throwable t) {
+                    failure.compareAndSet(null, t);
+                    synchronized (this) { notifyAll(); }
+                } finally {
+                    settle();
                 }
             }
         }
 
-        /** Resume every idle machine once. `true` if any recorded something or stopped being idle. */
-        boolean resumeIdle() throws Throwable {
-            boolean progressed = false;
-            for (long handle : List.copyOf(machines.keySet())) {
-                Integer status = machines.get(handle);
-                if (status == null || status != IDLE) continue;
-                byte[] data = lib.resume(handle);
-                progressed |= data.length > 0 || lib.status != IDLE;
-                ran(handle, data);
+        void handle(Machine m, Event event) throws Throwable {
+            if (!machines.containsKey(m.handle)) return; // completed and freed meanwhile
+            Outcome out = switch (event) {
+                case Start s -> lib.start(m.handle);
+                case Resume r -> lib.resume(m.handle); // harmless if it has moved on since
+                case Reply r -> {
+                    // Closed while in flight: the routine no longer wants it, and a reply would be STALE.
+                    if (inFlight.remove(new Request(m.handle, r.id())) == null) yield null;
+                    yield lib.reply(m.handle, r.record());
+                }
+            };
+            if (out == null) return;
+            if (TRACE) System.err.printf("[%s] %s(%d) -> %d%n", Thread.currentThread().getName(),
+                event.getClass().getSimpleName().toLowerCase(), m.handle, out.status());
+            m.status = out.status();
+            dispatch(m, decode(out.data()));
+            if (out.status() == COMPLETE) {
+                machines.remove(m.handle);
+                lib.free(m.handle); // on this worker: a pinned machine's own thread
             }
-            return progressed;
+        }
+
+        /** Tells run here, in order; children are registered and started; asks go to virtual threads; closed ids are cancelled. */
+        void dispatch(Machine m, List<Effect> effects) {
+            for (Effect e : effects) {
+                switch (e.kind()) {
+                    case "write_line" -> System.out.println(e.text());
+                    case "woke" -> {
+                        Machine woken = machines.get(e.id());
+                        if (woken != null) post(woken, new Resume());
+                    }
+                    case "spawned", "spawned_pinned" -> {
+                        Machine child = new Machine(e.id(), e.kind().equals("spawned_pinned"));
+                        machines.put(child.handle, child);
+                        post(child, new Start());
+                    }
+                    case "closed" -> {
+                        InFlight work = inFlight.remove(new Request(m.handle, e.id()));
+                        if (work != null) {
+                            if (work.task() != null) work.task().cancel(true);
+                            if (work.settled().compareAndSet(false, true)) settle();
+                        }
+                    }
+                    default -> ask(m, e);
+                }
+            }
+        }
+
+        void ask(Machine m, Effect e) {
+            busy();
+            AtomicBoolean settled = new AtomicBoolean();
+            Request request = new Request(m.handle, e.id());
+            // Registered before its task can finish, so the reply finds it; the
+            // task itself is filled in just after.
+            inFlight.put(request, new InFlight(null, settled));
+            Future<?> running = effects.submit(() -> {
+                try {
+                    post(m, new Reply(e.id(), perform(e)));
+                } catch (InterruptedException cancelled) {
+                    // closed: nothing to reply
+                } catch (Throwable t) {
+                    failure.compareAndSet(null, t);
+                } finally {
+                    if (settled.compareAndSet(false, true)) settle();
+                }
+                return null;
+            });
+            inFlight.computeIfPresent(request, (k, v) -> new InFlight(running, settled));
         }
 
         byte[] perform(Effect e) throws InterruptedException {
@@ -310,30 +463,35 @@ public class Main {
             };
         }
 
+        /** Run `root` and everything it spawns until nothing can progress. */
+        void run(long root) throws Throwable {
+            Machine first = new Machine(root, false);
+            machines.put(root, first);
+            post(first, new Start());
+
+            while (true) {
+                awaitQuiet();
+                // Quiet: anything woken outside a call? If not, nothing can happen again.
+                List<Effect> woken = decode(lib.wakes());
+                if (woken.isEmpty()) break;
+                dispatch(first, woken);
+            }
+
+            if (!machines.isEmpty())
+                throw new IllegalStateException("stalled: machines " + machines.keySet() + " can never progress");
+        }
+
         @Override
-        public void close() { pool.close(); }
+        public void close() {
+            effects.close();
+            for (ExecutorService w : workers) w.close();
+        }
     }
 
     static void drive(Library lib, long root, List<String> script) throws Throwable {
-        try (Host host = new Host(lib, script)) {
-            host.ran(root, lib.start(root));
-
-            while (true) {
-                Completion c = host.done.poll();
-                if (c == null) {
-                    // No completion waiting: idle machines may have messages.
-                    if (host.resumeIdle()) continue;
-                    if (host.inFlight.isEmpty()) break;
-                    c = host.done.take();
-                }
-                // Closed while in flight: the routine no longer wants it, and a reply would be STALE.
-                if (host.inFlight.remove(c.request()) == null) continue;
-                long handle = c.request().handle();
-                host.ran(handle, lib.reply(handle, c.record()));
-            }
-
-            if (!host.machines.isEmpty())
-                throw new IllegalStateException("stalled: machines " + host.machines.keySet() + " can never progress");
+        int threads = Math.max(2, Runtime.getRuntime().availableProcessors());
+        try (Scheduler scheduler = new Scheduler(lib, script, threads)) {
+            scheduler.run(root);
         }
     }
 
@@ -347,18 +505,27 @@ public class Main {
         throw new IllegalStateException("build it first: cargo build -p greeter_cdylib");
     }
 
+    static boolean TRACE;
+
     public static void main(String[] args) throws Throwable {
         List<String> argv = List.of(args);
-        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk").stream()
+        TRACE = argv.contains("--trace");
+        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring").stream()
             .filter(k -> argv.contains("--" + k)).findFirst().orElse("greeter");
         List<String> script = switch (kind) {
             case "fanout" -> List.of("bob", "carol");
-            case "ticker", "ping-pong" -> List.of();
+            case "ticker", "ping-pong", "ring" -> List.of();
             case "front-desk" -> List.of("alice", "bob", "carol");
             default -> List.of("alice", "bob");
         };
 
         Library lib = new Library(findLibrary());
+        long began = System.nanoTime();
         drive(lib, lib.create(kind), script);
+        if (kind.equals("ring")) {
+            int hops = 16 * 250;
+            double ms = (System.nanoTime() - began) / 1e6;
+            System.err.printf("%d hops in %.1f ms: %.2f µs per hop%n", hops, ms, ms * 1e3 / hops);
+        }
     }
 }

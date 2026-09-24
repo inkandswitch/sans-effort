@@ -16,6 +16,7 @@
 //! cargo run -p greeter_tokio -- --fanout    # two waits at a time
 //! cargo run -p greeter_tokio -- --ping-pong # a parent and the child it spawns
 //! printf 'alice\nbob\n' | cargo run -p greeter_tokio -- --front-desk
+//! cargo run -p greeter_tokio -- --ring      # 16 tasks passing a counter
 //! ```
 //!
 //! The tests at the bottom run the same routines under tokio's paused clock,
@@ -25,7 +26,9 @@
 mod ctx;
 
 use ctx::DemoCtx;
-use routines::{fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong};
+use routines::{
+    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
+};
 use sans_effort::run::Run;
 use sans_effort_tokio::ctx::TokioCtx;
 use tokio_util::task::LocalPoolHandle;
@@ -41,6 +44,17 @@ async fn main() -> Result<(), tokio::task::JoinError> {
         tokio::spawn(Fanout::new(ctx).run()).await
     } else if mode("--ping-pong") {
         tokio::spawn(PingPong::new(ctx, 3).run()).await
+    } else if mode("--ring") {
+        let began = std::time::Instant::now();
+        let ran = tokio::spawn(Ring::new(ctx, 16, 250).run()).await;
+        let hops = 16 * 250;
+        let elapsed = began.elapsed();
+        eprintln!(
+            "{hops} hops in {:.1} ms: {:.2} µs per hop",
+            elapsed.as_secs_f64() * 1e3,
+            elapsed.as_secs_f64() * 1e6 / f64::from(hops)
+        );
+        ran
     } else if mode("--front-desk") {
         tokio::spawn(FrontDesk::new(ctx).run()).await
     } else {
@@ -140,15 +154,12 @@ mod tests {
     }
 
     /// Ping-pong's child is spawned with `spawn`, so under tokio it is an
-    /// ordinary task that may run on any worker; the transcript alternates
-    /// because each side waits for the other.
+    /// ordinary task that may run on any worker; each round waits for the
+    /// other side, and only the parent writes.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ping_pong_spawns_a_task() {
         let written = transcript(b"", |ctx| PingPong::new(ctx, 3).run()).await;
-        assert_eq!(
-            written,
-            "pong 1\nping 1, pong 1\npong 2\nping 2, pong 2\npong 3\nping 3, pong 3\n"
-        );
+        assert_eq!(written, "ping 1, pong 1\nping 2, pong 2\nping 3, pong 3\n");
     }
 
     /// The front desk's clerks are pinned: each runs on the context's local

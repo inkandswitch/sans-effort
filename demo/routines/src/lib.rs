@@ -10,7 +10,8 @@
 //! the five traits, which is the point of it. [`ping_pong::PingPong`]
 //! spawns a child and talks to it over plain `async-channel`s: two machines,
 //! and messages that are never effects. [`front_desk::FrontDesk`] spawns a
-//! clerk per visitor, each replying on a one-shot channel.
+//! clerk per visitor, each replying on a one-shot channel. [`ring::Ring`]
+//! passes a counter around a ring of routines: the cost of one hop.
 //!
 //! A routine owns a context `C` and asks nothing of it beyond its trait
 //! bounds. It does not know whether `read_line` awaits a tokio channel, pops
@@ -47,6 +48,7 @@ pub mod fanout;
 pub mod front_desk;
 pub mod greeter;
 pub mod ping_pong;
+pub mod ring;
 pub mod ticker;
 pub mod traits;
 
