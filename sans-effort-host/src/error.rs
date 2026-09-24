@@ -1,6 +1,6 @@
 //! Why a call failed.
 
-use crate::code;
+use crate::contract;
 use sans_effort::{boundary::codec::DecodeError, reply::kind::Kind};
 
 /// Why a call failed. [`code`](Self::code) is its wire form.
@@ -33,9 +33,14 @@ pub enum Error {
         /// What arrived.
         got: Kind,
     },
-    /// Another thread is inside `start` or `reply` for this handle.
+    /// Another thread is inside `start`, `reply`, or `resume` for this
+    /// handle.
     #[error("another thread is driving this routine")]
     Busy,
+    /// The handle names a pinned machine started on another thread; every
+    /// call for it must come from that thread. Nothing changed.
+    #[error("this routine is pinned to another thread")]
+    WrongThread,
     /// The routine already completed.
     #[error("routine already completed")]
     Finished,
@@ -49,14 +54,15 @@ impl Error {
     #[must_use]
     pub const fn code(self) -> i32 {
         match self {
-            Error::BadHandle => code::BAD_HANDLE,
-            Error::BadInput => code::BAD_INPUT,
-            Error::Malformed(_) => code::MALFORMED,
-            Error::Stale { .. } => code::STALE,
-            Error::Busy => code::BUSY,
-            Error::Finished => code::FINISHED,
-            Error::Panicked => code::PANICKED,
-            Error::WrongKind { .. } => code::WRONG_KIND,
+            Error::BadHandle => contract::BAD_HANDLE,
+            Error::BadInput => contract::BAD_INPUT,
+            Error::Malformed(_) => contract::MALFORMED,
+            Error::Stale { .. } => contract::STALE,
+            Error::Busy => contract::BUSY,
+            Error::Finished => contract::FINISHED,
+            Error::Panicked => contract::PANICKED,
+            Error::WrongKind { .. } => contract::WRONG_KIND,
+            Error::WrongThread => contract::WRONG_THREAD,
         }
     }
 }

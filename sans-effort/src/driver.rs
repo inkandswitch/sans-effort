@@ -33,9 +33,11 @@
 //!   .await → Ready("bob")  ◀────── take mail[7]         ◀──resume──
 //! ```
 //!
-//! There is no waker. `Pending` from the routine means exactly "a request is
-//! outstanding" — or, if none is, [`Status::Stalled`]: the routine awaited
-//! something the driver cannot wake.
+//! There is no waker. `Pending` from the routine means "a request is
+//! outstanding" — or, if none is, [`Status::Idle`]: the routine is waiting on
+//! something inside the process, such as a channel another routine sends on.
+//! Nothing wakes it; the host polls it again with
+//! [`resume`](Driver::resume).
 //!
 //! # Threading
 //!
@@ -61,27 +63,32 @@ pub mod status;
 pub mod step;
 
 mod mail;
+mod stepper;
 mod sync;
 
-use self::{outbox::Outbox, status::Status, step::Step};
+use self::{outbox::Outbox, status::Status, step::Step, stepper::Stepper};
 use crate::reply::{Reply, handle::ReplyHandle};
 use alloc::boxed::Box;
-use core::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Waker},
-};
+use core::{future::Future, pin::Pin};
+
+/// A routine's future, boxed and `Send`: what a [`Driver`] steps.
+pub type BoxedRoutine = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// A routine's future, boxed, not necessarily `Send`: what a [`LocalDriver`]
+/// steps.
+pub type LocalBoxedRoutine = Pin<Box<dyn Future<Output = ()>>>;
 
 /// One suspended routine plus the outbox its context writes into.
 ///
 /// The host API is sans-io's: [`start`](Self::start), then
-/// [`reply`](Self::reply) with each handle the effects hand back, until
-/// [`is_finished`](Self::is_finished).
+/// [`reply`](Self::reply) with each handle the effects hand back, and
+/// [`resume`](Self::resume) when the routine is [`Idle`](Status::Idle) and may
+/// have something new — until [`is_finished`](Self::is_finished).
+///
+/// Its future is `Send`, so a `Driver` may be polled from any thread, one at a
+/// time. For a routine whose future is not `Send`, use [`LocalDriver`].
 pub struct Driver<E> {
-    /// `None` once the routine has completed.
-    future: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
-    outbox: Outbox<E>,
-    status: Status,
+    stepper: Stepper<E, dyn Future<Output = ()> + Send>,
 }
 
 impl<E> Driver<E> {
@@ -100,16 +107,25 @@ impl<E> Driver<E> {
         let future = make(outbox.clone());
 
         Self {
-            future: Some(Box::pin(future)),
-            outbox,
-            status: Status::Awaiting,
+            stepper: Stepper::new(Box::pin(future), outbox),
+        }
+    }
+
+    /// As [`new`](Self::new), for a routine that is already boxed — a spawned
+    /// child, say — so it is not boxed twice.
+    pub fn from_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
+        let outbox = Outbox::new();
+        let future = make(outbox.clone());
+
+        Self {
+            stepper: Stepper::new(future, outbox),
         }
     }
 
     /// Begin: poll once and return the effects recorded before the first
     /// wait. Valid once; a second call is a no-op returning an empty step.
     pub fn start(&mut self) -> Step<E> {
-        self.poll()
+        self.stepper.poll()
     }
 
     /// Deliver the value a handle asked for and advance: the effects
@@ -127,50 +143,110 @@ impl<E> Driver<E> {
     /// is reported as one rather than delivered to whichever slot of this
     /// driver shares the id.
     pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
-        if self.outbox.deliver(reply, value.into_value()) {
-            self.poll()
-        } else {
-            Step::default()
-        }
+        self.stepper.reply(reply, value)
+    }
+
+    /// Poll again without delivering anything: the effects recorded before
+    /// the next wait.
+    ///
+    /// For an [`Idle`](Status::Idle) routine — one waiting on something in
+    /// the process, such as a channel another routine sends on — once that
+    /// may have changed. Harmless when nothing has: the routine finds nothing
+    /// new, and the step is empty.
+    pub fn resume(&mut self) -> Step<E> {
+        self.stepper.poll()
     }
 
     /// What the last poll reported.
     #[must_use]
     pub const fn status(&self) -> Status {
-        self.status
+        self.stepper.status()
     }
 
     /// `true` once the routine has returned.
     #[must_use]
     pub const fn is_finished(&self) -> bool {
-        self.future.is_none()
-    }
-
-    fn poll(&mut self) -> Step<E> {
-        let Some(future) = self.future.as_mut() else {
-            return Step::default();
-        };
-
-        let poll = future
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()));
-        let (effects, outstanding) = self.outbox.drain();
-
-        self.status = Status::classify(poll, outstanding);
-
-        if poll.is_ready() {
-            // Anything the routine still held is dropped with it, and closes.
-            self.future = None;
-        }
-
-        Step::new(effects, self.outbox.take_closed())
+        self.stepper.is_finished()
     }
 }
 
 impl<E> core::fmt::Debug for Driver<E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Driver")
-            .field("status", &self.status)
+            .field("status", &self.status())
+            .field("finished", &self.is_finished())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A [`Driver`] for a routine whose future is not `Send`.
+///
+/// Identical to a `Driver` except that it is not `Send` itself, so the
+/// compiler keeps it on the thread that built it — the right home for a
+/// routine that holds an `Rc`, or a foreign value tied to its thread, across
+/// an `.await`.
+pub struct LocalDriver<E> {
+    stepper: Stepper<E, dyn Future<Output = ()>>,
+}
+
+impl<E> LocalDriver<E> {
+    /// Build the routine around a fresh outbox, as [`Driver::new`] does,
+    /// without requiring its future to be `Send`.
+    pub fn new<F: Future<Output = ()> + 'static, M: FnOnce(Outbox<E>) -> F>(make: M) -> Self {
+        let outbox = Outbox::new();
+        let future = make(outbox.clone());
+
+        Self {
+            stepper: Stepper::new(Box::pin(future), outbox),
+        }
+    }
+
+    /// As [`new`](Self::new), for a routine that is already boxed.
+    pub fn from_boxed<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(make: M) -> Self {
+        let outbox = Outbox::new();
+        let future = make(outbox.clone());
+
+        Self {
+            stepper: Stepper::new(future, outbox),
+        }
+    }
+
+    /// As [`Driver::start`].
+    pub fn start(&mut self) -> Step<E> {
+        self.stepper.poll()
+    }
+
+    /// As [`Driver::reply`].
+    ///
+    /// # Panics
+    ///
+    /// If the handle was minted by another driver.
+    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+        self.stepper.reply(reply, value)
+    }
+
+    /// As [`Driver::resume`].
+    pub fn resume(&mut self) -> Step<E> {
+        self.stepper.poll()
+    }
+
+    /// What the last poll reported.
+    #[must_use]
+    pub const fn status(&self) -> Status {
+        self.stepper.status()
+    }
+
+    /// `true` once the routine has returned.
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
+        self.stepper.is_finished()
+    }
+}
+
+impl<E> core::fmt::Debug for LocalDriver<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LocalDriver")
+            .field("status", &self.status())
             .field("finished", &self.is_finished())
             .finish_non_exhaustive()
     }
@@ -183,7 +259,10 @@ mod tests {
     use super::*;
     use crate::{run::Run, testing::poll_once};
     use alloc::string::String;
-    use core::{ops::ControlFlow, task::Poll};
+    use core::{
+        ops::ControlFlow,
+        task::{Context, Poll},
+    };
 
     #[derive(Debug)]
     enum Effect {
@@ -427,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn foreign_wait_is_stalled() {
+    fn a_wait_with_no_request_outstanding_is_idle() {
         struct Never;
 
         impl Future for Never {
@@ -440,6 +519,110 @@ mod tests {
 
         let mut driver = Driver::<Effect>::new(|_| Never);
         assert!(driver.start().is_empty());
-        assert_eq!(driver.status(), Status::Stalled);
+        assert_eq!(driver.status(), Status::Idle);
+    }
+
+    /// A queue two routines share: the smallest in-process channel. It stores
+    /// no waker; the host resumes idle machines.
+    type Queue = std::sync::Arc<std::sync::Mutex<alloc::collections::VecDeque<String>>>;
+
+    fn recv(queue: &Queue) -> impl Future<Output = String> + '_ {
+        core::future::poll_fn(|_| {
+            queue
+                .lock()
+                .expect("queue")
+                .pop_front()
+                .map_or(Poll::Pending, Poll::Ready)
+        })
+    }
+
+    /// Waits for a message, then says it.
+    struct Listener {
+        outbox: Outbox<Effect>,
+        queue: Queue,
+    }
+
+    impl Run for Listener {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let message = recv(&self.queue).await;
+            self.outbox.tell(Effect::Say(message));
+            ControlFlow::Break(())
+        }
+    }
+
+    /// Asks the host for a message, then sends it.
+    struct Relay {
+        outbox: Outbox<Effect>,
+        queue: Queue,
+    }
+
+    impl Run for Relay {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let message = self.outbox.ask(Effect::Ask).await;
+            self.queue.lock().expect("queue").push_back(message);
+            ControlFlow::Break(())
+        }
+    }
+
+    #[test]
+    fn an_idle_machine_resumes_once_another_has_sent() {
+        let queue = Queue::default();
+        let mut listener = Driver::new({
+            let queue = Queue::clone(&queue);
+            move |outbox| Listener { outbox, queue }.run()
+        });
+        let mut relay = Driver::new({
+            let queue = Queue::clone(&queue);
+            move |outbox| Relay { outbox, queue }.run()
+        });
+
+        assert!(listener.start().is_empty());
+        assert_eq!(listener.status(), Status::Idle);
+        assert!(
+            listener.resume().is_empty(),
+            "nothing sent yet: a spurious resume changes nothing"
+        );
+        assert_eq!(listener.status(), Status::Idle);
+
+        let (_, handles) = split(relay.start());
+        assert!(relay.reply(one(handles), String::from("hi")).is_empty());
+        assert!(relay.is_finished());
+
+        let (said, _) = split(listener.resume());
+        assert_eq!(said, ["hi"]);
+        assert!(listener.is_finished());
+    }
+
+    /// Holds an `Rc` across an `.await`, so its future is not `Send`: only a
+    /// `LocalDriver` can step it.
+    struct Counted {
+        outbox: Outbox<Effect>,
+        seen: alloc::rc::Rc<core::cell::Cell<u32>>,
+    }
+
+    impl Run for Counted {
+        async fn step(&mut self) -> ControlFlow<()> {
+            let seen = alloc::rc::Rc::clone(&self.seen);
+            let answer = self.outbox.ask(Effect::Ask).await;
+            seen.set(seen.get() + 1);
+            self.outbox
+                .tell(Effect::Say(alloc::format!("{answer} {}", seen.get())));
+            ControlFlow::Break(())
+        }
+    }
+
+    #[test]
+    fn a_local_driver_steps_a_future_that_is_not_send() {
+        let seen = alloc::rc::Rc::new(core::cell::Cell::new(0));
+        let mut driver = LocalDriver::new({
+            let seen = alloc::rc::Rc::clone(&seen);
+            move |outbox| Counted { outbox, seen }.run()
+        });
+
+        let (_, handles) = split(driver.start());
+        let (said, _) = split(driver.reply(one(handles), String::from("hi")));
+        assert_eq!(said, ["hi 1"]);
+        assert!(driver.is_finished());
+        assert_eq!(seen.get(), 1);
     }
 }

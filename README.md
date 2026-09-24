@@ -19,7 +19,7 @@ This repo contains the library. The research exploration including alternatives 
 [compare]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/compare
 [bench]: https://tangled.org/expede.wtf/effect-routines-exploration/tree/main/hosts/bench
 
-## Three layers
+## Three Layers
 
 ```mermaid
 flowchart TB
@@ -45,7 +45,7 @@ flowchart TB
 
 The routine is the foundation and depends on nothing above it. The native path is why you write it this way: the routine is also an ordinary library function. The driven path is what these crates provide.
 
-## The routine
+## The Routine
 
 ```rust
 use sans_effort_effects::{console::{ReadLine, WriteLine}, time::Sleep};  // the standard library
@@ -66,7 +66,7 @@ impl<C: Sleep + Lookup + ReadLine + WriteLine> Run for Greeter<C> {
 }
 ```
 
-## Two contexts, one routine
+## Two Contexts, One Routine
 
 Natively, on tokio — no driver, no effects, tokio polls the task:
 
@@ -93,13 +93,13 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 
 `demo/` has all of this in full — the greeter, the ticker, both contexts, native hosts on tokio and on Node (wasm-bindgen), and a C-ABI binding driven from Python (ctypes) and Java (Panama) — and `nix develop` then `demo` runs all four and checks the transcripts are byte-identical.
 
-### Where this sits
+### Where This Sits
 
 This is the [tagless-final][tf] style with the representation pinned to `impl Future`: the traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one — the instance that recovers the initial, tagged encoding (`Full`) from the final one. `Quiet` is a smaller algebra. Rust readers may know the same shape as "capability traits" or MTL-style; the effects style, where the routine emits a tagged enum directly, is the initial encoding, and the two share one mechanism because initial and final encodings are interconvertible. Rust has no higher-kinded types, so the representation cannot vary; the interpreter does.
 
 [tf]: https://okmij.org/ftp/tagless-final/index.html
 
-## How a host drives a routine
+## How a Host Drives a Routine
 
 ```text
   host                                    routine
@@ -145,7 +145,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 
 Channels in the standard library (`Open`, `Post`, `Receive`, `Spawn`), with their native side in `sans-effort-tokio`; a derive for the `View`/`Encode` restatement. The demo grows routines that spawn and message each other, with each host's loop as the scheduler.
 
-### Not here, on purpose
+### Not Here, on Purpose
 
 A scheduler inside the library (the host is the scheduler, whichever host it is); supervision and linking; deadlock levels; language-side host SDKs beyond the demo; `pyo3`/`rustler` bindings. Each is a natural next layer; none is needed to use what is here.
 

@@ -37,6 +37,6 @@ await new Greeter({
 
 Every method may return its value or a `Promise` of it. `readLine` returning anything but a string closes the input: the routine sees `ReadLineError::Closed`. The generated `pkg/greeter_wasm.d.ts` has the exact types.
 
-## Why not a `Machine` here?
+## Why Not a `Machine` Here?
 
 A JS host *could* take Python's role — hold a `Machine` in a class and step the routine by request id — and would want to for a deterministic scheduler or a replay harness, where JS must own the loop. For running a routine in a page or a Node script, the native form is the idiomatic one: no ids, no codec, no status mirror, and the routine cannot tell it is not on tokio.

@@ -10,7 +10,7 @@ Some documents describe what exists and some describe what is planned. Each one 
 |-----------------------------------|-------------------|--------------------------------------------------------------------------------|
 | [`assumptions`](assumptions.md)   | current + planned | What the design assumes about hosts, routines, and targets                     |
 | [`effects`](effects.md)           | current + planned | A standard library of capabilities: `sans-effort-effects`, `sans-effort-tokio` |
-| [`channels`](channels.md)         | planned           | Messaging, spawning, and the host as the scheduler                             |
+| [`channels`](channels.md)         | planned           | Plain channels between machines, spawning, and the host as the scheduler       |
 | [`capabilities`](capabilities.md) | planned           | Object-capability discipline within a process, given an honest host            |
 | [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
 
@@ -58,7 +58,7 @@ flowchart BT
 
 The mechanism crate is meant to be small and close to frozen; everything opinionated lives in a crate above it, so it can change without breaking the mechanism.
 
-## Typical flow
+## Typical Flow
 
 A foreign host driving one routine. Each call returns the effects the routine recorded before its next wait.
 
@@ -79,7 +79,7 @@ sequenceDiagram
     H->>R: free(handle)
 ```
 
-## Design principles
+## Design Principles
 
 - _Direct style._ A routine is an ordinary `async fn`. The compiler writes the state machine.
 - _Traits, not effects._ A routine names the capabilities it needs as traits. A context decides whether each call is a real future or a recorded effect.

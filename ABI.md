@@ -2,20 +2,22 @@
 
 A _binding_ is the thin `unsafe` wrapper an application puts around `sans-effort-host` so a foreign host can call it. This is what a binding exports, and what a foreign host may assume. A host that assumes this and nothing else is generic over routines: it can drive any routine whose binding speaks it, given only the routine's tag table.
 
-The shape: `abi_version` once, then `new`, `start(handle) → effects`, then `reply(handle, record) → effects` until the status is `COMPLETE`, then `free`. Each call returns the effects the routine recorded before its next wait.
+The shape: `abi_version` once, then `new`, `start(handle) → effects`, then `reply(handle, record) → effects` — or `resume(handle) → effects` while the status is `IDLE` — until the status is `COMPLETE`, then `free`. Each call returns the effects the routine recorded before its next wait.
 
 | Element | Contract |
 |---------|----------|
-| Calls | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_start(u64, out_ptr, out_len) → i32`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. A binding may export more constructors, with or without an in-buffer of encoded arguments (`<prefix>_new_ticker()`, `<prefix>_new_greeter(in_ptr, in_len)`); all return the same handle type and answer to the same calls. |
+| Calls | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_start(u64, out_ptr, out_len) → i32`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_resume(u64, out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. A binding may export more constructors, with or without an in-buffer of encoded arguments (`<prefix>_new_ticker()`, `<prefix>_new_greeter(in_ptr, in_len)`); all return the same handle type and answer to the same calls. |
 | Machine handles | `u64`, never `0`, never reused; a stale handle is `BAD_HANDLE`, not a fault. |
-| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `STALLED`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`, `-7` `MALFORMED`, `-8` `STALE`). `BAD_INPUT` is a second `start` or an id never issued; `MALFORMED` a reply record that does not parse; `STALE` a reply to an id that was issued but is no longer awaited — answered already, or closed — and is harmless. |
+| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `IDLE`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`, `-7` `MALFORMED`, `-8` `STALE`, `-9` `WRONG_THREAD`). `IDLE` means suspended with no request outstanding: the routine waits on something inside the process, such as a channel another routine sends on. `BAD_INPUT` is a second `start`, a `reply` or `resume` before `start`, or an id never issued; `MALFORMED` a reply record that does not parse; `STALE` a reply to an id that was issued but is no longer awaited — answered already, or closed — and is harmless. `WRONG_THREAD` is a call for a pinned machine from a thread other than the one that started it; nothing changed, and the call may be made again from the right thread. |
 | Out-buffers | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written. |
 | `start` | Valid once per handle; a second call is `BAD_INPUT`. Returns the effects recorded before the first wait. |
 | `reply` | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` — typed by reply kind, not by effect. Trailing bytes are `MALFORMED`. Returns the effects recorded before the next wait. |
+| `resume` | Poll without a reply: returns the effects recorded before the next wait. For an `IDLE` routine, once something it waits on may have changed — a message sent by another routine. Resuming when nothing has changed is harmless: the routine suspends again and the batch is empty. So a host may simply resume its `IDLE` machines whenever it has nothing else to do. |
 | Effects | Little-endian; `str` and `bytes` are `u32 len` + payload. One frame per effect, frames concatenated: `u8 kind · u32 len · payload`, where the payload is the routine's record — one `u8` tag, its fields, and, for an ask, its `u64` request id last. See [Frames](#frames). |
 | Request ids | Per machine, from `1`, gapless, in the order effects are recorded: each id a host sees is one more than the last. An id is assigned when its effect is recorded, so a request the routine drops before recording it never gets one. Any number may be outstanding at once, and the host may reply in any order. A reply to an id at or below the highest seen that is no longer outstanding — answered, or reported in a closed frame — is `STALE`; to an id above it, `BAD_INPUT`. |
 | Upcalls | None. The host calls in; the routine never calls out. No callback is registered, no host value is held on the Rust side. |
-| Threading | Any thread, one at a time per handle: two threads driving one handle get `BUSY`, not a race. A host may pool, and a machine's calls migrate between threads. |
+| Threading | Per machine. A _migrating_ machine may be driven from any thread, one at a time per handle: two threads driving one handle get `BUSY`, not a race; a host may pool, and its calls migrate between threads. A _pinned_ machine is bound to the thread that calls its `start`: every later call for it must come from there, and from any other is `WRONG_THREAD`. Machines a binding constructs are migrating unless it documents otherwise; a spawned child's kind is named by the routine's own tag table. |
+| Spawned machines | A routine may create machines. Each reaches the host as an effect naming its new handle, per the routine's tag table. The host must `start` or `free` every handle it is given, as it must every handle from `new`. |
 | Panics | A routine that panics is removed; the call returns `PANICKED` and every later call on that handle is `BAD_HANDLE`. The process is not aborted. Every request it had outstanding is closed, without a closed frame; so is every request of a machine that is freed. |
 
 ## Frames
@@ -41,7 +43,7 @@ Every length — a frame's `len`, and the length prefix of a `str` or `bytes` fi
 
 It changes when a host written against the previous revision could misbehave against a binding written against the new one — a new code, a new reply kind, a change to a record's layout or to a call's signature. It does not change for what the table already leaves to the binding — a new constructor, a routine's tag table — nor for a new frame kind, which older hosts skip. A binding may version its own vocabulary however it likes (`<prefix>_schema_version()` is a reasonable convention); that is not this number.
 
-## The reply menu
+## The Reply Menu
 
 Four kinds, and no more. A richer reply crosses as `bytes` and is decoded on the routine's side.
 
@@ -54,7 +56,7 @@ Four kinds, and no more. A richer reply crosses as `bytes` and is decoded on the
 
 Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays outstanding, so the host may retry with the right kind. A reply to an id no longer awaited is `STALE`; to an id never issued, `BAD_INPUT`.
 
-## What is not in the ABI
+## What Is Not in the ABI
 
 And therefore lives with each routine:
 
@@ -62,7 +64,7 @@ And therefore lives with each routine:
 - _The world_ — what performing an effect means: where `WriteLine` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
 - _The host loop_ — the host's own. `demo/python/main.py` is the smallest: it performs each effect, then replies. `demo/java/Main.java` is shaped like a production host: each ask on its own virtual thread, replies in whatever order the effects finish, closed frames cancel the thread, and one driver thread makes every call.
 
-## A conversation
+## A Conversation
 
 The greeter in `demo/`, driven from start to the end of its input. Each frame is written `tell[…]` or `ask[…]`, with its length left out. `ReadLine` is fallible, so its replies are `bytes` holding an encoded `Result` — `⟨00 "alice"⟩` is `Ok("alice")`, `⟨01 00⟩` is `Err(Closed)`:
 

@@ -29,7 +29,7 @@
 //!   sans-effort-host  ──▶  cdylib (C ABI)
 //! ```
 //!
-//! # The host chooses the vocabulary
+//! # The Host Chooses the Vocabulary
 //!
 //! Each wait is a request struct (`Lookup`, `ReadLine`, …) naming its
 //! reply type through `Request`. `Ctx` implements each of the greeter's

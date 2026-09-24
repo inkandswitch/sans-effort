@@ -29,7 +29,7 @@
 //! assert_eq!(written, b"hello\n");
 //! ```
 //!
-//! # Your own capabilities
+//! # Your Own Capabilities
 //!
 //! A routine takes one context, which must provide every capability it
 //! names. An application with capabilities of its own wraps a `TokioCtx` in

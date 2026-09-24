@@ -1,134 +1,110 @@
 # Capabilities
 
 > [!NOTE]
-> _Status:_ planned, alongside [`channels`](channels.md). `ReplyHandle` and vocabulary attenuation exist today.
+> _Status:_ `ReplyHandle` and vocabulary attenuation exist today. Spawning and channels between machines are planned; see [`channels`](channels.md).
 
 The claim this design makes:
 
 > [!IMPORTANT]
-> Given an honest host and safe-Rust routines, a routine's authority is exactly the set of channel ends it holds, and each one it holds it opened, or was given by something that held it.
+> Given an honest host and safe-Rust routines, a routine can use only the capabilities its context provides, and can reach another routine only through a channel end it created or was given.
 
 In short: _object capabilities within a process, given an honest host._
 
-## The parties
+## The Parties
 
 ```mermaid
 flowchart TB
-    subgraph host["host — trusted: owns the table, routes"]
+    subgraph host["host — trusted: owns the table, performs effects, schedules"]
         direction LR
         a["routine A"]
         b["routine B"]
         c["routine C"]
     end
-    a -. "holds a Sender to B" .-> b
-    b -. "holds a Sender to C" .-> c
+    a -. "holds a sender to B" .-> b
+    b -. "holds a sender to C" .-> c
 ```
 
-The host — tokio's registry, a Python loop, a test router — is the vat. It owns the tables and does the routing, so it is trusted by construction. Routines are not trusted: they may be written by other parties. The design constrains them, not the host.
+The host — a Python loop, a Java loop, tokio, a test harness — is the vat. It owns the table of machines, performs every effect, and decides when each machine runs, so it is trusted by construction. Routines are not trusted: they may be written by other parties. The design constrains them, not the host.
 
-## Where references come from
+## Two Kinds of Authority
 
-A routine can come to hold a channel end in exactly these ways, which are Mark Miller's rules for how connectivity arises:
-
-| Route          | In this design                                  | Granted by        |
-|----------------|-------------------------------------------------|-------------------|
-| Creation       | `open()`: both ends of a new channel            | the host          |
-| Endowment      | its construction arguments, given at spawn      | its parent        |
-| Introduction   | a `Sender` inside a message it received         | the sender        |
-
-Parenthood alone grants nothing: `spawn` returns no handle. A parent reaches its child only through a channel it opened and endowed the child with — which is what `spawn_with_inbox` packages.
-
-`Post` and `Receive` are the network: having them grants nothing by themselves. Authority is the channel ends held.
-
-Attenuation works two ways. _By trait:_ a routine whose context lacks `Lookup` cannot look anything up, and a routine that needs it does not compile under that context. _By reference:_ a routine can post only on the senders it holds, and receive only on the receivers it holds. Revocation is the classic forwarder: hand out a sender to a proxy routine instead, and stop forwarding when access should end.
+| Authority | Held as | Granted by | Attenuated by |
+|-----------|---------|------------|---------------|
+| Asking the world for something: time, input, a lookup | a capability trait on the context | the host, by the vocabulary it offers | trait: a routine whose context lacks `Lookup` does not compile |
+| Reaching another routine | a channel end | whoever created the channel | reference: a routine can send only on the senders it holds |
 
 `ReplyHandle<T>` is a capability in the full sense today: unforgeable, single-use, and bound to the driver that minted it.
 
-## Handles cannot be forged in Rust
+## Where Channel Ends Come From
 
-`Sender<M>` and `Receiver<M>` have private constructors and no public `Decode`. Safe code cannot fabricate one.
+A routine can come to hold a channel end in exactly these ways — Mark Miller's rules for how connectivity arises:
 
-- _Under tokio_ this is the whole story. A message is a Rust value, and a value cannot contain a handle its sender did not hold.
-- _On the wire_ it is not, because a message body is bytes that the sender encodes.
+| Route        | In this design                                              |
+|--------------|-------------------------------------------------------------|
+| Creation     | it created the channel                                      |
+| Endowment    | its parent moved the end into the closure it spawned it with |
+| Introduction | the end arrived inside a message it received                |
 
-### The hole: bytes in a body
+Parenthood alone grants nothing: `spawn` returns no handle. A parent reaches its child only through a channel it created and endowed the child with. Revocation is the classic forwarder: hand out a sender to a proxy routine instead, and stop forwarding when access should end.
 
-A malicious sender does not need a `Sender` value to write eight bytes where the receiver expects one:
+## Channel Ends Cannot Be Forged
 
-```text
-  A holds a Sender to B, not to C.
-  A guesses C's channel id and encodes it in a body:   post(to_b, Msg { reply_to: <C?> })
-  B decodes a Sender it believes A held, and posts to C on A's behalf.
-```
+A channel end is a Rust object reference: a pointer to shared memory, owned and moved by the compiler's rules. Safe code can obtain one only by creating a channel or by being given one, and a message is a Rust value, which cannot contain a reference its sender did not hold. Nothing is encoded, so there are no bytes to forge and no table of identifiers to guess into.
 
-A cannot post to C directly, but it can get B to do it — a confused deputy.
+This is why the design needs no table of handles beside each message, as Unix passes file descriptors (`SCM_RIGHTS`) or Cap'n Proto carries its capability table: those exist because their messages are bytes. These messages never are.
 
-### The fix: handles out of band
+## Spawning Cannot Escape the Parent's Limits
 
-Handles travel beside the body, not in it — as Unix passes file descriptors (`SCM_RIGHTS`) and Cap'n Proto carries a table of capabilities with each message:
+Under the reifying context, a child's context is `Ctx<E>` for the parent's own vocabulary `E`. A parent limited to `Quiet` cannot spawn a child with `Full`: the child's type says so. Spawning grants no capability the parent did not have.
 
-```text
-  Post record:   channel · handles: [channel id] · body: bytes
-                                ▲                   │
-                                └── body refers to handles by index
-```
-
-- The sender's context builds `handles` from real handle values — the only kind safe Rust can produce.
-- The host forwards the list untouched, and may check each entry is a live channel.
-- The receiver's decoder gets handles only from that list, through a reader only the context can construct. Body bytes never become a handle.
-
-The table carries capability handles in general, not one kind. Today that is `Sender`s, which copy. A `Receiver` in a message would need _move_ semantics — the sender gives up its end — and is not supported yet; receivers move only by value, at spawn.
-
-Now a sender can introduce only what it holds.
-
-## What a malicious routine can and cannot do
+## What a Malicious Routine Can and Cannot Do
 
 Given an honest host and routines in safe Rust:
 
 | A routine can…                                                   | Because                                                    |
 |------------------------------------------------------------------|------------------------------------------------------------|
-| Post anything of the right type on a sender it holds             | holding it is the authority                                |
-| Pass a sender it holds to another routine                        | delegation is allowed                                      |
-| Spawn children, with at most its own vocabulary                  | a child built by value gets its parent's vocabulary or less |
-| Send a body that fails to decode                                 | the receiver's context drops it                            |
-| Exhaust resources: flood messages, open many channels, spawn many children | the host can count, rate-limit, and refuse — policy, not capability |
+| Send anything of the right type on a sender it holds             | holding it is the authority                                |
+| Pass a channel end it holds to another routine                   | delegation is allowed                                      |
+| Spawn children, with at most its own vocabulary                  | the child's context has the parent's vocabulary            |
+| Create channels                                                  | channels are plain Rust, not a capability                  |
+| Exhaust memory with messages                                     | messages live in Rust memory the host does not see — see below |
+| Spawn many children                                              | the host can count, rate-limit, and refuse spawns — policy, not capability |
 
 | A routine cannot…                                                | Because                                                    |
 |------------------------------------------------------------------|------------------------------------------------------------|
-| Post on a channel it was never given a sender for                | `Sender` has no public constructor                         |
-| Receive on a channel it does not hold the receiver for           | `Receiver` has no public constructor, and is unique        |
-| Get another routine to post somewhere on its behalf by forging bytes | handles cross out of band, never in the body           |
+| Send on a channel it was never given a sender for                | a sender is an object reference, not a number              |
+| Receive on a channel it does not hold a receiver for             | the same                                                   |
 | Use a capability its context lacks                               | the routine does not compile under that context            |
 | Answer another routine's request                                 | `ReplyHandle` is unforgeable and bound to its driver       |
 
-## Untrusted guests
+### Messages Are Outside Host Policy
+
+Messages never pass through the host, so the host cannot count, rate-limit, log, or refuse them. Its levers are the effects it performs and the machines it schedules: it can stop resuming a machine, or free it. Where messages themselves must be policed — logged, metered, or carried to another process — host-routed channels are the answer, and they can be added alongside plain ones.
+
+## Untrusted Guests
 
 A _c-list_ is a table that translates between references and small integers at a trust boundary: the holder sees only its own numbering, so guessing integers is useless. Agoric's SwingSet keeps one per vat. Should hosts keep one per routine?
 
-Only if some routines can forge integers — and a c-list only helps some of those:
+Only if some routines can forge references — and a c-list only helps some of those:
 
 | Untrusted routine                                 | Does a c-list in the host help?                                                                    |
 |---------------------------------------------------|----------------------------------------------------------------------------------------------------|
-| Safe Rust routine                                 | Not needed: the private constructor and the out-of-band table cover it                             |
+| Safe Rust routine                                 | Not needed: its references are Rust references                                                     |
 | `unsafe` Rust routine                             | No: it can read the host's memory, and no table survives that                                      |
 | Host-language code, such as third-party Python    | No: the language cannot isolate it, so it can call the ABI with any handle or edit the host's tables |
 | A sandboxed guest: a Wasm module, Hardened JS     | Yes — the one real case                                                                            |
 
-For that case, the c-list belongs where the guest is embedded, not in the host scheduler or the ABI. A guest adapter — a Rust context that implements the effect traits for a guest module — holds real `Sender`s and `Receiver`s and shows the guest only indices into its own table. Everything outside the adapter is unchanged: other routines, host loops, the wire.
+A sandboxed guest has its own memory, so it cannot hold a Rust channel end at all. The c-list belongs where the guest is embedded: a guest adapter — a Rust context that implements the effect traits for a guest module — holds the real channel ends and shows the guest only indices into its own table. Everything outside the adapter is unchanged.
 
 ```text
-  trusted Rust routines ── Sender<M> ──┐
-                                        host scheduler (unchanged)
-  Wasm guest ── indices ── [ adapter: c-list ↔ Sender<M> ] ──┘
+  trusted Rust routines ── channel ends ──┐
+                                           host (unchanged)
+  Wasm guest ── indices ── [ adapter: c-list ↔ channel ends ] ──┘
 ```
 
-Putting it in the host instead would make every host translate the channel and every `handles` entry on every post, grow tables that only shrink with "I dropped this sender" messages, make transcripts show a different number for the same channel depending on who refers to it — and all of it would protect only the guests the adapter already protects.
+## Across Hosts
 
-A separate question, not this one: tables _between_ hosts, when routines span processes. See below.
-
-## Across hosts
-
-One host is one vat. Machine handles and channel ids are _near_ references: they mean something only in that host's process, and that is fine. If routines ever span processes, the problem is CapTP's, and its answers carry over. Its principle: never make a local token global; translate at every boundary.
+One host is one vat. Machine handles are _near_ references: they mean something only in that host's process, and channel ends cannot leave it at all. If routines ever span processes, the problem is CapTP's, and its answers carry over. Its principle: never make a local token global; translate at every boundary.
 
 | Problem                                                          | CapTP's answer                                                                                          |
 |------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
@@ -139,12 +115,4 @@ One host is one vat. Machine handles and channel ids are _near_ references: they
 | The caller no longer wants an answer                             | Cap'n Proto's `Finish` — see [`cancellation`](cancellation.md)                                          |
 | Create an object in another vat                                  | Not a primitive: send arguments to a factory the other vat exports                                     |
 
-Routines never see any of this. They hold `Sender<M>` and `Receiver<M>`, and their representation is the host's business — which is what makes such a layer possible without changing a routine.
-
-### Why not swiss numbers on the wire now?
-
-Unguessable channel ids would make forging a body useless without the out-of-band table. But a swiss number is a bearer token: anyone who reads it holds the capability. A transcript full of them is a bag of live capabilities, and transcripts are meant to be shared, compared, and replayed. The out-of-band table keeps transcripts harmless.
-
-## Open questions
-
-- Should the host verify each entry in `handles` is live, or is forwarding enough?
+Such a layer would carry messages as bytes, so it would need a table of references beside each message — the out-of-band design that plain channels do not. Swiss numbers would be the wrong shortcut there: a bearer token makes a transcript a bag of live capabilities, and transcripts are meant to be shared, compared, and replayed.

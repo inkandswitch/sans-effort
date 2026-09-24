@@ -9,20 +9,20 @@ pub enum Status {
     Awaiting,
     /// The routine returned. Further replies return nothing.
     Complete,
-    /// Pending with no request outstanding. Will never progress: the routine
-    /// awaited something the driver cannot wake.
-    Stalled,
+    /// Pending with no request outstanding: waiting on something inside the
+    /// process — a channel, a lock — that another routine may complete.
+    /// Nothing wakes it; [`resume`](super::Driver::resume) polls it again.
+    Idle,
 }
 
 impl Status {
     /// `Ready` is `Complete`; `Pending` with requests outstanding is
-    /// `Awaiting`; `Pending` with none is `Stalled` — there is no waker, so
-    /// nothing else could ever wake it.
+    /// `Awaiting`; `Pending` with none is `Idle`.
     pub(super) const fn classify(poll: Poll<()>, outstanding: usize) -> Self {
         match poll {
             Poll::Ready(()) => Status::Complete,
             Poll::Pending if outstanding > 0 => Status::Awaiting,
-            Poll::Pending => Status::Stalled,
+            Poll::Pending => Status::Idle,
         }
     }
 }

@@ -2,7 +2,8 @@
 //! minus the C ABI itself.
 //!
 //! `abi_version()`, then `new(routine) → handle`, `start(handle) → effects`,
-//! `reply(handle, record) → effects`, `free(handle)`. A reply record is
+//! `reply(handle, record) → effects` — or `resume(handle) → effects` for a
+//! routine waiting on something in the process — then `free(handle)`. A reply record is
 //! `kind · id · payload`, where the id came out on the wire with the effect
 //! and the kind is one of the reply menu's four
 //! ([`Kind`](sans_effort::reply::kind::Kind)).
@@ -19,7 +20,10 @@
 //! - [`encoded::Encoded`] is the _byte_ layer over it, with the same two
 //!   calls: decode one reply record, call the typed method, encode the views.
 //!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` binding
-//!   calls it.
+//!   calls it. Most machines migrate between threads; a pinned one, whose
+//!   future is not `Send`, runs over a
+//!   [`LocalDriver`](sans_effort::driver::LocalDriver) and stays on the thread
+//!   that started it.
 //!
 //! The application adds the _binding_: the thin `unsafe` wrapper a foreign host
 //! actually calls — one `#[no_mangle]` wrapper per function in [`table`], each
@@ -30,14 +34,15 @@
 //!   app cdylib                                 sans-effort-host
 //!   ────────────────────────────────           ──────────────────────────────────────────
 //!   enum Effect { … }  impl HostEffect
-//!   #[no_mangle] abi_version()     ─────────▶  code::ABI_VERSION
+//!   #[no_mangle] abi_version()     ─────────▶  contract::REVISION
 //!   #[no_mangle] new()             ─────────▶  table::new(|outbox| Greeter::new(Ctx::new(outbox)).run())
 //!   #[no_mangle] start(h, out*)    ─────────▶  table::start(h)          -> Result<(Vec<u8>, Status), Error>
 //!   #[no_mangle] reply(h, in*, out*) ───────▶  table::reply(h, &[u8])   -> Result<(Vec<u8>, Status), Error>
+//!   #[no_mangle] resume(h, out*)   ─────────▶  table::resume(h)         -> Result<(Vec<u8>, Status), Error>
 //!                                  ◀─────────  (bytes, status)   — app writes the out-pointers
 //! ```
 //!
-//! # Where the boundary is split
+//! # Where the Boundary Is Split
 //!
 //! The [`HostEffect`](sans_effort::boundary::host_effect::HostEffect) and
 //! [`Encode`](sans_effort::boundary::codec::Encode) traits, [`Pending`](sans_effort::boundary::pending::Pending),
@@ -59,7 +64,7 @@
 
 extern crate alloc;
 
-pub mod code;
+pub mod contract;
 pub mod encoded;
 pub mod error;
 pub mod machine;

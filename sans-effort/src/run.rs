@@ -17,7 +17,7 @@ use core::{future::Future, ops::ControlFlow};
 /// to, because nothing in it is generic over a routine and also spawns it.
 /// Implementors may write `async fn`.
 ///
-/// # Steps and hosts
+/// # Steps and Hosts
 ///
 /// A host sees suspensions, not steps. [`run`](Self::run) loops over `step`
 /// inside the one boxed future, so `Break` is reported as

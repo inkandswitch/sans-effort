@@ -1,8 +1,8 @@
 //! The byte layer: a [`Machine`] whose calls take and return bytes.
 //!
-//! Same two operations as the typed machine — [`start`](Encoded::start) and
-//! [`reply`](Encoded::reply) — with one reply record in and the effects
-//! encoded out. Each effect is one _frame_: a kind
+//! Same operations as the typed machine — [`start`](Encoded::start),
+//! [`reply`](Encoded::reply), and [`resume`](Encoded::resume) — with one
+//! reply record in and the effects encoded out. Each effect is one _frame_: a kind
 //! ([`FRAME_TELL`] or [`FRAME_ASK`]), a `u32` length, and the view's
 //! bytes as the routine's [`Encode`] impl writes them. The length lets a host
 //! skip a tell it does not understand and check that it parsed each record
@@ -14,33 +14,33 @@ mod input;
 
 use self::input::Input;
 use crate::{
-    code::{FRAME_ASK, FRAME_CLOSED, FRAME_TELL},
+    contract::{FRAME_ASK, FRAME_CLOSED, FRAME_TELL},
     error::Error,
-    machine::{Machine, Shown},
+    machine::{Drive, Machine, Shown},
     status::Status,
 };
 use alloc::vec::Vec;
 use sans_effort::{
     boundary::{codec::Encode, codec::Writer, host_effect::HostEffect},
-    driver::step::Step,
+    driver::{Driver, step::Step},
 };
 
 /// A machine seen through bytes.
-pub struct Encoded<E>(Machine<E>);
+pub struct Encoded<E, D = Driver<E>>(Machine<E, D>);
 
-impl<E: HostEffect> Encoded<E>
+impl<E: HostEffect, D: Drive<E>> Encoded<E, D>
 where
     E::View: Encode,
 {
     /// The byte layer over `machine`.
     #[must_use]
-    pub const fn new(machine: Machine<E>) -> Self {
+    pub const fn new(machine: Machine<E, D>) -> Self {
         Self(machine)
     }
 
     /// The typed machine underneath.
     #[must_use]
-    pub const fn machine(&self) -> &Machine<E> {
+    pub const fn machine(&self) -> &Machine<E, D> {
         &self.0
     }
 
@@ -71,9 +71,20 @@ where
         };
         Ok((encode(&shown), self.0.status()))
     }
+
+    /// Poll again without delivering anything: the effects recorded before
+    /// the next wait, encoded, and the status.
+    ///
+    /// # Errors
+    ///
+    /// As [`Machine::resume`].
+    pub fn resume(&mut self) -> Result<(Vec<u8>, Status), Error> {
+        let shown = self.0.resume_shown()?;
+        Ok((encode(&shown), self.0.status()))
+    }
 }
 
-impl<E> core::fmt::Debug for Encoded<E> {
+impl<E, D> core::fmt::Debug for Encoded<E, D> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("Encoded").field(&self.0).finish()
     }
@@ -132,7 +143,7 @@ mod tests {
 
     #[test]
     fn arbitrary_input_is_refused_with_a_code_never_a_panic() {
-        use crate::code::{BAD_INPUT, MALFORMED, STALE, WRONG_KIND};
+        use crate::contract::{BAD_INPUT, MALFORMED, STALE, WRONG_KIND};
 
         bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
             let mut m = encoded(|outbox| Echo(outbox).run());

@@ -24,7 +24,7 @@ This crate is the mechanism. It is `no_std` + `alloc`.
   └───────────────────────────────────────────────────────────────────┘
 ```
 
-## What is here
+## What Is Here
 
 | Item | Role |
 |------|------|
@@ -37,7 +37,7 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 | `boundary` | What an effect type implements to cross to a host that cannot hold a Rust value: `HostEffect` (handles → ids), `Encode` (the codec), `Pending` |
 | `testing::run_now` | Run a routine against a mock whose every future is ready, in one poll, with no driver |
 
-## A routine, and a Rust host
+## A Routine, and a Rust Host
 
 ```rust
 use core::ops::ControlFlow;

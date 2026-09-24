@@ -91,7 +91,7 @@
 //! one method, and a crate can then reify a capability trait it does not
 //! own on its own newtype. Nothing else needs it.
 //!
-//! # Fallible where the world can fail
+//! # Fallible Where the World Can Fail
 //!
 //! A trait returns `Result` exactly when its effect can fail for reasons
 //! outside the routine: input can end, so [`read_line`](console::ReadLine::read_line)

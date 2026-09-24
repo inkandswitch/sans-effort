@@ -6,9 +6,81 @@ use alloc::{string::String, vec::Vec};
 use core::{future::Future, marker::PhantomData};
 use sans_effort::{
     boundary::{host_effect::HostEffect, pending::Pending},
-    driver::{Driver, outbox::Outbox, step::Step},
+    driver::{
+        BoxedRoutine, Driver, LocalDriver, outbox::Outbox, status::Status as DriveStatus,
+        step::Step,
+    },
     reply::{Reply, handle::ReplyHandle},
 };
+
+/// What a [`Machine`] steps: a [`Driver`], or a [`LocalDriver`] for a routine
+/// whose future is not `Send`. Sealed: the two are the only drivers.
+pub trait Drive<E>: sealed::Sealed {
+    /// Poll for the first time.
+    fn start(&mut self) -> Step<E>;
+    /// Deliver a reply and poll.
+    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E>;
+    /// Poll without delivering anything.
+    fn resume(&mut self) -> Step<E>;
+    /// What the last poll reported.
+    fn status(&self) -> DriveStatus;
+    /// `true` once the routine has returned.
+    fn is_finished(&self) -> bool;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl<E> Sealed for super::Driver<E> {}
+    impl<E> Sealed for super::LocalDriver<E> {}
+}
+
+impl<E> Drive<E> for Driver<E> {
+    fn start(&mut self) -> Step<E> {
+        Driver::start(self)
+    }
+
+    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+        Driver::reply(self, reply, value)
+    }
+
+    fn resume(&mut self) -> Step<E> {
+        Driver::resume(self)
+    }
+
+    fn status(&self) -> DriveStatus {
+        Driver::status(self)
+    }
+
+    fn is_finished(&self) -> bool {
+        Driver::is_finished(self)
+    }
+}
+
+impl<E> Drive<E> for LocalDriver<E> {
+    fn start(&mut self) -> Step<E> {
+        LocalDriver::start(self)
+    }
+
+    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+        LocalDriver::reply(self, reply, value)
+    }
+
+    fn resume(&mut self) -> Step<E> {
+        LocalDriver::resume(self)
+    }
+
+    fn status(&self) -> DriveStatus {
+        LocalDriver::status(self)
+    }
+
+    fn is_finished(&self) -> bool {
+        LocalDriver::is_finished(self)
+    }
+}
+
+/// A [`Machine`] over a [`LocalDriver`]: for a routine whose future is not
+/// `Send`, polled only on the thread that built it.
+pub type LocalMachine<E> = Machine<E, LocalDriver<E>>;
 
 /// A driver plus the requests it has outstanding, keyed by id: the typed
 /// layer.
@@ -19,8 +91,8 @@ use sans_effort::{
 /// handles the effects carried out, so that an `(id, value)` from across the
 /// boundary can be turned back into the typed, infallible
 /// [`Driver::reply`].
-pub struct Machine<E> {
-    driver: Driver<E>,
+pub struct Machine<E, D = Driver<E>> {
+    driver: D,
     /// Outstanding requests by id. A `Vec` scanned linearly, not a map: a
     /// routine has one or two requests in flight, and hashing a `u64` costs
     /// more than looking at two entries. Wide fan-out would want a sorted
@@ -35,18 +107,6 @@ pub struct Machine<E> {
 }
 
 impl<E: HostEffect> Machine<E> {
-    /// Wrap a driver. Nothing has been polled yet.
-    #[must_use]
-    pub const fn new(driver: Driver<E>) -> Self {
-        Self {
-            driver,
-            pending: Vec::new(),
-            highest_shown: 0,
-            started: false,
-            _effect: PhantomData,
-        }
-    }
-
     /// Build a driver around `make` and wrap it: `Machine::new(Driver::new(make))`.
     /// Nothing runs until [`start`](Self::start).
     ///
@@ -60,6 +120,25 @@ impl<E: HostEffect> Machine<E> {
         make: M,
     ) -> Self {
         Self::new(Driver::new(make))
+    }
+
+    /// As [`from_routine`](Self::from_routine), for a routine already boxed.
+    pub fn from_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
+        Self::new(Driver::from_boxed(make))
+    }
+}
+
+impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
+    /// Wrap a driver. Nothing has been polled yet.
+    #[must_use]
+    pub const fn new(driver: D) -> Self {
+        Self {
+            driver,
+            pending: Vec::new(),
+            highest_shown: 0,
+            started: false,
+            _effect: PhantomData,
+        }
     }
 
     /// Begin: the effects recorded before the first wait. Valid once.
@@ -123,6 +202,33 @@ impl<E: HostEffect> Machine<E> {
         }
     }
 
+    /// Poll again without delivering anything: the effects recorded before
+    /// the next wait. For an [`Idle`](Status::Idle) routine, once something
+    /// it waits on in the process may have changed; harmless when nothing
+    /// has.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Finished`] if the routine has completed;
+    /// [`Error::BadInput`] if it has not been started.
+    pub fn resume(&mut self) -> Result<Step<E::View>, Error> {
+        self.resume_shown().map(views)
+    }
+
+    /// As [`resume`](Self::resume), marking which effects await a reply.
+    pub(crate) fn resume_shown(&mut self) -> Result<Step<Shown<E::View>>, Error> {
+        if self.driver.is_finished() {
+            return Err(Error::Finished);
+        }
+
+        if !self.started {
+            return Err(Error::BadInput);
+        }
+
+        let effects = self.driver.resume();
+        Ok(self.show(effects))
+    }
+
     /// [`reply`](Self::reply) with a `str`, for bindings that cannot call a
     /// generic method (`PyO3`, Rustler).
     ///
@@ -171,7 +277,7 @@ impl<E: HostEffect> Machine<E> {
 
     /// `true` once the routine has returned.
     #[must_use]
-    pub const fn is_finished(&self) -> bool {
+    pub fn is_finished(&self) -> bool {
         self.driver.is_finished()
     }
 
@@ -220,7 +326,7 @@ impl<E: HostEffect> Machine<E> {
     }
 }
 
-impl<E> core::fmt::Debug for Machine<E> {
+impl<E, D> core::fmt::Debug for Machine<E, D> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Machine")
             .field("started", &self.started)
@@ -317,5 +423,19 @@ mod tests {
         assert_eq!(m.status(), Status::Complete);
         assert_eq!(step.effects(), [View::Ask(1), View::Say("done".into())]);
         assert_eq!(step.closed(), [1], "held until return, then closed");
+    }
+
+    #[test]
+    fn resume_needs_a_started_unfinished_machine() {
+        let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
+        assert_eq!(m.resume(), Err(Error::BadInput), "not started");
+        drop(m.start().expect("start"));
+        assert!(
+            m.resume().expect("resume").is_empty(),
+            "nothing new: harmless"
+        );
+        assert_eq!(m.status(), Status::Awaiting, "still awaiting its reply");
+        drop(m.reply(1, String::from("hi")).expect("reply"));
+        assert_eq!(m.resume(), Err(Error::Finished));
     }
 }

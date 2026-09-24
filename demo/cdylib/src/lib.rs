@@ -15,7 +15,7 @@ use routines::{fanout::Fanout, greeter::Greeter, ticker::Ticker};
 use sans_effort::run::Run;
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
-    code::{ABI_VERSION, code_of},
+    contract::{REVISION, code_of},
     error::Error,
     status::Status,
     table,
@@ -24,7 +24,7 @@ use sans_effort_host::{
 /// The revision of `ABI.md` this binding speaks. Check it before `new`.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_abi_version() -> u8 {
-    ABI_VERSION
+    REVISION
 }
 
 /// Create a greeter. Returns its handle (never 0), valid on any thread; two
@@ -93,6 +93,25 @@ pub unsafe extern "C" fn greeter_reply(
 
     // SAFETY: caller contract.
     unsafe { deliver(table::reply(handle, record), out_ptr, out_len) }
+}
+
+/// Run the routine to its next wait without delivering anything, and receive
+/// the effects it recorded plus a status code: for an `IDLE` routine, once
+/// something it waits on may have changed. Harmless when nothing has. On error
+/// nothing is written.
+///
+/// # Safety
+///
+/// `out_ptr` and `out_len` must be valid for writes. Free the buffer with
+/// [`greeter_buf_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn greeter_resume(
+    handle: u64,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    // SAFETY: caller contract.
+    unsafe { deliver(table::resume(handle), out_ptr, out_len) }
 }
 
 /// Drop a greeter, including any request it had outstanding.

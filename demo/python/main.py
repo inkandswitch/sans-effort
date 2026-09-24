@@ -23,7 +23,7 @@ from pathlib import Path
 ABI_VERSION = 0
 FRAME_TELL, FRAME_ASK, FRAME_CLOSED = 1, 2, 3
 OK = AWAITING = 0
-COMPLETE, STALLED = 1, 2
+COMPLETE, IDLE = 1, 2
 ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT", -7: "MALFORMED", -8: "STALE"}
 
 # Reply records: kind, then request id, then payload.

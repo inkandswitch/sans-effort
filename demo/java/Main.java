@@ -34,7 +34,7 @@ public class Main {
 
     static final byte ABI_VERSION = 0;
     static final int FRAME_TELL = 1, FRAME_ASK = 2, FRAME_CLOSED = 3;
-    static final int AWAITING = 0, COMPLETE = 1, STALLED = 2;
+    static final int AWAITING = 0, COMPLETE = 1, IDLE = 2;
     static final Map<Integer, String> ERRORS = Map.of(
         -1, "BUSY", -2, "FINISHED", -3, "WRONG_KIND", -4, "PANICKED", -5, "BAD_HANDLE", -6, "BAD_INPUT",
         -7, "MALFORMED", -8, "STALE");

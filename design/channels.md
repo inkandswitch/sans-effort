@@ -1,186 +1,142 @@
-# Channels
+# Channels and Spawning
 
 > [!NOTE]
-> _Status:_ planned. None of this exists yet. An actor layer on top of it — an implicit inbox per routine, spawn returning its address, supervision — may come later.
+> _Status:_ planned, in two stages. Stage 1: `resume`, `IDLE`, `Spawn`, and pinned machines. Stage 2: a real waker and `woke` frames. An actor layer on top — an implicit inbox per routine, supervision — may come later, and so may host-routed channels.
 
-Routines that send each other messages and spawn new routines, without a scheduler in the library.
+Routines that send each other messages and spawn new routines, on different threads, without a scheduler in the library.
 
-## Channels, not actors
+## Channels Are Plain Rust
 
-The first design was actor-style: an address named a _routine_, and each routine had one implicit mailbox. This one is channel-style, as in Go, CSP, or Rust's own `mpsc`: a capability opens a channel, and its two ends are ordinary values that can be passed around.
+A channel is in-process synchronisation, not I/O. So routines use ordinary Rust channels — any primitive built on wakers works: `mpsc`, `oneshot`, `watch`, async mutexes, semaphores. They are not a capability and not an effect, and the library recommends no crate. The demo uses `async-channel`.
 
 ```rust
-let (tx, rx) = ctx.open::<Ping>().await;       // a new channel, both ends
-ctx.spawn(|child| pinger(child, rx)).await;     // the child gets the receiving end
-ctx.post(&tx, Ping);                            // we keep the sending end, or pass it on
+let (tx, rx) = async_channel::unbounded::<Ping>();
+ctx.spawn_pinned(move |child_ctx| Pinger::new(child_ctx, rx).run());
+tx.send(Ping).await.ok();
 ```
 
-Channels are the more primitive building block. Actors can be built from them — an actor is a routine with one designated channel, its address is a `Sender` to it, and spawning returns one — while channels built from actors would be a relay actor per channel. So channels come first, and an actor layer stays possible later with nothing to undo.
+What the host must own is I/O — every effect — and _scheduling_: when, and on which thread, each machine is polled. Message passing is neither.
 
-What channels remove, compared with actors:
+## The Host Schedules
 
-- _No `Me`._ A routine that wants to be reachable opens a channel and hands out the sender.
-- _No one-message-type-per-routine rule._ A routine can hold several receivers, each typed by its own message.
-- _No address in spawn's reply._ The parent passes the child whatever channel ends it needs.
-
-What they cost:
-
-- _A second id space._ With actors, an address could be the host's machine handle. With channels, the host mints channel ids and keeps a queue per channel.
-- _Channel lifetimes._ A queue must be freed when its receiver is gone — see [Closing](#closing).
-- _No routine identity._ "Tell me when B ends" has no built-in subject — see [Knowing when a routine ends](#knowing-when-a-routine-ends).
-
-## The host is the scheduler
-
-Opening, posting, receiving, and spawning are capabilities like any other. Natively, tokio serves them with its own channels and `tokio::spawn`. Behind a driver, the context records them and the _host_ routes them — the same way it already performs `Lookup`. Whoever polls is the scheduler: tokio, the JS event loop, a Python loop, or a deterministic test harness.
+Under a driver, a machine runs only when the host calls in for it. So a machine waiting on a channel, with no request outstanding, reports `IDLE`: suspended, waiting on something inside Rust. When a message arrives, the host has to poll it again. The ABI gives it a call for that, `resume`: poll without a reply.
 
 ```mermaid
 sequenceDiagram
-    participant A as Routine A
+    participant A as Machine A
     participant H as Host
-    participant B as Routine B
+    participant B as Machine B
 
-    B-->>H: (Receive channel 7, id 3) · AWAITING
-    A-->>H: Post { channel 7, body }
-    Note over H: a Receive on channel 7 is outstanding
-    H->>B: reply(3, body)
-    B-->>H: … next effects
+    H->>B: start(B)
+    Note over B: rx.recv() — nothing yet
+    B-->>H: IDLE
+    H->>A: reply(A, …)
+    Note over A: tx.send(msg) — into a Rust queue
+    A-->>H: … frames
+    H->>B: resume(B)
+    Note over B: rx.recv() → msg
+    B-->>H: … next frames
 ```
 
-Because `Receive` names its channel, the host never needs to know who owns a receiver. It keeps a queue per channel id and answers whichever `Receive` names it. Rust makes a `Receiver` unique, so only one holder can ask.
+The message never passes through the host. A spurious `resume` is harmless — the routine polls, finds nothing new, and suspends again — so correctness never depends on knowing _when_ to resume, only on resuming eventually.
 
-## Handles
+### Knowing When: Wakers
 
-`channel::Sender<M>` and `channel::Receiver<M>` — the names every Rust reader already knows from `mpsc`, reached through their module.
+Every poll in Rust is handed a waker, the executor's "call me when this can progress". A channel stores the receiver's waker when it has nothing to give, and calls it on the next send. Under tokio the waker requeues the task. A driver's waker, in stage 1, does nothing: the host resumes idle machines when it has nothing else to do.
 
-- Both are typed by the message: posting the wrong type does not compile.
-- A `Sender` is `Clone`; a `Receiver` is unique.
-- Both hold a channel id and have private constructors: safe code obtains one only by opening a channel or being given one. See [`capabilities`](capabilities.md).
-- A `Receiver` also carries a small drop hook, so dropping it can tell its context — see [Closing](#closing). That keeps both handle types the same in every context.
+In stage 2 the driver's waker records the wake instead. The host crate turns it into a frame, `woke · handle`, in the output of the call whose poll caused it — the sender's — or, for wakes outside any call, in the output of a separate `wakes` call. The host then resumes exactly the machines that can run. It is still pull-only: the host learns from output it asked for; nothing calls out to it.
 
-## Capabilities
+| | Effect | Wake |
+|---|---|---|
+| Triggered by | the routine, explicitly: its context records a request | the channel's own code, calling the waker it stored |
+| Means | "please do this for me" | "this machine can make progress now" |
+| The host answers with | performing it; replying, if it is an ask | `resume` |
 
-Provisional names; each is generic over the message type, so a context can bound `M` as it needs and a routine names exactly what it sends and receives (`C: Post<Ping> + Receive<Pong>`):
+## Spawning
 
-| Trait        | Does                                   | Natively (tokio)                    | Behind a driver                  |
-|--------------|----------------------------------------|-------------------------------------|----------------------------------|
-| `Open<M>`    | open a channel; returns both ends      | a new unbounded tokio channel       | ask → the host mints an id       |
-| `Post<M>`    | send on a `Sender`; fire and forget    | send the value                      | tell: `channel · handles · body` |
-| `Receive<M>` | await the next message on a `Receiver` | await the tokio receiver            | ask → the body, as bytes         |
-| `Spawn`      | start a child routine                  | `tokio::spawn`                      | tell, carrying the child — see [Spawn](#spawn) |
-
-Generic per trait rather than per method, because a trait method's bounds are fixed in the trait: `Ctx<E>` implements `Post<M>` only for messages it can encode, and the tokio context for any `M: Send + 'static`. A routine that only ever runs on tokio never has to make its messages encodable.
-
-`Send` is taken by `core::marker::Send`, and `Tell` would read like `Outbox::tell`, which tells the _host_. Hence `Post`.
-
-## Messages
-
-- _Natively_, a message is a value in a channel. Nothing is encoded.
-- _Behind a driver_, a message is bytes, because the host routes it without looking inside. See [`effects`](effects.md#all-channel-messages-are-bytes-on-the-wire). A body that fails to decode is dropped by the context, which receives again; the routine never sees garbage.
-- Handles inside a message — a `Sender` for the reply, say — travel _beside_ the body, not in it, so a sender cannot forge one by writing bytes. See [`capabilities`](capabilities.md). The wire codec for this lives in `sans-effort-effects`, over core's `Writer` and `Reader`, and is designed for capability handles in general.
-
-Request and response between routines is the familiar pattern: put a `Sender` for the reply in the request.
-
-## Closing
-
-When a `Receiver` is dropped, its queue should go: nothing can receive from it again. Short-lived channels are common — a reply channel per request — so without this the host would keep every such queue for as long as the routine that dropped it lives.
-
-So dropping a `Receiver` is reported. Not as a new ABI frame kind, but as an ordinary stdlib effect, a tell (`Close { channel }`) that the receiver's drop hook records through its context. Under tokio the hook removes the queue from the registry instead. A `Post` to a closed channel is dropped, as a letter to a closed box would be; senders dropping need no report.
-
-## Spawn
-
-`Spawn` is the primitive: start a child, return nothing. Often there is no channel between parent and child at all. When there is, the parent opens it and passes the child the end it needs.
-
-For the common case, a helper does both — the actor-style convenience, built from two primitives:
+`Spawn` is a capability with two methods:
 
 ```rust
-let inbox: channel::Sender<Job> =
-    spawn_with_inbox(&ctx, |child, jobs: channel::Receiver<Job>| worker(child, jobs)).await;
+pub trait Spawn {
+    type Child;   // the child's context
+
+    fn spawn<F, Fut>(&self, f: F)
+    where F: FnOnce(Self::Child) -> Fut + Send + 'static,
+          Fut: Future<Output = ()> + Send + 'static;
+
+    fn spawn_pinned<F, Fut>(&self, f: F)
+    where F: FnOnce(Self::Child) -> Fut + Send + 'static,
+          Fut: Future<Output = ()> + 'static;
+}
 ```
 
-It is a free function in `sans-effort-effects`, usable by any context with both `Open<Job>` and `Spawn`, so it adds nothing a context has to implement. It is also the seed of an actor layer, if one comes.
+- `spawn` starts a child that may move between threads after it starts. Its future must be `Send`.
+- `spawn_pinned` starts a child that stays on the thread that starts it. Only the closure must be `Send` — its future need not be. Every context can implement it, so a routine that uses it runs everywhere.
 
-A child is built by value: the parent's context builds the child's routine in Rust. Its arguments stay typed values — any channel ends among them move with it, so a `Receiver` can pass to a child at spawn. Moving a `Receiver` inside _message bytes_ is not supported yet: it would need move semantics in the handle table.
+Two methods, because even a multithreaded application sometimes holds data that is not `Send` — an `Rc`, a foreign handle. `spawn_pinned` gives those children a home while the rest move freely, in one build.
 
-### How a child reaches the host
+Both are fire-and-forget: they record the unstarted child and return. The closure's argument is the child's context, `child_ctx`, which does not exist until the child's machine does. Channel ends reach the child by moving into the closure.
 
-Behind a driver, the child rides up in the effect. `Spawn` records a tell whose payload _is_ the child — boxed and not yet started, in the shape the host table already takes (`FnOnce(Outbox<E>) -> impl Future`). The vocabulary's `split` arm decides what spawning means. Registering the child in `sans-effort-host`'s table is one choice:
+### How a Child Reaches the Host
+
+Behind a driver, the child rides in the effect: `Spawn` records a tell whose payload is the unstarted child. The vocabulary's `split` decides what spawning means. The demo registers it with the host table:
 
 ```rust
-Full::Spawn(child) => (View::Spawned(table::new(child)), None),
+Full::Spawn(effect::Spawn(child)) =>
+    (View::Spawned { handle: table::new_boxed(move |outbox| child.start(outbox)) }, None),
+Full::SpawnPinned(effect::SpawnPinned(child)) =>
+    (View::SpawnedPinned { handle: table::park_pinned(move |outbox| child.start(outbox)) }, None),
 ```
 
-```mermaid
-sequenceDiagram
-    participant P as Parent
-    participant B as Binding (split)
-    participant H as Host
-
-    P-->>B: Spawn(child) — a tell, recorded in the outbox
-    Note over B: split registers the child → handle 9
-    B-->>H: Spawned { 9 } · …
-    H->>B: start(9)
-```
-
-The host sees "child 9 exists" in a frame and starts it. No reply goes to the parent, since `spawn` returns nothing; no token; no ABI function. The table releases its lock before a routine steps, so registering from inside `split` is safe.
-
-Nothing in core changes: core carries effect values and does not know which one means "spawn". So a vocabulary can choose differently — a binding without `std` registers the child in statics of its own, a deterministic test router keeps children in a `Vec`, and a vocabulary without a `Spawn` variant simply grants no spawning. The one constraint is the chosen table's: `sans-effort-host`'s requires `Send` futures, so a child registered there must be `Send`.
-
-The cost is coupling: a vocabulary whose `split` calls `sans-effort-host`'s table needs that crate's `std` feature, so a vocabulary crate that must also build `no_std` gates its `Spawn` arm behind a feature. `#[derive(Boundary)]` can generate the arm later.
+The host sees `Spawned { 9 }` or `SpawnedPinned { 9 }` and starts machine 9. None of the child crosses the FFI boundary — only its handle does. Core does not know which effect means "spawn", so a vocabulary may choose differently: its own statics, a test router's `Vec`, or no spawn variant at all, which grants no spawning.
 
 > [!IMPORTANT]
-> The child's type is `Child<E>` for the parent's own vocabulary `E`, so a parent limited to `Quiet` cannot spawn a child with `Full` and escape its own limits. The type enforces this; no check is needed.
+> Under the reifying context, the child's context is `Ctx<E>` for the parent's own vocabulary `E`, so a parent limited to `Quiet` cannot spawn a child with `Full` and escape its own limits. The type enforces this.
 
-A locality note, from when spawn was designed actor-style: a running routine is a pinned Rust future and can never leave its process, so building children by value loses nothing a routine had. Creating a child in _another_ process could never be by value — code cannot travel, only a name and data can (Erlang's reliable remote form is `spawn(Node, M, F, Args)`). That is what a factory is for: a routine whose messages are creation requests, reached through an ordinary `Sender`.
+### Pinned Children
 
-## Knowing when a routine ends
+A pinned child's future may hold values that must not leave their thread. So the table parks the unstarted child, and builds its future when the host calls `start` — on that thread — keeping it in that thread's table. Every later call for it must come from the same thread; a call from another returns `WRONG_THREAD`, which a host recovers from by routing the call where it belongs. Migrating machines keep the existing rule: any thread, one at a time.
 
-Channels do not name routines, so "tell me when B ends" is built from them: B holds a guard whose `Drop` posts a notice on a channel the watcher holds.
+Natively:
 
-```rust
-struct ExitNotice(channel::Sender<Exit>);
-impl Drop for ExitNotice { fn drop(&mut self) { /* post Exit; a tell, so fine in Drop */ } }
-```
+| Context | `spawn` | `spawn_pinned` |
+|---------|---------|----------------|
+| tokio | `tokio::spawn` — work-stealing | `tokio-util`'s `LocalPoolHandle` — a pool of threads; each child stays put |
+| JS | `spawn_local` | `spawn_local` |
 
-What that does and does not catch:
+## Replay and Determinism
 
-| B…                         | Natively | Behind a driver                                              |
-|----------------------------|----------|--------------------------------------------------------------|
-| completes                  | notified | notified                                                     |
-| panics                     | notified | lost: the machine is removed, and its last effects are never drained |
-| is freed by the host       | notified | lost, the same way                                           |
-| waits forever              | never    | never                                                        |
+Messages bypass the host, so the order they arrive in depends on the host's schedule. A run is reproduced by the host's replies _and_ its `resume`s, in order; in stage 2 the `woke` frames also record which step woke which machine. The demo hosts poll deterministically, so their transcripts still agree.
 
-A host sees `PANICKED` and its own `free`, so it could post the notice on the routine's behalf — a supervision feature for later.
+## Knowing When a Routine Ends
 
-## Stalls, spins, and the outside world
+A routine can hold a guard whose `Drop` sends on a channel a watcher holds. Messages are plain Rust, so this works however the routine ends — completion, a panic the host catches, or the host freeing it: the future is dropped, and the guard sends.
 
-`Drop` detects _endings_. Other ways of not finishing:
+## Stalls, Spins, and the Outside World
 
-- _A system-wide stall_ — every routine waiting on a `Receive` whose queue is empty, and no timer, input, or other external request outstanding. The host can detect this: every wait goes through it, so it sees every outstanding request and every queued message. This is reading current state, not predicting what code will do, so the halting problem does not apply. Detecting it is one check in the host's loop; it is not part of the ABI, and `STALLED` keeps its meaning (one machine waiting on something nothing can wake).
-- _A spin_ — a routine looping inside a step without ever awaiting. That breaks the assumption that steps return promptly, and nothing can decide it in general. Only a timeout helps.
+- _A stall_ — no request outstanding anywhere, nothing runnable, and a round of resumes makes no progress. The host can detect it: it sees every request and schedules every machine. This reads current state; it does not predict what code will do, so the halting problem does not apply. It is not part of the ABI.
+- _A spin_ — a routine looping inside a step without awaiting. That breaks the assumption that steps return promptly; only a timeout helps.
 - _The outside world_ — a routine waiting on input that never comes. No host can know whether it will. A timeout, as policy.
 
 ## Timeouts
 
-A routine waiting in `receive` often also needs to time out, heartbeat, or stop. That is `select`, next to `join`:
+A routine waiting on a channel often also needs to time out:
 
 ```rust
-match select(ctx.receive(&mut rx), ctx.sleep(TIMEOUT)).await {
+match select(rx.recv(), ctx.sleep(TIMEOUT)).await {
     Either::Left(msg) => handle(msg),
     Either::Right(()) => give_up(),
 }
 ```
 
-The losing branch is abandoned mid-flight; its `Receive` is reported closed, so the host knows not to deliver the next message to it. See [`cancellation`](cancellation.md).
+The losing branch is dropped. If it was the sleep, its request is reported closed; see [`cancellation`](cancellation.md). If it was the receive, nothing needs reporting: the message stays in the channel.
+
+## What This Gives Up
+
+Messages never pass through the host, so the host cannot see their contents: no logging, quotas, or policy on messages, and they cannot leave the process. Host-routed channels — the host keeping a queue per channel and routing every message — would restore that, at the cost of wire handles, a handle codec, and a queue per channel in every host. They can be added later alongside plain channels; a channel capability that routines ask their context for would let them switch without a rewrite.
 
 ## Demos
 
-- _Ping-pong_ — two routines, one message each way, repeated. The teaching example.
-- _Ring_ — N routines in a ring pass a token M times around. Measures the cost of one hop on each host.
-- _Front desk_ — a receptionist reads names and spawns a greeter for each with `spawn_with_inbox`; each greeter looks up a greeting and posts it back on a reply channel. Its transcript joins the tokio = Node = Python = Java comparison.
-
-## Open questions
-
-- Opening a channel as an ask (the host mints the id) or locally (the context mints an id the host qualifies). An ask is simpler and uniform; local minting would make opening synchronous.
-- The exact shape of `Spawn`: what the child's context is (the parent's, or one built from its parts), and how that is expressed in the trait.
-- Moving a `Receiver` inside message bytes: move semantics in the handle table.
+- _Ping-pong_ — a parent spawns a child; a channel each way; N rounds.
+- _Front desk_ — a receptionist reads names and spawns a greeter for each; each greeter looks up a greeting and sends it back on a one-shot channel. Its transcript joins the tokio = Python = Java comparison.
+- _Ring_ — N routines in a ring pass a token M times (stage 2): the cost of one hop on each host.

@@ -40,7 +40,7 @@
 //!     │                                         ┴
 //! ```
 //!
-//! # Three layers
+//! # Three Layers
 //!
 //! The _host_ is whoever polls — tokio, or an FFI host language over a
 //! [`Driver`](driver::Driver). A _context_ implements the routine's traits
@@ -66,7 +66,7 @@
 //! usable at native speed by code that has never heard of this crate. The
 //! driven path is what this crate provides.
 //!
-//! # The pieces
+//! # The Pieces
 //!
 //! - [`run::Run`] is the shape of a routine: a [`step`](run::Run::step) that
 //!   is one iteration of its loop, and a [`run`](run::Run::run) that repeats
@@ -92,7 +92,7 @@
 //! - [`testing::run_now`] runs a routine against a mock context whose every
 //!   future is ready, in one poll, with no driver.
 //!
-//! # Writing one
+//! # Writing One
 //!
 //! The routine names what it needs as traits, and asks for a context that
 //! provides them. Nothing from this crate appears in it except [`Run`](run::Run).
@@ -120,7 +120,7 @@
 //! }
 //! ```
 //!
-//! # A reifying context
+//! # A Reifying Context
 //!
 //! To run behind a host, a context implements the same traits by recording
 //! effects: each wait becomes an effect carrying a
@@ -195,7 +195,7 @@
 //! none of this: implement `Console` with real futures and `tokio::spawn` the
 //! routine.
 //!
-//! # Where the vocabulary lives
+//! # Where the Vocabulary Lives
 //!
 //! The examples above keep the routine free of any effect type and put the
 //! vocabulary in the context. Two other arrangements use the same mechanism

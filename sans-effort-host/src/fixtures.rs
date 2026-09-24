@@ -104,8 +104,8 @@ pub(crate) fn framed(views: &[View]) -> Vec<u8> {
     let mut w = Writer::new();
     for view in views {
         w.u8(match view {
-            View::Ask(_) => crate::code::FRAME_ASK,
-            View::Say(_) => crate::code::FRAME_TELL,
+            View::Ask(_) => crate::contract::FRAME_ASK,
+            View::Say(_) => crate::contract::FRAME_TELL,
         });
         w.bytes(&view.to_bytes());
     }
@@ -115,7 +115,7 @@ pub(crate) fn framed(views: &[View]) -> Vec<u8> {
 /// A closed frame for `id`, as the byte layer emits it after the effects.
 pub(crate) fn closed_frame(id: u64) -> Vec<u8> {
     let mut w = Writer::new();
-    w.u8(crate::code::FRAME_CLOSED);
+    w.u8(crate::contract::FRAME_CLOSED);
     w.bytes(&id.to_le_bytes());
     w.finish()
 }

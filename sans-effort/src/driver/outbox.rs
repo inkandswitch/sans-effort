@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 /// under a native context, where `tokio::time::sleep(d)` is lazy, and the
 /// two must agree.
 ///
-/// # One vocabulary, or any
+/// # One Vocabulary, or Any
 ///
 /// Whoever calls `ask` names a variant of `E` — `out.ask(Effect::Lookup)` —
 /// so a context written this way serves one vocabulary. A context generic
