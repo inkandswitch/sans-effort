@@ -1,5 +1,5 @@
-//! C ABI over the greeter: `abi_version`, `new`, `start`, `reply`, `resume`,
-//! `wakes`, `free`.
+//! C ABI over the greeter: `abi_version`, `new`, `resume`, `reply`, `wakes`,
+//! `free`.
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
 //! table and the type check on replies are `sans-effort-host`. This crate
@@ -16,7 +16,7 @@ use routines::{
     fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
     ticker::Ticker,
 };
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
     contract::{OK, REVISION, code_of},
@@ -53,7 +53,8 @@ pub extern "C" fn greeter_new_ticker() -> u64 {
 }
 
 /// Create three rounds of ping-pong. Its first batch spawns a child (tag 6):
-/// start it, then resume whichever of the two is `IDLE` until both complete.
+/// resume it to begin it, then resume whichever of the two a `woke` frame names
+/// until both complete.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_ping_pong() -> u64 {
     table::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run())
@@ -68,27 +69,11 @@ pub extern "C" fn greeter_new_ring() -> u64 {
 }
 
 /// Create a front desk: it reads names and spawns a pinned clerk per name
-/// (tag 7). Start each clerk on the thread that will drive it from then on.
+/// (tag 7). Resume each clerk first on the thread that will drive it from then
+/// on.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_front_desk() -> u64 {
     table::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
-}
-
-/// Run the routine to its first wait and receive the effects it recorded plus
-/// a status code. Valid once per handle. On error nothing is written.
-///
-/// # Safety
-///
-/// `out_ptr` and `out_len` must be valid for writes. Free the buffer with
-/// [`greeter_buf_free`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn greeter_start(
-    handle: u64,
-    out_ptr: *mut *mut u8,
-    out_len: *mut usize,
-) -> i32 {
-    // SAFETY: caller contract.
-    unsafe { deliver(table::start(handle), out_ptr, out_len) }
 }
 
 /// Deliver one reply record — `kind · id · payload` — and receive the effects
@@ -122,9 +107,10 @@ pub unsafe extern "C" fn greeter_reply(
 }
 
 /// Run the routine to its next wait without delivering anything, and receive
-/// the effects it recorded plus a status code: for an `IDLE` routine, once
-/// something it waits on may have changed. Harmless when nothing has. On error
-/// nothing is written.
+/// the effects it recorded plus a status code. The first call begins it — a
+/// pinned child is built on the calling thread, which then owns it. After
+/// that, for an `IDLE` routine a `woke` frame named, once something it waits on
+/// may have changed; harmless when nothing has. On error nothing is written.
 ///
 /// # Safety
 ///
@@ -161,7 +147,7 @@ pub extern "C" fn greeter_free(handle: u64) -> i32 {
     code_of(table::free(handle))
 }
 
-/// Free a buffer previously returned by [`greeter_start`] or
+/// Free a buffer previously returned by [`greeter_resume`] or
 /// [`greeter_reply`].
 ///
 /// # Safety

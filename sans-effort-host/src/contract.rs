@@ -42,7 +42,7 @@ pub const COMPLETE: i32 = 1;
 /// may have changed; resuming early is harmless.
 pub const IDLE: i32 = 2;
 
-/// Another thread is inside `start`, `reply`, or `resume` for this handle.
+/// Another thread is inside `resume` or `reply` for this handle.
 pub const BUSY: i32 = -1;
 /// The routine already completed.
 pub const FINISHED: i32 = -2;
@@ -53,14 +53,15 @@ pub const WRONG_KIND: i32 = -3;
 pub const PANICKED: i32 = -4;
 /// Unknown or freed handle.
 pub const BAD_HANDLE: i32 = -5;
-/// A second `start`, or a reply to an id that was never issued.
+/// A reply to an id that was never issued — including any reply before the
+/// first `resume`.
 pub const BAD_INPUT: i32 = -6;
 /// A reply record that does not parse: a bug in the host's encoder.
 pub const MALFORMED: i32 = -7;
 /// A reply to an id that was issued but is no longer awaited: already
 /// answered, or abandoned by the routine. Harmless; nothing changed.
 pub const STALE: i32 = -8;
-/// The handle names a pinned machine, started on another thread; every call
+/// The handle names a pinned machine, first resumed on another thread; every call
 /// for it must come from that thread. Nothing changed: route the call there.
 pub const WRONG_THREAD: i32 = -9;
 

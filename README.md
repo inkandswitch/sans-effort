@@ -36,7 +36,7 @@ flowchart TB
     end
 
     subgraph routine["routine · no_std"]
-        greeter["Greeter#60;C: Sleep + Lookup + ReadLine + WriteLine#62;: Run<br/>owns the logic; asks for traits; knows nothing of hosts"]
+        greeter["Greeter#60;C: Sleep + Lookup + ReadLine + WriteLine#62;: Step<br/>owns the logic; asks for traits; knows nothing of hosts"]
     end
 
     native --> tokio_ctx --> greeter
@@ -52,7 +52,7 @@ use sans_effort_effects::{console::{ReadLine, WriteLine}, time::Sleep};  // the 
 
 pub trait Lookup { async fn lookup(&self, name: String) -> String; }      // the application's own
 
-impl<C: Sleep + Lookup + ReadLine + WriteLine> Run for Greeter<C> {
+impl<C: Sleep + Lookup + ReadLine + WriteLine> Step for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write_line("Who are you?".into());
         let Ok(name) = self.ctx.read_line().await else {                  // input can end
@@ -104,7 +104,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 ```text
   host                                    routine
     │                                         │
-    │  start()                                │
+    │  resume()                               │
     │────────────────────────────────────────▶│ run until input needed
     │                                         │ 
     │        [WriteLine, (ReadLine, 1)]       │
@@ -124,7 +124,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
     │                                         ┴
 ```
 
-- _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `start`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
+- _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `resume`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
 - _Typed replies._ Every awaiting effect carries a `ReplyHandle<T>`: the typed, single-use capability to answer it. A Rust host replies through the handle, infallibly; a foreign host replies by id, and the host layer checks the kind.
 - _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits — or `select` the first of them — and a host may reply in any order. A request the routine abandons is reported to the host, which may stop the work.
 - _`no_std` core._ The mechanism, the routine, and its boundary crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
@@ -133,7 +133,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 
 | Crate                                         | Purpose                                                                                                                                                                                          | Target             |
 |-----------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
-| [`sans-effort`](sans-effort/)                 | The mechanism: `Run`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
+| [`sans-effort`](sans-effort/)                 | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
 | [`sans-effort-effects`](sans-effort-effects/) | A standard library of capabilities: `time` (`Sleep`) and `console` (`ReadLine`, `WriteLine`) — the traits, their effects, and the reifying `Ctx<E>`, written once                                | `no_std` + `alloc` |
 | [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per capability — `TokioClock` (`Sleep`), `TokioInput` (`ReadLine`), `TokioOutput` (`WriteLine`) — and `TokioCtx` with all of them — real futures, no driver | `std`              |
 | [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                                       | `std`              |

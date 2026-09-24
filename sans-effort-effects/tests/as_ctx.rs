@@ -7,7 +7,7 @@
 use core::{future::Future, ops::ControlFlow, time::Duration};
 use sans_effort::{
     driver::{Driver, status::Status},
-    run::Run,
+    step::Step,
 };
 use sans_effort_effects::{
     console::{WriteLine, effect::WriteLine as WriteLineEffect},
@@ -71,7 +71,7 @@ impl From<Asked<Where>> for Effect {
 /// Uses two stdlib capabilities and the local one.
 struct Postcard<C>(C);
 
-impl<C: Locate + Sleep + WriteLine> Run for Postcard<C> {
+impl<C: Locate + Sleep + WriteLine> Step for Postcard<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         let here = self.0.locate().await;
         self.0.sleep(Duration::from_millis(5)).await;
@@ -84,7 +84,7 @@ impl<C: Locate + Sleep + WriteLine> Run for Postcard<C> {
 fn a_newtype_gets_the_stdlib_and_adds_its_own() {
     let mut driver = Driver::<Effect>::new(|outbox| Postcard(HostCtx(Ctx::new(outbox))).run());
 
-    let Some(Effect::Where(Asked { reply, .. })) = driver.start().into_iter().next() else {
+    let Some(Effect::Where(Asked { reply, .. })) = driver.resume().into_iter().next() else {
         panic!("the routine locates first");
     };
     let Some(Effect::Sleep(Asked {

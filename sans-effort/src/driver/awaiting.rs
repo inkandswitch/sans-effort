@@ -15,7 +15,7 @@ use core::{
 /// It always has an id — there is no way to build one without — so an id,
 /// once minted, cannot be lost. Dropping it before the reply arrives closes
 /// its mailbox slot: a late reply is discarded, and the id is reported in
-/// the next step's [`closed`](super::step::Step::closed). Once the reply has
+/// the next step's [`closed`](super::Yield::closed). Once the reply has
 /// been collected the slot is gone, and dropping it closes nothing.
 ///
 /// `Unpin`, structurally: it holds an id and an outbox handle and borrows

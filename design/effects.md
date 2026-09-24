@@ -96,7 +96,7 @@ impl<R, W> Sleep for DemoCtx<R, W> {
 
 The traits are small, `no_std`, and have no dependencies, so the usual reason for a separate crate — keeping heavy things out — does not apply. Three other reasons do:
 
-- _Semver._ The mechanism should be close to frozen: `Run`, `Driver`, `ReplyHandle`, and the reply menu have not moved since they were first built. A library of traits is the opposite. It grows modules, and signatures get argued over. `embedded-hal`'s traits, not its mechanism, took a breaking release to settle. A change to `actor::Spawn` must not force a major release of the mechanism.
+- _Semver._ The mechanism should be close to frozen: `Step`, `Driver`, `ReplyHandle`, and the reply menu have not moved since they were first built. A library of traits is the opposite. It grows modules, and signatures get argued over. `embedded-hal`'s traits, not its mechanism, took a breaking release to settle. A change to `actor::Spawn` must not force a major release of the mechanism.
 - _The mechanism stays opinion-free._ "The library is the mechanism" remains literally true of `sans-effort`, and this stdlib sits on the same footing as anyone else's.
 - _The tokio crate must be separate anyway._ A `tokio` feature on the `no_std` crate would, by feature unification, pull `std` into every crate in a workspace that enables it — including `thumbv6m` builds.
 

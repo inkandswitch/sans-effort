@@ -14,7 +14,7 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/python/main.py --ring         # 16 machines passing a counter: woke frames only
 
 With spawning, the loop is a small scheduler: it keeps every machine by
-handle, starts each child it is told about, and resumes each machine a `woke`
+handle, resumes each child it is told about to begin it, and each machine a `woke`
 frame names. A message between two routines never passes through here; the
 sender's call reports whom it woke, and resuming is how the receiver finds
 the message. When nothing is queued it asks `wakes` for anything woken
@@ -97,7 +97,7 @@ def frames(data: bytes) -> list[tuple[int, bytes]]:
 
 
 class Library:
-    """`abi_version / new / start / reply / resume / wakes / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
+    """`abi_version / new / resume / reply / wakes / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
 
     def __init__(self, path: Path):
         self.lib = ctypes.CDLL(str(path))
@@ -110,8 +110,8 @@ class Library:
         self.lib.greeter_new_ping_pong.restype = ctypes.c_uint64
         self.lib.greeter_new_front_desk.restype = ctypes.c_uint64
         self.lib.greeter_new_ring.restype = ctypes.c_uint64
-        self.lib.greeter_start.restype = ctypes.c_int32
-        self.lib.greeter_start.argtypes = [
+        self.lib.greeter_resume.restype = ctypes.c_int32
+        self.lib.greeter_resume.argtypes = [
             ctypes.c_uint64,
             ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
             ctypes.POINTER(ctypes.c_size_t),
@@ -124,10 +124,8 @@ class Library:
             ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
             ctypes.POINTER(ctypes.c_size_t),
         ]
-        self.lib.greeter_resume.restype = ctypes.c_int32
-        self.lib.greeter_resume.argtypes = self.lib.greeter_start.argtypes
         self.lib.greeter_wakes.restype = ctypes.c_int32
-        self.lib.greeter_wakes.argtypes = self.lib.greeter_start.argtypes[1:]
+        self.lib.greeter_wakes.argtypes = self.lib.greeter_resume.argtypes[1:]
         self.lib.greeter_free.restype = ctypes.c_int32
         self.lib.greeter_buf_free.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
 
@@ -141,13 +139,6 @@ class Library:
             "ring": self.lib.greeter_new_ring,
         }[kind]()
 
-    def start(self, handle: int) -> tuple[int, bytes]:
-        """Run to the first wait; (status, effect bytes) out. Raises on an error code."""
-        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
-        out_len = ctypes.c_size_t()
-        code = self.lib.greeter_start(handle, ctypes.byref(out_ptr), ctypes.byref(out_len))
-        return self._collect(code, out_ptr, out_len)
-
     def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
         """One reply record in; (status, effect bytes) out. Raises on an error code."""
         out_ptr = ctypes.POINTER(ctypes.c_uint8)()
@@ -156,7 +147,7 @@ class Library:
         return self._collect(code, out_ptr, out_len)
 
     def resume(self, handle: int) -> tuple[int, bytes]:
-        """Poll again with nothing to deliver; (status, effect bytes) out. Harmless when nothing changed."""
+        """Run to the next wait with nothing to deliver — the first call begins it; (status, effect bytes) out. Harmless when nothing changed. Raises on an error code."""
         out_ptr = ctypes.POINTER(ctypes.c_uint8)()
         out_len = ctypes.c_size_t()
         code = self.lib.greeter_resume(handle, ctypes.byref(out_ptr), ctypes.byref(out_len))
@@ -239,10 +230,10 @@ GREETINGS = {"alice": "Hello", "bob": "Hi", "carol": "Hey"}
 
 
 def drive(lib: Library, root: int, script: list[str]) -> list[str]:
-    """Perform each effect and reply by id; start every child a machine
-    spawns; resume each machine a `woke` frame names; free each machine as it
+    """Perform each effect and reply by id; resume every child a machine
+    spawns, to begin it; resume each machine a `woke` frame names; free each machine as it
     completes. Every call comes from this one thread, so a pinned child stays
-    on the thread that started it."""
+    on the thread that first resumed it."""
     lines, written, greeted = iter(script), [], 0
     machines: dict[int, int] = {}  # handle → status of its last call
     queue: deque[tuple[int, dict]] = deque()
@@ -254,7 +245,7 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
         if status == COMPLETE:
             lib.free(handle)
 
-    ran(root, lib.start(root))
+    ran(root, lib.resume(root))
 
     while True:
         while queue:
@@ -266,7 +257,7 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
                 print(e["text"])
                 continue
             if e["kind"] in ("spawned", "spawned_pinned"):
-                ran(e["handle"], lib.start(e["handle"]))
+                ran(e["handle"], lib.resume(e["handle"]))
                 continue
             if e["kind"] == "woke":
                 if e["handle"] in machines and machines[e["handle"]] != COMPLETE:

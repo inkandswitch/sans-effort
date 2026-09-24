@@ -10,7 +10,7 @@ use sans_effort::{
     },
     driver::outbox::Outbox,
     reply::handle::ReplyHandle,
-    run::Run,
+    step::Step,
     testing::poll_once,
 };
 
@@ -54,7 +54,7 @@ impl Encode for View {
 
 pub(crate) struct Echo(pub(crate) Outbox<Effect>);
 
-impl Run for Echo {
+impl Step for Echo {
     async fn step(&mut self) -> ControlFlow<()> {
         let answer = self.0.ask(Effect::Ask).await;
         self.0.tell(Effect::Say(answer));
@@ -64,7 +64,7 @@ impl Run for Echo {
 
 pub(crate) struct Both(pub(crate) Outbox<Effect>);
 
-impl Run for Both {
+impl Step for Both {
     async fn step(&mut self) -> ControlFlow<()> {
         let (a, b) =
             sans_effort::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
@@ -75,7 +75,7 @@ impl Run for Both {
 
 pub(crate) struct Impatient(pub(crate) Outbox<Effect>);
 
-impl Run for Impatient {
+impl Step for Impatient {
     async fn step(&mut self) -> ControlFlow<()> {
         let abandoned = poll_once(self.0.ask(Effect::Ask)).await;
         drop(abandoned);
@@ -90,7 +90,7 @@ impl Run for Impatient {
 /// request is dropped with the routine and closes on completion.
 pub(crate) struct Holds(pub(crate) Outbox<Effect>);
 
-impl Run for Holds {
+impl Step for Holds {
     async fn step(&mut self) -> ControlFlow<()> {
         let _held = poll_once(self.0.ask(Effect::Ask)).await;
         self.0.tell(Effect::Say(String::from("done")));

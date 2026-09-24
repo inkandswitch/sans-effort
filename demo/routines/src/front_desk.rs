@@ -5,7 +5,7 @@ use crate::traits::Lookup;
 use alloc::{format, string::String, vec::Vec};
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use sans_effort_effects::{
     console::{ReadLine, WriteLine},
     spawn::Spawn,
@@ -34,7 +34,7 @@ impl<C> FrontDesk<C> {
     }
 }
 
-impl<C: ReadLine + WriteLine + Spawn> Run for FrontDesk<C>
+impl<C: ReadLine + WriteLine + Spawn> Step for FrontDesk<C>
 where
     C::Child: Lookup + 'static,
 {
@@ -78,7 +78,7 @@ pub struct Clerk<C> {
     reply: Sender<String>,
 }
 
-impl<C: Lookup> Run for Clerk<C> {
+impl<C: Lookup> Step for Clerk<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         let greeting = self.ctx.lookup(core::mem::take(&mut self.name)).await;
         // The receptionist waits for every clerk, so this finds it listening.

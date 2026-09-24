@@ -6,9 +6,9 @@
 //! Hosts may pool, and a machine's calls migrate between threads.
 //!
 //! A _pinned_ machine's future need not be `Send`, so it must stay on one
-//! thread. It is parked unstarted by [`park_pinned`]; the thread that calls
-//! [`start`] builds it and keeps it in its own table, and every later call for
-//! it must come from that thread. From any other, a call is
+//! thread. It is parked unstarted by [`park_pinned`]; the thread that first
+//! calls [`resume`] for it builds it and keeps it in its own table, and every
+//! later call for it must come from that thread. From any other, a call is
 //! [`Error::WrongThread`]: nothing changes, and the host routes the call where
 //! it belongs.
 //!
@@ -53,7 +53,6 @@ use std::{
 /// layer. The tables hold every routine every binding registers, so the
 /// effect type is erased here.
 trait Stepped {
-    fn start(&mut self) -> Result<(Vec<u8>, Status), Error>;
     fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error>;
     fn resume(&mut self) -> Result<(Vec<u8>, Status), Error>;
     fn on_wake(&self, hook: Box<dyn Fn() + Send + Sync>);
@@ -63,10 +62,6 @@ impl<E: HostEffect, D: Drive<E>> Stepped for Encoded<E, D>
 where
     E::View: Encode,
 {
-    fn start(&mut self) -> Result<(Vec<u8>, Status), Error> {
-        Encoded::start(self)
-    }
-
     fn reply(&mut self, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
         Encoded::reply(self, record)
     }
@@ -264,7 +259,7 @@ where
 }
 
 /// Park a pinned routine, unstarted. Its future is built by whichever thread
-/// calls [`start`] for the returned handle, and stays on that thread. Until
+/// first calls [`resume`] for the returned handle, and stays on that thread. Until
 /// then, [`free`] from any thread drops it.
 pub fn park_pinned<
     E: HostEffect + 'static,
@@ -295,15 +290,30 @@ fn insert(machine: Box<dyn Stepped + Send>) -> u64 {
     handle
 }
 
-/// Run the routine to its first wait: the effects it recorded, encoded, plus
-/// its status. Valid once per handle. For a parked pinned routine, this is
-/// where it is built, on the calling thread, which then owns it.
+/// Deliver one reply record and run the routine to its next wait: the
+/// effects it recorded, encoded, plus its status.
 ///
 /// # Errors
 ///
 /// [`Error::BadHandle`], [`Error::Busy`], [`Error::Panicked`],
-/// [`Error::WrongThread`], or whatever [`Encoded::start`] returns.
-pub fn start(handle: u64) -> Result<(Vec<u8>, Status), Error> {
+/// [`Error::WrongThread`], [`Error::BadInput`] for a parked routine not yet
+/// resumed (it has issued no ids), or whatever [`Encoded::reply`] returns.
+pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
+    reporting_wakes(|| guarded(handle, |m| m.reply(record)))
+}
+
+/// Run the routine to its next wait without delivering anything: the effects
+/// it recorded, encoded, plus its status. The first call begins it — and, for
+/// a parked pinned routine, builds it on the calling thread, which then owns
+/// it. After that, for an [`Status::Idle`] routine — one a [`FRAME_WOKE`]
+/// frame named — once something it waits on may have changed; harmless when
+/// nothing has.
+///
+/// # Errors
+///
+/// [`Error::BadHandle`], [`Error::Busy`], [`Error::Panicked`],
+/// [`Error::WrongThread`], or whatever [`Encoded::resume`] returns.
+pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
     let parked = {
         let mut table = table();
         match table.parked.remove(&handle) {
@@ -315,46 +325,20 @@ pub fn start(handle: u64) -> Result<(Vec<u8>, Status), Error> {
         }
     };
 
-    match parked {
-        Some(parked) => {
-            let built = catch_unwind(AssertUnwindSafe(|| parked.build()));
-            let Ok(machine) = built else {
-                table().pinned.remove(&handle);
-                return Err(Error::Panicked);
-            };
-            machine.on_wake(Box::new(move || woke(handle)));
-            LOCAL.with(|local| {
-                local
-                    .borrow_mut()
-                    .insert(handle, Rc::new(RefCell::new(machine)));
-            });
-            reporting_wakes(|| guarded(handle, |m| m.start()))
-        }
-        None => reporting_wakes(|| guarded(handle, |m| m.start())),
+    if let Some(parked) = parked {
+        let built = catch_unwind(AssertUnwindSafe(|| parked.build()));
+        let Ok(machine) = built else {
+            table().pinned.remove(&handle);
+            return Err(Error::Panicked);
+        };
+        machine.on_wake(Box::new(move || woke(handle)));
+        LOCAL.with(|local| {
+            local
+                .borrow_mut()
+                .insert(handle, Rc::new(RefCell::new(machine)));
+        });
     }
-}
 
-/// Deliver one reply record and run the routine to its next wait: the
-/// effects it recorded, encoded, plus its status.
-///
-/// # Errors
-///
-/// [`Error::BadHandle`], [`Error::Busy`], [`Error::Panicked`],
-/// [`Error::WrongThread`], [`Error::BadInput`] for a parked routine not yet
-/// started, or whatever [`Encoded::reply`] returns.
-pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
-    reporting_wakes(|| guarded(handle, |m| m.reply(record)))
-}
-
-/// Run the routine to its next wait without delivering anything: the effects
-/// it recorded, encoded, plus its status. For an [`Status::Idle`] routine,
-/// once something it waits on may have changed; harmless when nothing has.
-///
-/// # Errors
-///
-/// As [`reply`], except that the machine's own errors are those of
-/// [`Encoded::resume`].
-pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
     reporting_wakes(|| guarded(handle, |m| m.resume()))
 }
 
@@ -463,13 +447,13 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Echo, Effect, View, framed, reply_str_record};
-    use sans_effort::run::Run;
+    use sans_effort::step::Step;
 
     #[test]
     fn round_trip_across_threads() {
         let h = new(|outbox| Echo(outbox).run());
 
-        let (bytes, status) = start(h).expect("start");
+        let (bytes, status) = resume(h).expect("resume");
         assert_eq!(status, Status::Awaiting);
         assert_eq!(bytes, framed(&[View::Ask(1)]));
 
@@ -483,7 +467,7 @@ mod tests {
 
         free(h).expect("free");
         assert_eq!(free(h), Err(Error::BadHandle));
-        assert_eq!(start(h), Err(Error::BadHandle));
+        assert_eq!(resume(h), Err(Error::BadHandle));
         assert_eq!(reply(h, &reply_str_record(1, "x")), Err(Error::BadHandle));
     }
 
@@ -497,11 +481,11 @@ mod tests {
         // Silence the panic message the default hook would print.
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let result = start(h);
+        let result = resume(h);
         std::panic::set_hook(hook);
 
         assert_eq!(result, Err(Error::Panicked));
-        assert_eq!(start(h), Err(Error::BadHandle), "removed from the table");
+        assert_eq!(resume(h), Err(Error::BadHandle), "removed from the table");
     }
 
     /// A queue two routines share: the smallest in-process channel. It stores
@@ -536,8 +520,8 @@ mod tests {
             }
         });
 
-        assert_eq!(start(listener), Ok((Vec::new(), Status::Idle)));
-        assert_eq!(start(relay).expect("start").1, Status::Awaiting);
+        assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
+        assert_eq!(resume(relay).expect("resume").1, Status::Awaiting);
         assert_eq!(
             reply(relay, &reply_str_record(1, "hi")),
             Ok((Vec::new(), Status::Complete))
@@ -568,28 +552,32 @@ mod tests {
         assert_eq!(
             reply(h, &reply_str_record(1, "early")),
             Err(Error::BadInput),
-            "parked: not started yet"
+            "parked: not resumed yet, so no id has been issued"
         );
 
         let (owner_start, record) = (
-            thread::spawn(move || start(h)),
+            thread::spawn(move || resume(h)),
             reply_str_record(1, "from afar"),
         );
-        let (bytes, status) = owner_start.join().expect("thread").expect("start");
+        let (bytes, status) = owner_start.join().expect("thread").expect("resume");
         assert_eq!((bytes, status), (framed(&[View::Ask(1)]), Status::Awaiting));
 
         assert_eq!(reply(h, &record), Err(Error::WrongThread));
         assert_eq!(resume(h), Err(Error::WrongThread));
         assert_eq!(free(h), Err(Error::WrongThread), "only its owner frees it");
-        assert_eq!(start(h), Err(Error::WrongThread));
+        assert_eq!(resume(h), Err(Error::WrongThread));
     }
 
     #[test]
     fn a_pinned_machine_runs_and_frees_on_its_own_thread() {
         let h = park_pinned(pinned_echo);
         thread::spawn(move || {
-            assert_eq!(start(h).expect("start").1, Status::Awaiting);
-            assert_eq!(start(h), Err(Error::BadInput), "start twice");
+            assert_eq!(resume(h).expect("resume").1, Status::Awaiting);
+            assert_eq!(
+                resume(h),
+                Ok((Vec::new(), Status::Awaiting)),
+                "again before the reply: nothing new"
+            );
             assert_eq!(
                 reply(h, &reply_str_record(1, "near")),
                 Ok((framed(&[View::Say(String::from("near"))]), Status::Complete))
@@ -608,7 +596,7 @@ mod tests {
             .join()
             .expect("thread")
             .expect("free");
-        assert_eq!(start(h), Err(Error::BadHandle));
+        assert_eq!(resume(h), Err(Error::BadHandle));
     }
 
     #[test]
@@ -622,11 +610,11 @@ mod tests {
 
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let result = start(h);
+        let result = resume(h);
         std::panic::set_hook(hook);
 
         assert_eq!(result, Err(Error::Panicked));
-        assert_eq!(start(h), Err(Error::BadHandle), "removed from both tables");
+        assert_eq!(resume(h), Err(Error::BadHandle), "removed from both tables");
     }
 
     fn frames_of(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
@@ -660,8 +648,8 @@ mod tests {
             drop(tx.send(message).await);
         });
 
-        assert_eq!(start(listener), Ok((Vec::new(), Status::Idle)));
-        drop(start(relay).expect("start"));
+        assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
+        drop(resume(relay).expect("resume"));
         let (bytes, status) = reply(relay, &reply_str_record(1, "hi")).expect("reply");
         assert_eq!(status, Status::Complete);
         assert_eq!(
@@ -691,8 +679,8 @@ mod tests {
             drop(outbox.ask(Effect::Ask).await);
         });
 
-        assert_eq!(start(listener), Ok((Vec::new(), Status::Idle)));
-        drop(start(holder).expect("start"));
+        assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
+        drop(resume(holder).expect("resume"));
         free(holder).expect("free: drops the sender, which wakes the listener");
         assert!(
             woken_in(&wakes()).contains(&listener),

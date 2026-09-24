@@ -88,7 +88,7 @@ mod tests {
     use core::ops::ControlFlow;
     use sans_effort::{
         driver::{Driver, status::Status},
-        run::Run,
+        step::Step,
     };
 
     enum Effect {
@@ -111,7 +111,7 @@ mod tests {
     /// Reads once and writes what it got, or the error.
     struct ReadOnce<C>(C);
 
-    impl<C: ReadLine + WriteLine> Run for ReadOnce<C> {
+    impl<C: ReadLine + WriteLine> Step for ReadOnce<C> {
         async fn step(&mut self) -> ControlFlow<()> {
             let line = match self.0.read_line().await {
                 Ok(line) => line,
@@ -125,7 +125,8 @@ mod tests {
     /// What the routine wrote when the host answered its one read with `reply`.
     fn written(reply: Vec<u8>) -> String {
         let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
-        let Some(Effect::ReadLine(Asked { reply: handle, .. })) = driver.start().into_iter().next()
+        let Some(Effect::ReadLine(Asked { reply: handle, .. })) =
+            driver.resume().into_iter().next()
         else {
             unreachable!("the routine reads first");
         };

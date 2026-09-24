@@ -10,7 +10,7 @@ This document lists what `sans-effort` assumes about its environment. Things the
 ### The Host Is Honest
 
 > [!IMPORTANT]
-> _Assumption:_ the host performs effects faithfully and schedules fairly. It answers each request with a true reply, starts or frees every child a routine spawns, keeps each pinned machine on the thread that started it, and resumes idle machines eventually.
+> _Assumption:_ the host performs effects faithfully and schedules fairly. It answers each request with a true reply, resumes or frees every child a routine spawns, keeps each pinned machine on the thread that started it, and resumes idle machines eventually.
 
 The host owns the table of machines, performs every effect, and decides when each machine runs, so it is trusted by construction — the same position as a vat in E. Nothing in the design protects routines from their host, and no object-capability system claims to. What the discipline does protect against is one routine exceeding its capabilities or its channel ends; see [`capabilities`](capabilities.md).
 

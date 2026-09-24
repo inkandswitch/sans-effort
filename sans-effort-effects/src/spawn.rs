@@ -12,21 +12,21 @@
 //!
 //! ```
 //! use core::ops::ControlFlow;
-//! use sans_effort::run::Run;
+//! use sans_effort::step::Step;
 //! use sans_effort_effects::{console::WriteLine, spawn::Spawn};
 //!
 //! struct Parent<C>(C);
 //!
 //! struct Child<C>(C, String);
 //!
-//! impl<C: WriteLine> Run for Child<C> {
+//! impl<C: WriteLine> Step for Child<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         self.0.write_line(core::mem::take(&mut self.1));
 //!         ControlFlow::Break(())
 //!     }
 //! }
 //!
-//! impl<C> Run for Parent<C>
+//! impl<C> Step for Parent<C>
 //! where
 //!     C: Spawn,
 //!     C::Child: WriteLine + 'static,
@@ -49,12 +49,12 @@
 //!
 //! ```
 //! use core::{ops::ControlFlow, time::Duration};
-//! use sans_effort::run::Run;
+//! use sans_effort::step::Step;
 //! use sans_effort_effects::{spawn::Spawn, time::Sleep};
 //!
 //! struct Napper<C>(C);
 //!
-//! impl<C: Sleep> Run for Napper<C> {
+//! impl<C: Sleep> Step for Napper<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         self.0.sleep(Duration::from_millis(1)).await;
 //!         ControlFlow::Break(())
@@ -63,7 +63,7 @@
 //!
 //! struct Parent<C>(C);
 //!
-//! impl<C> Run for Parent<C>
+//! impl<C> Step for Parent<C>
 //! where
 //!     C: Spawn,
 //!     C::Child: Sleep + Send + Sync + 'static,
@@ -161,8 +161,8 @@ mod tests {
     use alloc::{rc::Rc, string::String, vec::Vec};
     use core::ops::ControlFlow;
     use sans_effort::{
-        driver::{Driver, LocalDriver, status::Status, step::Step},
-        run::Run,
+        driver::{Driver, LocalDriver, Yield, status::Status},
+        step::Step,
     };
 
     enum Effect {
@@ -192,7 +192,7 @@ mod tests {
     /// Writes its line and finishes.
     struct Writer<C>(C, String);
 
-    impl<C: WriteLine> Run for Writer<C> {
+    impl<C: WriteLine> Step for Writer<C> {
         async fn step(&mut self) -> ControlFlow<()> {
             self.0.write_line(core::mem::take(&mut self.1));
             ControlFlow::Break(())
@@ -203,7 +203,7 @@ mod tests {
     /// `Send`, which a pinned child may be.
     struct Local<C>(C, Rc<String>);
 
-    impl<C: WriteLine> Run for Local<C> {
+    impl<C: WriteLine> Step for Local<C> {
         async fn step(&mut self) -> ControlFlow<()> {
             let text = Rc::clone(&self.1);
             core::future::ready(()).await;
@@ -216,7 +216,7 @@ mod tests {
     /// context, so the migrating child's future is provably `Send`.
     struct Parent(Ctx<Effect>);
 
-    impl Run for Parent {
+    impl Step for Parent {
         async fn step(&mut self) -> ControlFlow<()> {
             self.0
                 .spawn(|child_ctx| Writer(child_ctx, String::from("migrating")).run());
@@ -227,7 +227,7 @@ mod tests {
         }
     }
 
-    fn written(step: Step<Effect>) -> Vec<String> {
+    fn written(step: Yield<Effect>) -> Vec<String> {
         step.into_iter()
             .map(|e| match e {
                 Effect::WriteLine(Written(line)) => line,
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn children_run_as_machines_of_their_own() {
         let mut parent = Driver::<Effect>::new(|outbox| Parent(Ctx::new(outbox)).run());
-        let mut effects = parent.start().into_iter();
+        let mut effects = parent.resume().into_iter();
         assert_eq!(parent.status(), Status::Complete);
 
         let Some(Effect::Spawn(effect::Spawn(child))) = effects.next() else {
@@ -255,11 +255,11 @@ mod tests {
         assert!(effects.next().is_none());
 
         let mut child = Driver::from_boxed(|outbox| child.start(outbox));
-        assert_eq!(written(child.start()), ["migrating"]);
+        assert_eq!(written(child.resume()), ["migrating"]);
         assert!(child.is_finished());
 
         let mut pinned = LocalDriver::from_boxed(|outbox| pinned.start(outbox));
-        assert_eq!(written(pinned.start()), ["pinned"]);
+        assert_eq!(written(pinned.resume()), ["pinned"]);
         assert!(pinned.is_finished());
     }
 }

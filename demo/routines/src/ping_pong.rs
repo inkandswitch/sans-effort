@@ -3,7 +3,7 @@
 use alloc::format;
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use sans_effort_effects::{console::WriteLine, spawn::Spawn};
 
 /// Spawns a [`Ponger`], then sends it `rounds` pings, waiting for each pong
@@ -31,7 +31,7 @@ impl<C> PingPong<C> {
     }
 }
 
-impl<C: Spawn + WriteLine> Run for PingPong<C>
+impl<C: Spawn + WriteLine> Step for PingPong<C>
 where
     C::Child: Send + 'static,
 {
@@ -72,7 +72,7 @@ pub struct Ponger<C> {
     pongs: Sender<u32>,
 }
 
-impl<C> Run for Ponger<C> {
+impl<C> Step for Ponger<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         let Ok(n) = self.pings.recv().await else {
             return ControlFlow::Break(());

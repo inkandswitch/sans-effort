@@ -16,7 +16,7 @@
 //! in `../cdylib`. (`../wasm` needs neither: JS is a runtime host.)
 //!
 //! ```text
-//!   routines               Greeter<C>: Run; Count, Lookup
+//!   routines               Greeter<C>: Step; Count, Lookup
 //!                          (with their effects and Ctx impls)
 //!                                     │
 //!   sans-effort-effects    Ctx<E>; Sleep, ReadLine, WriteLine
@@ -45,7 +45,7 @@
 //! never appear.
 //!
 //! ```compile_fail,E0277
-//! use sans_effort::{driver::Driver, run::Run};
+//! use sans_effort::{driver::Driver, step::Step};
 //! use routines::greeter::Greeter;
 //! use greeter_boundary::Quiet;
 //! use sans_effort_effects::ctx::Ctx;
@@ -202,12 +202,13 @@ pub enum View {
         /// What to show.
         text: String,
     },
-    /// Tag 6: a child that may migrate between threads. Start it.
+    /// Tag 6: a child that may migrate between threads. Resume it to begin it.
     Spawned {
         /// The child's machine.
         handle: u64,
     },
-    /// Tag 7: a child pinned to the thread that starts it. Start it there.
+    /// Tag 7: a child pinned to the thread that first resumes it. Resume it
+    /// there.
     SpawnedPinned {
         /// The child's machine.
         handle: u64,
@@ -359,7 +360,7 @@ mod tests {
     use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
     use sans_effort::{
         driver::{Driver, outbox::Outbox, status::Status},
-        run::Run,
+        step::Step,
     };
     use sans_effort_effects::{console::ReadLineError, ctx::Ctx};
 
@@ -382,7 +383,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut written = Vec::new();
         let mut greeted = 0;
-        let mut queue: VecDeque<Full> = driver.start().into();
+        let mut queue: VecDeque<Full> = driver.resume().into();
 
         while let Some(effect) = queue.pop_front() {
             let more = match effect {
@@ -489,7 +490,7 @@ mod tests {
                 let [
                     Full::WriteLine(WriteLine(prompt)),
                     Full::ReadLine(Asked { reply: read, .. }),
-                ] = exactly(driver.start())
+                ] = exactly(driver.resume())
                 else {
                     panic!("first batch: prompt + read");
                 };
@@ -552,7 +553,7 @@ mod tests {
     fn ticker_under_quiet() {
         let mut driver = Driver::new(ticker);
         let mut written = Vec::new();
-        let mut queue: VecDeque<Quiet> = driver.start().into();
+        let mut queue: VecDeque<Quiet> = driver.resume().into();
 
         while let Some(effect) = queue.pop_front() {
             match effect {
@@ -590,7 +591,7 @@ mod tests {
         use super::*;
         use routines::{front_desk::FrontDesk, ping_pong::PingPong};
         use sans_effort::{
-            driver::{LocalDriver, step::Step},
+            driver::{LocalDriver, Yield},
             reply::{Reply, handle::ReplyHandle},
         };
 
@@ -602,21 +603,14 @@ mod tests {
         }
 
         impl Machine {
-            fn start(&mut self) -> Step<Full> {
-                match self {
-                    Machine::Migrating(d) => d.start(),
-                    Machine::Pinned(d) => d.start(),
-                }
-            }
-
-            fn resume(&mut self) -> Step<Full> {
+            fn resume(&mut self) -> Yield<Full> {
                 match self {
                     Machine::Migrating(d) => d.resume(),
                     Machine::Pinned(d) => d.resume(),
                 }
             }
 
-            fn reply<T: Reply>(&mut self, handle: ReplyHandle<T>, value: T) -> Step<Full> {
+            fn reply<T: Reply>(&mut self, handle: ReplyHandle<T>, value: T) -> Yield<Full> {
                 match self {
                     Machine::Migrating(d) => d.reply(handle, value),
                     Machine::Pinned(d) => d.reply(handle, value),
@@ -714,15 +708,16 @@ mod tests {
             }
         }
 
-        /// Start a spawned machine and keep it: its index, and its first step.
+        /// Begin a spawned machine and keep it: its index, and what its first
+        /// resume yielded.
         fn adopt(
             machines: &mut Vec<Machine>,
             mut machine: Machine,
             woken: &Woken,
-        ) -> (usize, Step<Full>) {
+        ) -> (usize, Yield<Full>) {
             let at = machines.len();
             machine.report_wakes(at, woken);
-            let step = machine.start();
+            let step = machine.resume();
             machines.push(machine);
             (at, step)
         }

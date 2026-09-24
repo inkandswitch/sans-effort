@@ -20,7 +20,7 @@
 //! ```text
 //!   host                                    routine
 //!     │                                         │
-//!     │  start()                                │
+//!     │  resume()                               │
 //!     │────────────────────────────────────────▶│ run until input needed
 //!     │                                         │
 //!     │        [WriteLine, (ReadLine, 1)]       │
@@ -56,7 +56,7 @@
 //!   │ context     impl Sleep for TokioCtx   │  impl Sleep for Ctx<E>    │
 //!   │             a real future             │  records an effect, waits │
 //!   ├───────────────────────────────────────┴───────────────────────────┤
-//!   │ routine     Greeter<C: Sleep + Lookup + Console>: Run             │  no_std
+//!   │ routine     Greeter<C: Sleep + Lookup + Console>: Step             │  no_std
 //!   │             owns the logic; knows nothing of effects or hosts     │
 //!   └───────────────────────────────────────────────────────────────────┘
 //! ```
@@ -68,8 +68,8 @@
 //!
 //! # The Pieces
 //!
-//! - [`run::Run`] is the shape of a routine: a [`step`](run::Run::step) that
-//!   is one iteration of its loop, and a [`run`](run::Run::run) that repeats
+//! - [`step::Step`] is the shape of a routine: a [`step`](step::Step::step) that
+//!   is one iteration of its loop, and a [`run`](step::Step::run) that repeats
 //!   it until it breaks.
 //! - [`driver::outbox::Outbox`] is what a _reifying context_ writes into:
 //!   [`tell`](driver::outbox::Outbox::tell) an effect and move on, or
@@ -79,9 +79,10 @@
 //!   accepts is the sealed four-kind menu, [`reply::Reply`]: `str`, `u64`,
 //!   `unit`, `bytes`.
 //! - [`driver::Driver`] turns a routine into something a host can resume:
-//!   [`start`](driver::Driver::start), then [`reply`](driver::Driver::reply)
-//!   with each handle the effects hand back, until it is finished.
-//!   Each call returns a [`Step`](driver::step::Step): the effects, and the
+//!   [`resume`](driver::Driver::resume) to begin, then
+//!   [`reply`](driver::Driver::reply) with each handle the effects hand back,
+//!   until it is finished.
+//!   Each call returns a [`Yield`](driver::Yield): the effects, and the
 //!   ids of any requests the routine abandoned.
 //! - [`join::join`] awaits two waits at once, and [`select::select`] the
 //!   first of two; the loser is abandoned and reported closed.
@@ -95,11 +96,11 @@
 //! # Writing One
 //!
 //! The routine names what it needs as traits, and asks for a context that
-//! provides them. Nothing from this crate appears in it except [`Run`](run::Run).
+//! provides them. Nothing from this crate appears in it except [`Step`](step::Step).
 //!
 //! ```
 //! use core::ops::ControlFlow;
-//! use sans_effort::run::Run;
+//! use sans_effort::step::Step;
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;
@@ -110,7 +111,7 @@
 //!     ctx: C,
 //! }
 //!
-//! impl<C: Console> Run for Greeter<C> {
+//! impl<C: Console> Step for Greeter<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         self.ctx.write_line("Who are you?".into());
 //!         let name = self.ctx.read_line().await;
@@ -129,10 +130,10 @@
 //!
 //! ```
 //! # use core::ops::ControlFlow;
-//! # use sans_effort::run::Run;
+//! # use sans_effort::step::Step;
 //! # trait Console { async fn read_line(&self) -> String; fn write_line(&self, line: String); }
 //! # struct Greeter<C: Console> { ctx: C }
-//! # impl<C: Console> Run for Greeter<C> {
+//! # impl<C: Console> Step for Greeter<C> {
 //! #     async fn step(&mut self) -> ControlFlow<()> {
 //! #         self.ctx.write_line("Who are you?".into());
 //! #         let name = self.ctx.read_line().await;
@@ -169,7 +170,7 @@
 //!
 //! // Driving it from Rust: match on the effects, reply through the handles.
 //! let mut driver = Driver::new(|outbox| Greeter { ctx: Ctx(outbox) }.run());
-//! let mut queue: VecDeque<Effect> = driver.start().into();
+//! let mut queue: VecDeque<Effect> = driver.resume().into();
 //! let mut written = Vec::new();
 //!
 //! while let Some(effect) = queue.pop_front() {
@@ -234,6 +235,6 @@ pub mod boundary;
 pub mod driver;
 pub mod join;
 pub mod reply;
-pub mod run;
 pub mod select;
+pub mod step;
 pub mod testing;

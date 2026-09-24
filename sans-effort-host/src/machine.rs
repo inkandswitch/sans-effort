@@ -7,8 +7,7 @@ use core::{future::Future, marker::PhantomData};
 use sans_effort::{
     boundary::{host_effect::HostEffect, pending::Pending},
     driver::{
-        BoxedRoutine, Driver, LocalDriver, outbox::Outbox, status::Status as DriveStatus,
-        step::Step,
+        BoxedRoutine, Driver, LocalDriver, Yield, outbox::Outbox, status::Status as DriveStatus,
     },
     reply::{Reply, handle::ReplyHandle},
 };
@@ -16,12 +15,10 @@ use sans_effort::{
 /// What a [`Machine`] steps: a [`Driver`], or a [`LocalDriver`] for a routine
 /// whose future is not `Send`. Sealed: the two are the only drivers.
 pub trait Drive<E>: sealed::Sealed {
-    /// Poll for the first time.
-    fn start(&mut self) -> Step<E>;
     /// Deliver a reply and poll.
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E>;
+    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E>;
     /// Poll without delivering anything.
-    fn resume(&mut self) -> Step<E>;
+    fn resume(&mut self) -> Yield<E>;
     /// What the last poll reported.
     fn status(&self) -> DriveStatus;
     /// `true` once the routine has returned.
@@ -37,15 +34,11 @@ mod sealed {
 }
 
 impl<E> Drive<E> for Driver<E> {
-    fn start(&mut self) -> Step<E> {
-        Driver::start(self)
-    }
-
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
         Driver::reply(self, reply, value)
     }
 
-    fn resume(&mut self) -> Step<E> {
+    fn resume(&mut self) -> Yield<E> {
         Driver::resume(self)
     }
 
@@ -63,15 +56,11 @@ impl<E> Drive<E> for Driver<E> {
 }
 
 impl<E> Drive<E> for LocalDriver<E> {
-    fn start(&mut self) -> Step<E> {
-        LocalDriver::start(self)
-    }
-
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
         LocalDriver::reply(self, reply, value)
     }
 
-    fn resume(&mut self) -> Step<E> {
+    fn resume(&mut self) -> Yield<E> {
         LocalDriver::resume(self)
     }
 
@@ -112,20 +101,19 @@ pub struct Machine<E, D = Driver<E>> {
     /// increasing, so an unmatched id at or below this was issued and is
     /// stale; one above it never existed.
     highest_shown: u64,
-    started: bool,
     _effect: PhantomData<E>,
 }
 
 impl<E: HostEffect> Machine<E> {
     /// Build a driver around `make` and wrap it: `Machine::new(Driver::new(make))`.
-    /// Nothing runs until [`start`](Self::start).
+    /// Nothing runs until the first [`resume`](Self::resume).
     ///
     /// `make` receives the outbox the routine's context should write into and
     /// returns the routine's _future_ — `|outbox| Greeter::new(Ctx::new(outbox)).run()`
     /// — not the routine. The `.run()` cannot be hidden here: `Driver::new`
     /// requires the future to be `Send`, and only where the routine's type is
     /// concrete can the compiler decide that. A constructor generic over
-    /// `P: Run` would have no way to state `P::run(): Send` on stable Rust.
+    /// `P: Step` would have no way to state `P::run(): Send` on stable Rust.
     pub fn from_routine<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
         make: M,
     ) -> Self {
@@ -146,34 +134,8 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
             driver,
             pending: Vec::new(),
             highest_shown: 0,
-            started: false,
             _effect: PhantomData,
         }
-    }
-
-    /// Begin: the effects recorded before the first wait. Valid once.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::Finished`] if the routine has completed;
-    /// [`Error::BadInput`] if already started.
-    pub fn start(&mut self) -> Result<Step<E::View>, Error> {
-        self.start_shown().map(views)
-    }
-
-    /// As [`start`](Self::start), marking which effects await a reply.
-    pub(crate) fn start_shown(&mut self) -> Result<Step<Shown<E::View>>, Error> {
-        if self.driver.is_finished() {
-            return Err(Error::Finished);
-        }
-
-        if self.started {
-            return Err(Error::BadInput);
-        }
-
-        self.started = true;
-        let effects = self.driver.start();
-        Ok(self.show(effects))
     }
 
     /// Reply to the request with this id: the effects recorded before the
@@ -188,7 +150,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// [`Error::Finished`] if the routine has completed; [`Error::BadInput`]
     /// if nothing awaits `id`; [`Error::WrongKind`] if `id` awaits another
     /// kind — the handle is kept, so the host may retry with the right one.
-    pub fn reply<T: Reply>(&mut self, id: u64, value: T) -> Result<Step<E::View>, Error> {
+    pub fn reply<T: Reply>(&mut self, id: u64, value: T) -> Result<Yield<E::View>, Error> {
         self.reply_shown(id, value).map(views)
     }
 
@@ -197,7 +159,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
         &mut self,
         id: u64,
         value: T,
-    ) -> Result<Step<Shown<E::View>>, Error> {
+    ) -> Result<Yield<Shown<E::View>>, Error> {
         match T::from_pending(self.take(id)?) {
             Ok(reply) => Ok(self.deliver(reply, value)),
             Err(pending) => {
@@ -212,27 +174,22 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
         }
     }
 
-    /// Poll again without delivering anything: the effects recorded before
-    /// the next wait. For an [`Idle`](Status::Idle) routine, once something
-    /// it waits on in the process may have changed; harmless when nothing
-    /// has.
+    /// Run the routine to its next wait without delivering anything: what it
+    /// yielded. The first call begins it; after that, for an
+    /// [`Idle`](Status::Idle) routine, once something it waits on in the
+    /// process may have changed — harmless when nothing has.
     ///
     /// # Errors
     ///
-    /// [`Error::Finished`] if the routine has completed;
-    /// [`Error::BadInput`] if it has not been started.
-    pub fn resume(&mut self) -> Result<Step<E::View>, Error> {
+    /// [`Error::Finished`] if the routine has completed.
+    pub fn resume(&mut self) -> Result<Yield<E::View>, Error> {
         self.resume_shown().map(views)
     }
 
     /// As [`resume`](Self::resume), marking which effects await a reply.
-    pub(crate) fn resume_shown(&mut self) -> Result<Step<Shown<E::View>>, Error> {
+    pub(crate) fn resume_shown(&mut self) -> Result<Yield<Shown<E::View>>, Error> {
         if self.driver.is_finished() {
             return Err(Error::Finished);
-        }
-
-        if !self.started {
-            return Err(Error::BadInput);
         }
 
         let effects = self.driver.resume();
@@ -245,7 +202,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// # Errors
     ///
     /// As [`reply`](Self::reply).
-    pub fn reply_str(&mut self, id: u64, value: String) -> Result<Step<E::View>, Error> {
+    pub fn reply_str(&mut self, id: u64, value: String) -> Result<Yield<E::View>, Error> {
         self.reply(id, value)
     }
 
@@ -255,7 +212,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// # Errors
     ///
     /// As [`reply`](Self::reply).
-    pub fn reply_u64(&mut self, id: u64, value: u64) -> Result<Step<E::View>, Error> {
+    pub fn reply_u64(&mut self, id: u64, value: u64) -> Result<Yield<E::View>, Error> {
         self.reply(id, value)
     }
 
@@ -265,7 +222,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// # Errors
     ///
     /// As [`reply`](Self::reply).
-    pub fn reply_unit(&mut self, id: u64) -> Result<Step<E::View>, Error> {
+    pub fn reply_unit(&mut self, id: u64) -> Result<Yield<E::View>, Error> {
         self.reply(id, ())
     }
 
@@ -275,7 +232,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// # Errors
     ///
     /// As [`reply`](Self::reply).
-    pub fn reply_bytes(&mut self, id: u64, value: Vec<u8>) -> Result<Step<E::View>, Error> {
+    pub fn reply_bytes(&mut self, id: u64, value: Vec<u8>) -> Result<Yield<E::View>, Error> {
         self.reply(id, value)
     }
 
@@ -301,7 +258,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// Split a batch into what the host sees and the handles we keep — and
     /// forget the handles of requests the routine dropped unanswered, so this
     /// table tracks the driver's rather than growing past it.
-    fn show(&mut self, step: Step<E>) -> Step<Shown<E::View>> {
+    fn show(&mut self, step: Yield<E>) -> Yield<Shown<E::View>> {
         let (effects, closed) = step.into_parts();
         let shown = effects
             .into_iter()
@@ -322,7 +279,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
             self.pending.retain(|(i, _)| i != id);
         }
 
-        Step::new(shown, closed)
+        Yield::new(shown, closed)
     }
 
     fn take(&mut self, id: u64) -> Result<Pending, Error> {
@@ -337,7 +294,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
         }
     }
 
-    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<Shown<E::View>> {
+    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<Shown<E::View>> {
         let effects = self.driver.reply(reply, value);
         self.show(effects)
     }
@@ -346,7 +303,6 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
 impl<E, D> core::fmt::Debug for Machine<E, D> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Machine")
-            .field("started", &self.started)
             .field("pending", &self.pending)
             .finish_non_exhaustive()
     }
@@ -359,7 +315,7 @@ pub(crate) struct Shown<V> {
     pub(crate) awaits: bool,
 }
 
-fn views<V>(step: Step<Shown<V>>) -> Step<V> {
+fn views<V>(step: Yield<Shown<V>>) -> Yield<V> {
     step.map(|s| s.view)
 }
 
@@ -369,13 +325,16 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Both, Echo, Holds, Impatient, View};
-    use sans_effort::{reply::kind::Kind, run::Run};
+    use sans_effort::{reply::kind::Kind, step::Step};
 
     #[test]
     fn typed_layer() {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
-        assert_eq!(m.start().expect("start").effects(), [View::Ask(1)]);
-        assert_eq!(m.start(), Err(Error::BadInput), "start twice");
+        assert_eq!(m.resume().expect("resume").effects(), [View::Ask(1)]);
+        assert!(
+            m.resume().expect("resume").is_empty(),
+            "resuming again before the reply: nothing new, harmless"
+        );
         assert_eq!(
             m.reply(1, 7u64),
             Err(Error::WrongKind {
@@ -396,7 +355,7 @@ mod tests {
     #[test]
     fn dropped_requests_are_forgotten() {
         let mut m = Machine::from_routine(|outbox| Impatient(outbox).run());
-        let step = m.start().expect("start");
+        let step = m.resume().expect("resume");
         assert_eq!(
             step.effects(),
             [View::Ask(1), View::Ask(2)],
@@ -428,7 +387,7 @@ mod tests {
     #[test]
     fn a_second_reply_to_an_answered_id_is_stale() {
         let mut m = Machine::from_routine(|outbox| Both(outbox).run());
-        drop(m.start().expect("start"));
+        drop(m.resume().expect("resume"));
         drop(m.reply(1, String::from("a")).expect("reply 1"));
         assert_eq!(m.reply(1, String::from("a")), Err(Error::Stale { id: 1 }));
     }
@@ -436,17 +395,24 @@ mod tests {
     #[test]
     fn completion_closes_what_the_routine_still_held() {
         let mut m = Machine::from_routine(|outbox| Holds(outbox).run());
-        let step = m.start().expect("start");
+        let step = m.resume().expect("resume");
         assert_eq!(m.status(), Status::Complete);
         assert_eq!(step.effects(), [View::Ask(1), View::Say("done".into())]);
         assert_eq!(step.closed(), [1], "held until return, then closed");
     }
 
     #[test]
-    fn resume_needs_a_started_unfinished_machine() {
+    fn resume_begins_a_machine_and_is_harmless_after() {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
-        assert_eq!(m.resume(), Err(Error::BadInput), "not started");
-        drop(m.start().expect("start"));
+        assert_eq!(
+            m.reply(1, String::from("early")),
+            Err(Error::BadInput),
+            "before the first resume, no id has been issued"
+        );
+        assert_eq!(
+            m.resume().expect("the first resume begins it").effects(),
+            [View::Ask(1)]
+        );
         assert!(
             m.resume().expect("resume").is_empty(),
             "nothing new: harmless"

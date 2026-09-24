@@ -17,13 +17,13 @@
 //! bounds. It does not know whether `read_line` awaits a tokio channel, pops
 //! a line off a test script, or records an effect for a Python host and
 //! suspends; each of those is a different `C`, and the routine is the same
-//! code under all of them. This crate imports [`Run`](sans_effort::run::Run)
+//! code under all of them. This crate imports [`Step`](sans_effort::step::Step)
 //! and [`join`](sans_effort::join::join) from the mechanism, the traits from
 //! the standard library, and `async-channel`, and nothing else — no effect,
 //! no handle, no driver — and it is `no_std`.
 //!
 //! ```text
-//!   Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine>: Run
+//!   Greeter<C: Count + Lookup + ReadLine + Sleep + WriteLine>: Step
 //!        │
 //!        ├── C = TokioCtx   (../tokio)        tokio futures; no driver
 //!        ├── C = Ctx<E>     (effects stdlib)  records effects; a Driver polls

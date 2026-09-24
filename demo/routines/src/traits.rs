@@ -10,7 +10,7 @@
 //! any newtype wrapping one. The routines themselves (`greeter`, `fanout`,
 //! `ticker`) use only the traits.
 //!
-//! Methods are spelled `fn … -> impl Future`, as `sans_effort::run::Run`
+//! Methods are spelled `fn … -> impl Future`, as `sans_effort::step::Step`
 //! spells `step`; implementors write `async fn`. Neither says anything about
 //! `Send`, and nothing generic over `C` can add it later — so nothing here
 //! both takes any `C` and spawns the routine. A routine is spawned where its

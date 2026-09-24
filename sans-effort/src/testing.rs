@@ -8,7 +8,7 @@
 //!
 //! ```
 //! use core::{cell::RefCell, ops::ControlFlow};
-//! use sans_effort::{run::Run, testing::run_now};
+//! use sans_effort::{step::Step, testing::run_now};
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;
@@ -17,7 +17,7 @@
 //!
 //! struct Greeter<C: Console>(C);
 //!
-//! impl<C: Console> Run for Greeter<C> {
+//! impl<C: Console> Step for Greeter<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         let name = self.0.read_line().await;
 //!         self.0.write_line(format!("Hello, {name}!"));
@@ -88,7 +88,7 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
 /// use sans_effort::{
 ///     driver::{Driver, outbox::Outbox},
 ///     reply::handle::ReplyHandle,
-///     run::Run,
+///     step::Step,
 ///     testing::poll_once,
 /// };
 ///
@@ -98,7 +98,7 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
 ///
 /// struct GivesUp(Outbox<Effect>);
 ///
-/// impl Run for GivesUp {
+/// impl Step for GivesUp {
 ///     async fn step(&mut self) -> ControlFlow<()> {
 ///         // Record the request, then drop it without waiting for a reply.
 ///         drop(poll_once(self.0.ask(Effect::Ask)).await);
@@ -107,7 +107,7 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
 /// }
 ///
 /// let mut driver = Driver::new(|outbox| GivesUp(outbox).run());
-/// let step = driver.start();
+/// let step = driver.resume();
 /// assert_eq!(step.effects().len(), 1, "the request was recorded");
 /// assert_eq!(step.closed(), [1], "and abandoned");
 /// ```

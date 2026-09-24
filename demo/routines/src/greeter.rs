@@ -6,7 +6,7 @@ use crate::{
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use sans_effort_effects::{
     console::{ReadLine, WriteLine},
     time::Sleep,
@@ -26,7 +26,7 @@ impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Greeter<C> {
     }
 }
 
-impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Greeter<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Step for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write_line(String::from("Who are you?"));
         let name = match self.ctx.read_line().await {

@@ -27,7 +27,7 @@ sequenceDiagram
     participant H as Host
     participant B as Machine B
 
-    H->>B: start(B)
+    H->>B: resume(B)
     Note over B: rx.recv() — nothing yet
     B-->>H: IDLE
     H->>A: reply(A, …)
@@ -95,7 +95,7 @@ The host sees `Spawned { 9 }` or `SpawnedPinned { 9 }` and starts machine 9. Non
 
 ### Pinned Children
 
-A pinned child's future may hold values that must not leave their thread. So the table parks the unstarted child, and builds its future when the host calls `start` — on that thread — keeping it in that thread's table. Every later call for it must come from the same thread; a call from another returns `WRONG_THREAD`, which a host recovers from by routing the call where it belongs. Migrating machines keep the existing rule: any thread, one at a time.
+A pinned child's future may hold values that must not leave their thread. So the table parks the unstarted child, and builds its future when the host first calls `resume` for it — on that thread — keeping it in that thread's table. Every later call for it must come from the same thread; a call from another returns `WRONG_THREAD`, which a host recovers from by routing the call where it belongs. Migrating machines keep the existing rule: any thread, one at a time.
 
 Natively:
 

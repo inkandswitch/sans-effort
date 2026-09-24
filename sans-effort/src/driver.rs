@@ -2,11 +2,11 @@
 //!
 //! In Rust you hand a routine to an executor and it polls. A Java or Python
 //! host cannot poll a Rust future, so a [`Driver`] turns a routine into a
-//! _steppable_ thing with sans-io's host API: [`start`](Driver::start) returns
-//! the effects recorded before the first wait; each
-//! [`reply`](Driver::reply) delivers one answer and returns the effects
-//! recorded before the next. Both return a [`Step`], which also carries the
-//! ids of any requests the routine abandoned.
+//! _steppable_ thing with sans-io's host API: [`resume`](Driver::resume)
+//! runs it to its next wait — the first call begins it — and each
+//! [`reply`](Driver::reply) delivers one answer and runs it to the next. Both
+//! return what it yielded, a [`Yield`]: the effects it recorded, and the ids
+//! of any requests it abandoned.
 //!
 //! An [`Outbox`] serves every wait the same way: return an
 //! [`Ask`](ask::Ask) holding the closure that builds the effect. Nothing has
@@ -21,14 +21,14 @@
 //! the next poll the future finds it and the routine continues. An `Ask`
 //! dropped before it is awaited emitted nothing and was never numbered; an
 //! `Awaiting` dropped before its reply closes its
-//! slot, its id is reported in the step's [`closed`](Step::closed), and a late
+//! slot, its id is reported in the yield's [`closed`](Yield::closed), and a late
 //! reply is discarded.
 //!
 //! ```text
 //!   routine                         outbox                              host
 //!   out.ask(ReadLine)  ──mint──▶   handle 7
 //!   .await → Pending   ──open──▶   mail[7] = empty; effects += ReadLine(7)
-//!                                                     ──start/reply──▶  [ReadLine·7]
+//!                                                     ──resume/reply─▶  [ReadLine·7]
 //!                                  mail[7] = "bob"     ◀──reply(7, "bob")──
 //!   .await → Ready("bob")  ◀────── take mail[7]         ◀──resume──
 //! ```
@@ -63,16 +63,15 @@ pub mod ask;
 pub mod awaiting;
 pub mod outbox;
 pub mod status;
-pub mod step;
 
 mod mail;
 mod stepper;
 mod sync;
 mod wake;
 
-use self::{outbox::Outbox, status::Status, step::Step, stepper::Stepper};
+use self::{outbox::Outbox, status::Status, stepper::Stepper};
 use crate::reply::{Reply, handle::ReplyHandle};
-use alloc::boxed::Box;
+use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::{future::Future, pin::Pin};
 
 /// A routine's future, boxed and `Send`: what a [`Driver`] steps.
@@ -91,10 +90,10 @@ pub type LocalBoxedRoutine = Pin<Box<dyn Future<Output = ()>>>;
 
 /// One suspended routine plus the outbox its context writes into.
 ///
-/// The host API is sans-io's: [`start`](Self::start), then
+/// The host API is sans-io's: [`resume`](Self::resume) to begin, then
 /// [`reply`](Self::reply) with each handle the effects hand back, and
-/// [`resume`](Self::resume) when the routine is [`Idle`](Status::Idle) and may
-/// have something new — until [`is_finished`](Self::is_finished).
+/// [`resume`](Self::resume) again when the routine is [`Idle`](Status::Idle)
+/// and may have something new — until [`is_finished`](Self::is_finished).
 ///
 /// Its future is `Send`, so a `Driver` may be polled from any thread, one at a
 /// time. For a routine whose future is not `Send`, use [`LocalDriver`].
@@ -133,19 +132,13 @@ impl<E> Driver<E> {
         }
     }
 
-    /// Begin: poll once and return the effects recorded before the first
-    /// wait. Valid once; a second call is a no-op returning an empty step.
-    pub fn start(&mut self) -> Step<E> {
-        self.stepper.poll()
-    }
-
     /// Deliver the value a handle asked for and advance: the effects
     /// recorded before the next wait.
     ///
     /// Infallible. The handle is proof that this driver minted a request of
     /// this type; if the routine has since dropped that request — the losing
     /// arm of a [`select`](crate::select::select), say — the value is
-    /// discarded and the step is empty, because the routine moved on without
+    /// discarded and the yield is empty, because the routine moved on without
     /// it.
     ///
     /// # Panics
@@ -153,18 +146,19 @@ impl<E> Driver<E> {
     /// If the handle was minted by another driver. That is a host bug, and it
     /// is reported as one rather than delivered to whichever slot of this
     /// driver shares the id.
-    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
         self.stepper.reply(reply, value)
     }
 
-    /// Poll again without delivering anything: the effects recorded before
-    /// the next wait.
+    /// Run the routine to its next wait without delivering anything: what it
+    /// yielded. The first call begins it.
     ///
-    /// For an [`Idle`](Status::Idle) routine — one waiting on something in
-    /// the process, such as a channel another routine sends on — once that
-    /// may have changed. Harmless when nothing has: the routine finds nothing
-    /// new, and the step is empty.
-    pub fn resume(&mut self) -> Step<E> {
+    /// After that, for an [`Idle`](Status::Idle) routine — one waiting on
+    /// something in the process, such as a channel another routine sends on —
+    /// once that may have changed. Harmless when nothing has: the routine finds
+    /// nothing new, and the yield is empty; after completion it is always
+    /// empty.
+    pub fn resume(&mut self) -> Yield<E> {
         self.stepper.poll()
     }
 
@@ -231,22 +225,17 @@ impl<E> LocalDriver<E> {
         }
     }
 
-    /// As [`Driver::start`].
-    pub fn start(&mut self) -> Step<E> {
-        self.stepper.poll()
-    }
-
     /// As [`Driver::reply`].
     ///
     /// # Panics
     ///
     /// If the handle was minted by another driver.
-    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
         self.stepper.reply(reply, value)
     }
 
     /// As [`Driver::resume`].
-    pub fn resume(&mut self) -> Step<E> {
+    pub fn resume(&mut self) -> Yield<E> {
         self.stepper.poll()
     }
 
@@ -277,12 +266,105 @@ impl<E> core::fmt::Debug for LocalDriver<E> {
     }
 }
 
+/// What the routine yielded on one [`resume`](Driver::resume) or
+/// [`reply`](Driver::reply): the effects it recorded before its next wait,
+/// and the ids of requests it abandoned along the way.
+///
+/// It iterates over the effects, so a host that has nothing to cancel uses it
+/// like the `Vec` it replaces:
+///
+/// ```
+/// # use sans_effort::driver::Yield;
+/// # use std::collections::VecDeque;
+/// let yielded = Yield::new(vec!["WriteLine", "ReadLine"], vec![]);
+/// let queue: VecDeque<_> = yielded.into();
+/// assert_eq!(queue, ["WriteLine", "ReadLine"]);
+/// ```
+///
+/// A host whose effects cost something to perform — a timer, a network
+/// request — reads [`closed`](Self::closed) and stops the work for those ids.
+/// A closed id means the routine no longer needs the reply, not that the
+/// effect did not happen.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use = "a yield holds effects to perform and ids whose work can stop"]
+pub struct Yield<T> {
+    effects: Vec<T>,
+    closed: Vec<u64>,
+}
+
+impl<T> Yield<T> {
+    /// A yield from its parts.
+    pub const fn new(effects: Vec<T>, closed: Vec<u64>) -> Self {
+        Self { effects, closed }
+    }
+
+    /// The effects recorded, in order.
+    #[must_use]
+    pub fn effects(&self) -> &[T] {
+        &self.effects
+    }
+
+    /// Ids of requests the routine abandoned unanswered. A reply to one is
+    /// discarded.
+    #[must_use]
+    pub fn closed(&self) -> &[u64] {
+        &self.closed
+    }
+
+    /// `true` if there are no effects and nothing was closed.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.effects.is_empty() && self.closed.is_empty()
+    }
+
+    /// The effects and the closed ids.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<T>, Vec<u64>) {
+        (self.effects, self.closed)
+    }
+
+    /// The same yield with each effect transformed; the closed ids are kept.
+    pub fn map<U, F: FnMut(T) -> U>(self, f: F) -> Yield<U> {
+        Yield {
+            effects: self.effects.into_iter().map(f).collect(),
+            closed: self.closed,
+        }
+    }
+}
+
+impl<T> Default for Yield<T> {
+    fn default() -> Self {
+        Self::new(Vec::new(), Vec::new())
+    }
+}
+
+impl<T> IntoIterator for Yield<T> {
+    type Item = T;
+    type IntoIter = alloc::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.effects.into_iter()
+    }
+}
+
+impl<T> From<Yield<T>> for Vec<T> {
+    fn from(yielded: Yield<T>) -> Self {
+        yielded.effects
+    }
+}
+
+impl<T> From<Yield<T>> for VecDeque<T> {
+    fn from(yielded: Yield<T>) -> Self {
+        yielded.effects.into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
     use super::*;
-    use crate::{run::Run, testing::poll_once};
+    use crate::{step::Step, testing::poll_once};
     use alloc::string::String;
     use core::{
         ops::ControlFlow,
@@ -300,7 +382,7 @@ mod tests {
         steps: u32,
     }
 
-    impl Run for Echo {
+    impl Step for Echo {
         async fn step(&mut self) -> ControlFlow<()> {
             self.outbox.tell(Effect::Say(String::from("?")));
             let answer = self.outbox.ask(Effect::Ask).await;
@@ -320,7 +402,7 @@ mod tests {
     }
 
     /// What was said, and the handles in the batch.
-    fn split(effects: Step<Effect>) -> (Vec<String>, Vec<ReplyHandle<String>>) {
+    fn split(effects: Yield<Effect>) -> (Vec<String>, Vec<ReplyHandle<String>>) {
         let mut said = Vec::new();
         let mut handles = Vec::new();
 
@@ -340,10 +422,10 @@ mod tests {
     }
 
     #[test]
-    fn start_reply_reply_finished() {
+    fn resume_reply_reply_finished() {
         let mut driver = echo();
 
-        let (said, handles) = split(driver.start());
+        let (said, handles) = split(driver.resume());
         assert_eq!(said, ["?"]);
         assert_eq!(driver.status(), Status::Awaiting);
 
@@ -356,8 +438,8 @@ mod tests {
         assert_eq!(driver.status(), Status::Complete);
         assert!(driver.is_finished());
         assert!(
-            driver.start().is_empty(),
-            "start after completion is a no-op"
+            driver.resume().is_empty(),
+            "resume after completion is a no-op"
         );
     }
 
@@ -368,7 +450,7 @@ mod tests {
         let mut driver = echo();
         assert_send(&driver);
 
-        let (_, handles) = split(driver.start());
+        let (_, handles) = split(driver.resume());
         let handle = one(handles);
 
         // Reply on another thread: the outbox's lock is the happens-before edge.
@@ -387,7 +469,7 @@ mod tests {
     /// dropped (recorded, then its late reply discarded), then a live one.
     struct Impatient(Outbox<Effect>);
 
-    impl Run for Impatient {
+    impl Step for Impatient {
         async fn step(&mut self) -> ControlFlow<()> {
             let never = self.0.ask(Effect::Ask);
             drop(never);
@@ -405,11 +487,11 @@ mod tests {
     fn unpolled_requests_emit_nothing_and_abandoned_ones_discard_late_replies() {
         let mut driver = Driver::new(|outbox| Impatient(outbox).run());
 
-        let step = driver.start();
+        let step = driver.resume();
         assert_eq!(
             step.closed(),
             [1],
-            "the abandoned request is reported closed, in the step that dropped it"
+            "the abandoned request is reported closed, in the yield of the call that dropped it"
         );
         let (_, handles) = split(step);
         let [abandoned, live]: [ReplyHandle<String>; 2] = handles
@@ -437,7 +519,7 @@ mod tests {
     /// host sees them in increasing order whatever order they were asked in.
     struct AskedThenPolledBackwards(Outbox<Effect>);
 
-    impl Run for AskedThenPolledBackwards {
+    impl Step for AskedThenPolledBackwards {
         async fn step(&mut self) -> ControlFlow<()> {
             let first_asked = self.0.ask(Effect::Ask);
             let second_asked = self.0.ask(Effect::Ask);
@@ -450,7 +532,7 @@ mod tests {
     #[test]
     fn ids_follow_poll_order_not_ask_order() {
         let mut driver = Driver::new(|outbox| AskedThenPolledBackwards(outbox).run());
-        let (_, handles) = split(driver.start());
+        let (_, handles) = split(driver.resume());
         let ids: alloc::vec::Vec<u64> = handles.iter().map(ReplyHandle::id).collect();
         assert_eq!(
             ids,
@@ -464,7 +546,7 @@ mod tests {
     /// routine did on it. This is what the ids are for.
     struct FanOut(Outbox<Effect>);
 
-    impl Run for FanOut {
+    impl Step for FanOut {
         async fn step(&mut self) -> ControlFlow<()> {
             let (a, b) = crate::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
             self.0.tell(Effect::Say(alloc::format!("{a}+{b}")));
@@ -476,7 +558,7 @@ mod tests {
     fn fan_out_replies_in_any_order() {
         let mut driver = Driver::new(|outbox| FanOut(outbox).run());
 
-        let (_, handles) = split(driver.start());
+        let (_, handles) = split(driver.resume());
         let [first, second]: [ReplyHandle<String>; 2] =
             handles.try_into().expect("two requests in one batch");
 
@@ -496,7 +578,7 @@ mod tests {
             .with_type::<bool>()
             .for_each(|first_first| {
                 let mut driver = Driver::new(|outbox| FanOut(outbox).run());
-                let (_, handles) = split(driver.start());
+                let (_, handles) = split(driver.resume());
                 let [a, b]: [ReplyHandle<String>; 2] = handles.try_into().expect("two");
 
                 // Each handle keeps its own value; only the order of delivery varies.
@@ -523,8 +605,8 @@ mod tests {
     fn a_handle_replies_only_to_its_own_driver() {
         let mut a = echo();
         let mut b = echo();
-        let (_, handles) = split(a.start());
-        drop(b.start());
+        let (_, handles) = split(a.resume());
+        drop(b.resume());
 
         // Both drivers minted id 1; the handle knows whose it is.
         drop(b.reply(one(handles), String::from("misrouted")));
@@ -543,7 +625,7 @@ mod tests {
         }
 
         let mut driver = Driver::<Effect>::new(|_| Never);
-        assert!(driver.start().is_empty());
+        assert!(driver.resume().is_empty());
         assert_eq!(driver.status(), Status::Idle);
     }
 
@@ -567,7 +649,7 @@ mod tests {
         queue: Queue,
     }
 
-    impl Run for Listener {
+    impl Step for Listener {
         async fn step(&mut self) -> ControlFlow<()> {
             let message = recv(&self.queue).await;
             self.outbox.tell(Effect::Say(message));
@@ -581,7 +663,7 @@ mod tests {
         queue: Queue,
     }
 
-    impl Run for Relay {
+    impl Step for Relay {
         async fn step(&mut self) -> ControlFlow<()> {
             let message = self.outbox.ask(Effect::Ask).await;
             self.queue.lock().expect("queue").push_back(message);
@@ -601,7 +683,7 @@ mod tests {
             move |outbox| Relay { outbox, queue }.run()
         });
 
-        assert!(listener.start().is_empty());
+        assert!(listener.resume().is_empty());
         assert_eq!(listener.status(), Status::Idle);
         assert!(
             listener.resume().is_empty(),
@@ -609,7 +691,7 @@ mod tests {
         );
         assert_eq!(listener.status(), Status::Idle);
 
-        let (_, handles) = split(relay.start());
+        let (_, handles) = split(relay.resume());
         assert!(relay.reply(one(handles), String::from("hi")).is_empty());
         assert!(relay.is_finished());
 
@@ -625,7 +707,7 @@ mod tests {
         seen: alloc::rc::Rc<core::cell::Cell<u32>>,
     }
 
-    impl Run for Counted {
+    impl Step for Counted {
         async fn step(&mut self) -> ControlFlow<()> {
             let seen = alloc::rc::Rc::clone(&self.seen);
             let answer = self.outbox.ask(Effect::Ask).await;
@@ -644,7 +726,7 @@ mod tests {
             move |outbox| Counted { outbox, seen }.run()
         });
 
-        let (_, handles) = split(driver.start());
+        let (_, handles) = split(driver.resume());
         let (said, _) = split(driver.reply(one(handles), String::from("hi")));
         assert_eq!(said, ["hi 1"]);
         assert!(driver.is_finished());
@@ -695,7 +777,7 @@ mod tests {
         n: u32,
     }
 
-    impl Run for Hearer {
+    impl Step for Hearer {
         async fn step(&mut self) -> ControlFlow<()> {
             let message = self.signal.recv().await;
             self.outbox.tell(Effect::Say(message));
@@ -743,7 +825,7 @@ mod tests {
         let (count, hook) = counting();
         hearer.on_wake(hook);
 
-        assert!(hearer.start().is_empty());
+        assert!(hearer.resume().is_empty());
         assert_eq!(hearer.status(), Status::Idle);
         let waker = signal.waiter().expect("the hearer is waiting");
         waker.wake_by_ref();
@@ -770,7 +852,7 @@ mod tests {
         signal: Signal,
     }
 
-    impl Run for Teller {
+    impl Step for Teller {
         async fn step(&mut self) -> ControlFlow<()> {
             let message = self.outbox.ask(Effect::Ask).await;
             self.signal.send(&message);
@@ -799,8 +881,8 @@ mod tests {
         let (count, hook) = counting();
         hearer.on_wake(hook);
 
-        assert!(hearer.start().is_empty());
-        let (_, handles) = split(teller.start());
+        assert!(hearer.resume().is_empty());
+        let (_, handles) = split(teller.resume());
         assert_eq!(woken(&count), 0);
         drop(teller.reply(one(handles), String::from("hi")));
         assert_eq!(woken(&count), 1, "woken inside the teller's poll");
@@ -813,7 +895,7 @@ mod tests {
     /// Wakes itself once and suspends — a yield — then finishes.
     struct Yielder(Outbox<Effect>);
 
-    impl Run for Yielder {
+    impl Step for Yielder {
         async fn step(&mut self) -> ControlFlow<()> {
             let mut yielded = false;
             core::future::poll_fn(|cx| {
@@ -837,7 +919,7 @@ mod tests {
         let (count, hook) = counting();
         driver.on_wake(hook);
 
-        assert!(driver.start().is_empty());
+        assert!(driver.resume().is_empty());
         assert_eq!(driver.status(), Status::Idle);
         assert_eq!(woken(&count), 1, "a wake during its own poll is not lost");
 

@@ -29,7 +29,7 @@
 //! ```
 //! use sans_effort::{
 //!     driver::{Driver, status::Status},
-//!     run::Run,
+//!     step::Step,
 //! };
 //! use sans_effort_effects::{
 //!     console::{ReadLine, ReadLineError, WriteLine, effect},
@@ -40,7 +40,7 @@
 //!
 //! struct Echo<C>(C);
 //!
-//! impl<C: ReadLine + WriteLine> Run for Echo<C> {
+//! impl<C: ReadLine + WriteLine> Step for Echo<C> {
 //!     async fn step(&mut self) -> ControlFlow<()> {
 //!         match self.0.read_line().await {
 //!             Ok(line) => self.0.write_line(line),
@@ -68,7 +68,7 @@
 //! let mut driver = Driver::<Effect>::new(|outbox| Echo(Ctx::new(outbox)).run());
 //! let mut input = vec![Ok("hi")].into_iter();
 //! let mut written = Vec::new();
-//! let mut queue: std::collections::VecDeque<Effect> = driver.start().into();
+//! let mut queue: std::collections::VecDeque<Effect> = driver.resume().into();
 //!
 //! while let Some(e) = queue.pop_front() {
 //!     match e {
@@ -103,7 +103,7 @@
 //! # Spelling
 //!
 //! Trait methods are `fn … -> impl Future<Output = T> + Send`, as
-//! `sans_effort::run::Run` spells `step` but with `Send`; implementors write
+//! `sans_effort::step::Step` spells `step` but with `Send`; implementors write
 //! `async fn`. Declaring `Send` is what lets a routine generic over its
 //! context prove a child it spawns is `Send`: otherwise each capability's
 //! future is opaque, and nothing in generic code could say it may cross

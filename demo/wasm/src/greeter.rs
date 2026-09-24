@@ -5,7 +5,7 @@ use crate::{
     host::JsHost,
 };
 use routines::greeter::Greeter;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use wasm_bindgen::prelude::*;
 
 /// A greeter over a JS host. Construct, then `await` [`run`](Self::run).

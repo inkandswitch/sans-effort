@@ -31,7 +31,7 @@ flowchart TB
     end
 
     subgraph routine["routine · no_std"]
-        greeter["Greeter#60;C: Sleep + Lookup + ReadLine + WriteLine#62;: Run"]
+        greeter["Greeter#60;C: Sleep + Lookup + ReadLine + WriteLine#62;: Step"]
     end
 
     native --> tokio_ctx --> greeter
@@ -70,7 +70,7 @@ sequenceDiagram
     H->>R: abi_version()
     R-->>H: 0
     H->>R: new() → handle
-    H->>R: start(handle)
+    H->>R: resume(handle)
     R-->>H: [WriteLine "Who are you?", (ReadLine, 1)] · AWAITING
     H->>R: reply(handle, 1, "alice")
     R-->>H: [(Lookup "alice", 2)] · AWAITING

@@ -14,7 +14,7 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
-use sans_effort::{run::Run, testing::run_now};
+use sans_effort::{step::Step, testing::run_now};
 use sans_effort_effects::{
     console::{ReadLine, ReadLineError, WriteLine},
     time::Sleep,
@@ -106,7 +106,7 @@ impl WriteLine for Recording {
 }
 
 /// Run a routine against a recording of the script; return what it did.
-pub(crate) fn transcript<P: Run>(
+pub(crate) fn transcript<P: Step>(
     routine: impl FnOnce(Recording) -> P,
     script: &[String],
 ) -> Vec<Call> {

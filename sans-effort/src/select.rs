@@ -12,7 +12,7 @@
 //! ```
 //!
 //! The loser is dropped when `select` returns. Behind a driver its request is
-//! reported in the step's [`closed`](crate::driver::step::Step::closed), so a
+//! reported in the yield's [`closed`](crate::driver::Yield::closed), so a
 //! host can stop that work; a late reply to it is discarded. Dropping it
 //! means "no longer needed", not "did not happen": the losing effect may
 //! already be under way.
@@ -72,7 +72,7 @@ mod tests {
     use crate::{
         driver::{Driver, outbox::Outbox},
         reply::handle::ReplyHandle,
-        run::Run,
+        step::Step,
     };
     use alloc::{string::String, vec::Vec};
     use core::ops::ControlFlow;
@@ -85,7 +85,7 @@ mod tests {
     /// Races two requests and reports which answer arrived first.
     struct Race(Outbox<Effect>);
 
-    impl Run for Race {
+    impl Step for Race {
         async fn step(&mut self) -> ControlFlow<()> {
             let won = select(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
             self.0.tell(Effect::Won(won));
@@ -95,7 +95,7 @@ mod tests {
 
     fn race() -> (Driver<Effect>, ReplyHandle<String>, ReplyHandle<String>) {
         let mut driver = Driver::new(|outbox| Race(outbox).run());
-        let step = driver.start();
+        let step = driver.resume();
         assert!(step.closed().is_empty(), "both requests are outstanding");
         let [a, b]: [ReplyHandle<String>; 2] = step
             .into_iter()

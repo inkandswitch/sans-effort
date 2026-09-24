@@ -9,8 +9,8 @@ pub enum Error {
     /// Unknown or freed handle.
     #[error("unknown or freed handle")]
     BadHandle,
-    /// A second `start`, or a reply to an id that was never issued.
-    #[error("a second start, or a reply to an id that was never issued")]
+    /// A reply to an id that was never issued.
+    #[error("a reply to an id that was never issued")]
     BadInput,
     /// A reply record that does not parse: a bug in the host's encoder.
     #[error("malformed reply record: {0}")]
@@ -33,11 +33,11 @@ pub enum Error {
         /// What arrived.
         got: Kind,
     },
-    /// Another thread is inside `start`, `reply`, or `resume` for this
+    /// Another thread is inside `resume` or `reply` for this
     /// handle.
     #[error("another thread is driving this routine")]
     Busy,
-    /// The handle names a pinned machine started on another thread; every
+    /// The handle names a pinned machine first resumed on another thread; every
     /// call for it must come from that thread. Nothing changed.
     #[error("this routine is pinned to another thread")]
     WrongThread,

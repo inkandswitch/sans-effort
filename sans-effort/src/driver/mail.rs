@@ -95,7 +95,7 @@ impl Mail {
 
     /// The routine dropped a polled request. If its slot is still open it
     /// goes, and its id is reported in the next step's
-    /// [`closed`](super::step::Step::closed); if the reply was already
+    /// [`closed`](super::Yield::closed); if the reply was already
     /// collected there is nothing to close.
     pub(super) fn close(&mut self, id: u64) {
         if let Some(at) = self.position(id) {

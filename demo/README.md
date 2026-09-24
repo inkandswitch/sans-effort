@@ -28,17 +28,17 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
              Tests: through a Driver, as data; Greeter under Quiet is a compile_fail;
              a deterministic Rust router runs ping-pong and front desk across machines.
 
-  cdylib/    the C-ABI binding over sans-effort-host: abi_version/new…/start/reply/
-             resume/free/buf_free, three unsafe blocks, no mechanism. The only crate
+  cdylib/    the C-ABI binding over sans-effort-host: abi_version/new…/resume/reply/
+             wakes/free/buf_free, three unsafe blocks, no mechanism. The only crate
              allowing unsafe.
   python/    a ctypes host that speaks ABI.md with a byte buffer and no library;
-             the smallest loop: perform each effect, then reply; start spawned
+             the smallest loop: perform each effect, then reply; resume spawned
              children; resume each machine a woke frame names; ask wakes() when
              nothing is queued.
   java/      a Panama (java.lang.foreign) host: the same ABI, downcalls only, no JNI.
              Shaped like a production host, and parallel: a pool of driver threads
              polls different machines at once (migrating machines move between them,
-             pinned ones stay on the worker that started them); asks run on virtual
+             pinned ones stay on the worker that first resumed them); asks run on virtual
              threads; woke frames schedule resumes; closed frames cancel. --trace
              logs which thread polled what.
 

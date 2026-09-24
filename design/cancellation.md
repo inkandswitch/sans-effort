@@ -1,7 +1,7 @@
 # Cancellation
 
 > [!NOTE]
-> _Status:_ implemented: `select`, closed frames, `Step`, and the `MALFORMED`/`STALE` codes. The Java demo host cancels on closed frames, but no demo routine races yet; the channel demos' receive-with-timeout will be the first to produce them end to end.
+> _Status:_ implemented: `select`, closed frames, `Yield`, and the `MALFORMED`/`STALE` codes. The Java demo host cancels on closed frames, but no demo routine races yet; the channel demos' receive-with-timeout will be the first to produce them end to end.
 
 ## `select`
 
@@ -21,7 +21,7 @@ Under tokio that is the whole story: dropping the losing future cancels it.
 Both branches record their effects before either completes, so the host sees `[(Receive, 4), (Sleep, 5)]`. When the message arrives, the `Sleep` future is dropped. The mechanism has handled this from the start:
 
 - dropping a polled request closes its slot;
-- the id is reported in the step's `closed`;
+- the id is reported in the yield's `closed`;
 - the host layer's `Machine` forgets its reply handle;
 - a late reply to that id is `BAD_INPUT`.
 
@@ -79,8 +79,8 @@ A tell has no id and no reply, so there is nothing to close.
 
 ## Decisions Along the Way
 
-- _Closed ids travel with their step._ `Driver::start` and `reply` return a `Step`: the effects and the ids abandoned while producing them. It iterates over the effects, so a host with nothing to cancel uses it like the `Vec` it replaced; a host that cares reads `closed()`. The ids can no longer drift apart from the step that closed them.
-- _Refused replies say why._ `BAD_INPUT` is now only a second `start` or an id never issued. `MALFORMED` is a reply record that does not parse. `STALE` is a reply to an id that was issued but is no longer awaited — answered, or closed — so even a host that ignores closed frames can tell a late reply from a bug. `STALE` needs no memory beyond the highest id shown to the host.
+- _Closed ids travel with their yield._ `Driver::resume` and `reply` return a `Yield`: the effects and the ids abandoned while producing them. It iterates over the effects, so a host with nothing to cancel uses it like the `Vec` it replaced; a host that cares reads `closed()`. The ids can no longer drift apart from the step that closed them.
+- _Refused replies say why._ `BAD_INPUT` is now only an id never issued. `MALFORMED` is a reply record that does not parse. `STALE` is a reply to an id that was issued but is no longer awaited — answered, or closed — so even a host that ignores closed frames can tell a late reply from a bug. `STALE` needs no memory beyond the highest id shown to the host.
 
 ## ABI Revision
 

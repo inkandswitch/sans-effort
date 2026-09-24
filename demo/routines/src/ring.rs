@@ -3,7 +3,7 @@
 use alloc::{format, vec::Vec};
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use sans_effort_effects::{console::WriteLine, spawn::Spawn};
 
 /// Spawns `size - 1` [`Node`]s in a ring with itself, then sends a counter
@@ -24,7 +24,7 @@ impl<C> Ring<C> {
     }
 }
 
-impl<C: Spawn + WriteLine> Run for Ring<C>
+impl<C: Spawn + WriteLine> Step for Ring<C>
 where
     C::Child: Send + 'static,
 {
@@ -83,7 +83,7 @@ pub struct Node<C> {
     onward: Sender<u64>,
 }
 
-impl<C> Run for Node<C> {
+impl<C> Step for Node<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         let Ok(token) = self.inbox.recv().await else {
             return ControlFlow::Break(());

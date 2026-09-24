@@ -3,7 +3,7 @@
 use crate::contract;
 use sans_effort::driver::status::Status as DriveStatus;
 
-/// What one `start`, `reply`, or `resume` reports. [`code`](Self::code) is its wire form.
+/// What one `resume` or `reply` reports. [`code`](Self::code) is its wire form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
     /// At least one request awaits a reply.

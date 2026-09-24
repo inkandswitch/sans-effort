@@ -1,8 +1,8 @@
 //! The byte layer: a [`Machine`] whose calls take and return bytes.
 //!
-//! Same operations as the typed machine — [`start`](Encoded::start),
-//! [`reply`](Encoded::reply), and [`resume`](Encoded::resume) — with one
-//! reply record in and the effects encoded out. Each effect is one _frame_: a kind
+//! Same operations as the typed machine — [`resume`](Encoded::resume) and
+//! [`reply`](Encoded::reply) — with one reply record in and the effects
+//! encoded out. Each effect is one _frame_: a kind
 //! ([`FRAME_TELL`] or [`FRAME_ASK`]), a `u32` length, and the view's
 //! bytes as the routine's [`Encode`] impl writes them. The length lets a host
 //! skip a tell it does not understand and check that it parsed each record
@@ -22,7 +22,7 @@ use crate::{
 use alloc::vec::Vec;
 use sans_effort::{
     boundary::{codec::Encode, codec::Writer, host_effect::HostEffect},
-    driver::{Driver, step::Step},
+    driver::{Driver, Yield},
 };
 
 /// A machine seen through bytes.
@@ -42,16 +42,6 @@ where
     #[must_use]
     pub const fn machine(&self) -> &Machine<E, D> {
         &self.0
-    }
-
-    /// Run to the first wait: the effects it recorded, encoded, and its status.
-    ///
-    /// # Errors
-    ///
-    /// As [`Machine::start`].
-    pub fn start(&mut self) -> Result<(Vec<u8>, Status), Error> {
-        let shown = self.0.start_shown()?;
-        Ok((encode(&shown), self.0.status()))
     }
 
     /// Deliver one reply record — `1 id str`, `2 id u64`, `3 id`, or
@@ -77,8 +67,9 @@ where
         self.0.on_wake(hook);
     }
 
-    /// Poll again without delivering anything: the effects recorded before
-    /// the next wait, encoded, and the status.
+    /// Run the routine to its next wait without delivering anything — the
+    /// first call begins it: the effects it recorded, encoded, and its
+    /// status.
     ///
     /// # Errors
     ///
@@ -97,7 +88,7 @@ impl<E, D> core::fmt::Debug for Encoded<E, D> {
 
 /// One frame per effect — kind, `u32` length, the view's own bytes — then one
 /// closed frame per abandoned id.
-fn encode<V: Encode>(step: &Step<Shown<V>>) -> Vec<u8> {
+fn encode<V: Encode>(step: &Yield<Shown<V>>) -> Vec<u8> {
     let mut w = Writer::new();
     for Shown { view, awaits } in step.effects() {
         w.u8(if *awaits { FRAME_ASK } else { FRAME_TELL });
@@ -119,7 +110,7 @@ mod tests {
         Both, Echo, Holds, Impatient, View, closed_frame, framed, reply_str_record,
     };
     use alloc::string::String;
-    use sans_effort::{boundary::codec::DecodeError, run::Run};
+    use sans_effort::{boundary::codec::DecodeError, step::Step};
 
     fn encoded<F: core::future::Future<Output = ()> + Send + 'static>(
         make: impl FnOnce(sans_effort::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
@@ -132,7 +123,7 @@ mod tests {
     #[test]
     fn fan_out_through_the_byte_layer() {
         let mut m = encoded(|outbox| Both(outbox).run());
-        let (bytes, status) = m.start().expect("start");
+        let (bytes, status) = m.resume().expect("resume");
         assert_eq!(status, Status::Awaiting);
         assert_eq!(bytes, framed(&[View::Ask(1), View::Ask(2)]), "Ask·1, Ask·2");
 
@@ -152,7 +143,7 @@ mod tests {
 
         bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
             let mut m = encoded(|outbox| Echo(outbox).run());
-            m.start().expect("start");
+            m.resume().expect("resume");
             // A well-formed str record for id 1 completes the routine.
             // Anything else is refused: unparsable is `MALFORMED`, another
             // kind for id 1 is `WRONG_KIND`, id 0 or an id never issued is
@@ -174,7 +165,7 @@ mod tests {
     #[test]
     fn trailing_bytes_are_bad_input() {
         let mut m = encoded(|outbox| Echo(outbox).run());
-        assert_eq!(m.start().expect("start").1, Status::Awaiting);
+        assert_eq!(m.resume().expect("resume").1, Status::Awaiting);
         let mut record = reply_str_record(1, "hi");
         record.push(0);
         assert_eq!(
@@ -192,18 +183,22 @@ mod tests {
     }
 
     #[test]
-    fn start_encoded_is_the_first_batch() {
+    fn the_first_resume_yields_the_first_batch() {
         let mut m = encoded(|outbox| Echo(outbox).run());
-        let (bytes, status) = m.start().expect("start");
+        let (bytes, status) = m.resume().expect("resume");
         assert_eq!(status, Status::Awaiting);
         assert_eq!(bytes, framed(&[View::Ask(1)]));
-        assert_eq!(m.start(), Err(Error::BadInput), "start twice");
+        assert_eq!(
+            m.resume(),
+            Ok((Vec::new(), Status::Awaiting)),
+            "again before the reply: nothing new"
+        );
     }
 
     #[test]
     fn abandoned_requests_follow_the_effects_as_closed_frames() {
         let mut m = encoded(|outbox| Impatient(outbox).run());
-        let (bytes, status) = m.start().expect("start");
+        let (bytes, status) = m.resume().expect("resume");
         assert_eq!(status, Status::Awaiting);
         let mut want = framed(&[View::Ask(1), View::Ask(2)]);
         want.extend(closed_frame(1));
@@ -219,7 +214,7 @@ mod tests {
     #[test]
     fn completion_closes_what_is_still_held() {
         let mut m = encoded(|outbox| Holds(outbox).run());
-        let (bytes, status) = m.start().expect("start");
+        let (bytes, status) = m.resume().expect("resume");
         assert_eq!(status, Status::Complete);
         let mut want = framed(&[View::Ask(1), View::Say(String::from("done"))]);
         want.extend(closed_frame(1));
@@ -243,7 +238,7 @@ mod tests {
     #[test]
     fn a_frame_is_kind_length_payload() {
         let mut m = encoded(|outbox| Echo(outbox).run());
-        let (ask, _) = m.start().expect("start");
+        let (ask, _) = m.resume().expect("resume");
         assert_eq!(
             ask,
             [

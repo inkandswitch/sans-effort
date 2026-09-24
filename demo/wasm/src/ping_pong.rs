@@ -6,7 +6,7 @@ use crate::{
     host::JsHost,
 };
 use routines::ping_pong::PingPong;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use wasm_bindgen::prelude::*;
 
 /// Three rounds of ping-pong over a JS host. Construct, then `await`

@@ -4,9 +4,9 @@
 //! is `Send`, so this is generic over the (unsized) future type.
 
 use super::{
+    Yield,
     outbox::Outbox,
     status::Status,
-    step::Step,
     sync::Arc,
     wake::{Hook, Wakeup},
 };
@@ -43,11 +43,11 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
         self.wakeup.set_hook(hook);
     }
 
-    pub(super) fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Step<E> {
+    pub(super) fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
         if self.outbox.deliver(reply, value.into_value()) {
             self.poll()
         } else {
-            Step::default()
+            Yield::default()
         }
     }
 
@@ -59,9 +59,9 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
         self.future.is_none()
     }
 
-    pub(super) fn poll(&mut self) -> Step<E> {
+    pub(super) fn poll(&mut self) -> Yield<E> {
         let Some(future) = self.future.as_mut() else {
-            return Step::default();
+            return Yield::default();
         };
 
         self.wakeup.clear();
@@ -75,6 +75,6 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
             self.future = None;
         }
 
-        Step::new(effects, self.outbox.take_closed())
+        Yield::new(effects, self.outbox.take_closed())
     }
 }

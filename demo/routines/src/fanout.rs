@@ -6,7 +6,7 @@ use crate::{
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
-use sans_effort::{join::join, run::Run};
+use sans_effort::{join::join, step::Step};
 use sans_effort_effects::{
     console::{ReadLine, WriteLine},
     time::Sleep,
@@ -32,7 +32,7 @@ impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Fanout<C> {
     }
 }
 
-impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Fanout<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Step for Fanout<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write_line(String::from("Who are you?"));
         let Ok(name) = self.ctx.read_line().await else {

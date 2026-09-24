@@ -25,7 +25,7 @@ use core::{future::Future, ops::ControlFlow};
 /// reported at all. If a host must observe a step boundary, tell it an effect
 /// at the top of `step`. (The host's own unit of advance is finer — to the
 /// next wait — and is called `resume` on its side to keep the two apart.)
-pub trait Run {
+pub trait Step {
     /// One iteration of the loop. `Break(())` means the routine is finished.
     fn step(&mut self) -> impl Future<Output = ControlFlow<()>>;
 

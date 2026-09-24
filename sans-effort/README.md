@@ -19,7 +19,7 @@ This crate is the mechanism. It is `no_std` + `alloc`.
   │ context     impl Sleep for TokioCtx   │  impl Sleep for Ctx<E>    │
   │             a real future             │  records an effect, waits │
   ├───────────────────────────────────────┴───────────────────────────┤
-  │ routine     Greeter<C: Sleep + Lookup + Console>: Run             │  no_std
+  │ routine     Greeter<C: Sleep + Lookup + Console>: Step             │  no_std
   │             owns the logic; knows nothing of effects or hosts     │
   └───────────────────────────────────────────────────────────────────┘
 ```
@@ -28,8 +28,8 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 
 | Item | Role |
 |------|------|
-| `run::Run` | The shape of a routine: `step` (one loop iteration) and `run` (until it breaks) |
-| `driver::Driver` | Turns a routine into something a host can drive: `start()`, then `reply(handle, value)` until finished. Each returns a `Step`: the effects, and the ids of requests abandoned along the way |
+| `step::Step` | The shape of a routine: `step` (one loop iteration) and `run` (until it breaks) |
+| `driver::Driver` | Turns a routine into something a host can drive: `resume()` to begin, then `reply(handle, value)` until finished. Each returns a `Yield`: the effects, and the ids of requests abandoned along the way |
 | `driver::outbox::Outbox` | What a reifying context writes into: `tell` an effect, or `ask` and await the reply |
 | `reply::{ReplyHandle<T>, Reply}` | The typed, single-use capability to answer one `ask` — unforgeable, infallible to reply through — and the sealed four-kind menu (`str`, `u64`, `unit`, `bytes`) it accepts |
 | `join::join` | Two waits at once — the reason request ids exist |
@@ -41,7 +41,7 @@ This crate is the mechanism. It is `no_std` + `alloc`.
 
 ```rust
 use core::ops::ControlFlow;
-use sans_effort::{driver::{Driver, outbox::Outbox}, reply::handle::ReplyHandle, run::Run};
+use sans_effort::{driver::{Driver, outbox::Outbox}, reply::handle::ReplyHandle, step::Step};
 
 trait Console {
     async fn read_line(&self) -> String;
@@ -50,7 +50,7 @@ trait Console {
 
 struct Greeter<C: Console>(C);
 
-impl<C: Console> Run for Greeter<C> {
+impl<C: Console> Step for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         let name = self.0.read_line().await;
         self.0.write_line(format!("Hello, {name}!"));
@@ -69,7 +69,7 @@ impl Console for Ctx {
 }
 
 let mut driver = Driver::new(|outbox| Greeter(Ctx(outbox)).run());
-for effect in driver.start() {
+for effect in driver.resume() {
     if let Effect::ReadLine(reply) = effect {
         for effect in driver.reply(reply, "bob".into()) {
             if let Effect::WriteLine(text) = effect {

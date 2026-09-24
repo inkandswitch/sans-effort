@@ -1,7 +1,8 @@
 /// The greeter driven from Java over the C ABI, with Panama and no native glue.
 ///
 /// Java, like Python, has no executor that can poll a Rust future, so it takes
-/// the host's role: `start`, then `reply` by request id until `COMPLETE`. This
+/// the host's role: `resume` to begin, then `reply` by request id — and
+/// `resume` again when a machine is woken — until `COMPLETE`. This
 /// file is `ABI.md` as ~200 lines of Java: downcall handles for the exports, a
 /// little-endian codec, the greeter's tag table, and the loop.
 ///
@@ -10,12 +11,12 @@
 ///
 /// - A pool of driver threads — platform threads, one per core — makes the
 ///   calls into the library, so different machines are polled at the same
-///   time. Each machine takes one event at a time from its own inbox (start,
-///   reply, resume), so no two threads ever call one handle and `BUSY` cannot
+///   time. Each machine takes one event at a time from its own inbox (resume
+///   or reply; the first resume begins it), so no two threads ever call one handle and `BUSY` cannot
 ///   happen.
 /// - A machine the library can move (tag 6) is polled on whichever worker is
 ///   next, so its calls migrate between threads. A pinned one (tag 7) is
-///   polled only on the worker that started it, so `WRONG_THREAD` cannot
+///   polled only on the worker that first resumed it, so `WRONG_THREAD` cannot
 ///   happen either.
 /// - Every ask runs on its own virtual thread; its reply becomes an event in
 ///   the machine's inbox, in whatever order the effects finish, and a closed
@@ -100,11 +101,11 @@ public class Main {
         boolean done() { return !buf.hasRemaining(); }
     }
 
-    /** `abi_version / new / start / reply / resume / wakes / free / buf_free` over the loaded cdylib, prefix `greeter_`. */
+    /** `abi_version / new / resume / reply / wakes / free / buf_free` over the loaded cdylib, prefix `greeter_`. */
     static final class Library {
         /** Shared: the symbols are called from every driver thread. */
         final Arena arena = Arena.ofShared();
-        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, start, reply, resume, wakes, free, bufFree;
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, reply, resume, wakes, free, bufFree;
 
         Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
@@ -120,7 +121,6 @@ public class Main {
             newPingPong  = linker.downcallHandle(lib.find("greeter_new_ping_pong").get(), FunctionDescriptor.of(u64));
             newFrontDesk = linker.downcallHandle(lib.find("greeter_new_front_desk").get(), FunctionDescriptor.of(u64));
             newRing      = linker.downcallHandle(lib.find("greeter_new_ring").get(), FunctionDescriptor.of(u64));
-            start      = linker.downcallHandle(lib.find("greeter_start").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             resume     = linker.downcallHandle(lib.find("greeter_resume").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             wakes      = linker.downcallHandle(lib.find("greeter_wakes").get(), FunctionDescriptor.of(i32, ptr, ptr));
@@ -142,16 +142,6 @@ public class Main {
             };
         }
 
-        /** Run to the first wait. */
-        Outcome start(long handle) throws Throwable {
-            try (Arena call = Arena.ofConfined()) {
-                MemorySegment outPtr = call.allocate(ValueLayout.ADDRESS);
-                MemorySegment outLen = call.allocate(ValueLayout.JAVA_LONG);
-                int code = (int) start.invokeExact(handle, outPtr, outLen);
-                return collect(code, outPtr, outLen);
-            }
-        }
-
         /** One reply record in; the next batch out. */
         Outcome reply(long handle, byte[] record) throws Throwable {
             try (Arena call = Arena.ofConfined()) {
@@ -164,7 +154,7 @@ public class Main {
             }
         }
 
-        /** Poll again with nothing to deliver. Harmless when nothing changed. */
+        /** Run to the next wait with nothing to deliver; the first call begins it. Harmless when nothing changed. */
         Outcome resume(long handle) throws Throwable {
             try (Arena call = Arena.ofConfined()) {
                 MemorySegment outPtr = call.allocate(ValueLayout.ADDRESS);
@@ -275,8 +265,7 @@ public class Main {
     record Request(long handle, long id) {}
 
     /** What a machine's inbox holds: something to call the library with. */
-    sealed interface Event permits Start, Reply, Resume {}
-    record Start() implements Event {}
+    sealed interface Event permits Reply, Resume {}
     record Reply(long id, byte[] record) implements Event {}
     record Resume() implements Event {}
 
@@ -303,7 +292,7 @@ public class Main {
         final class Machine {
             final long handle;
             final boolean pinned;
-            /** The worker a pinned machine was started on; -1 until then, and always for a migrating one. */
+            /** The worker a pinned machine was first resumed on; -1 until then, and always for a migrating one. */
             int worker = -1;
             volatile int status = AWAITING;
             final ArrayDeque<Event> inbox = new ArrayDeque<>();
@@ -350,7 +339,7 @@ public class Main {
             if (schedule) worker(m).execute(() -> drain(m));
         }
 
-        /** A pinned machine's own worker (chosen when it starts); any worker for a migrating one. */
+        /** A pinned machine's own worker (chosen at its first resume); any worker for a migrating one. */
         ExecutorService worker(Machine m) {
             synchronized (m) {
                 if (!m.pinned) return workers[Math.floorMod(nextWorker.getAndIncrement(), workers.length)];
@@ -384,7 +373,6 @@ public class Main {
         void handle(Machine m, Event event) throws Throwable {
             if (!machines.containsKey(m.handle)) return; // completed and freed meanwhile
             Outcome out = switch (event) {
-                case Start s -> lib.start(m.handle);
                 case Resume r -> lib.resume(m.handle); // harmless if it has moved on since
                 case Reply r -> {
                     // Closed while in flight: the routine no longer wants it, and a reply would be STALE.
@@ -403,7 +391,7 @@ public class Main {
             }
         }
 
-        /** Tells run here, in order; children are registered and started; asks go to virtual threads; closed ids are cancelled. */
+        /** Tells run here, in order; children are registered and resumed; asks go to virtual threads; closed ids are cancelled. */
         void dispatch(Machine m, List<Effect> effects) {
             for (Effect e : effects) {
                 switch (e.kind()) {
@@ -415,7 +403,7 @@ public class Main {
                     case "spawned", "spawned_pinned" -> {
                         Machine child = new Machine(e.id(), e.kind().equals("spawned_pinned"));
                         machines.put(child.handle, child);
-                        post(child, new Start());
+                        post(child, new Resume()); // the first resume begins it
                     }
                     case "closed" -> {
                         InFlight work = inFlight.remove(new Request(m.handle, e.id()));
@@ -467,7 +455,7 @@ public class Main {
         void run(long root) throws Throwable {
             Machine first = new Machine(root, false);
             machines.put(root, first);
-            post(first, new Start());
+            post(first, new Resume());
 
             while (true) {
                 awaitQuiet();

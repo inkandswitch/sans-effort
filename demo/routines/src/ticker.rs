@@ -3,7 +3,7 @@
 use crate::PAUSE;
 use alloc::format;
 use core::ops::ControlFlow;
-use sans_effort::run::Run;
+use sans_effort::step::Step;
 use sans_effort_effects::{console::WriteLine, time::Sleep};
 
 /// Ticks `n` times, pausing between, and never reads a line, looks anything
@@ -28,7 +28,7 @@ impl<C: Sleep + WriteLine> Ticker<C> {
     }
 }
 
-impl<C: Sleep + WriteLine> Run for Ticker<C> {
+impl<C: Sleep + WriteLine> Step for Ticker<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         if self.remaining == 0 {
             return ControlFlow::Break(());
