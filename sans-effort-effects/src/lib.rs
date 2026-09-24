@@ -10,6 +10,7 @@
 //! |-------------|---------------------------|
 //! | [`time`]    | [`Sleep`](time::Sleep)    |
 //! | [`console`] | [`ReadLine`](console::ReadLine), [`WriteLine`](console::WriteLine) |
+//! | [`spawn`]   | [`Spawn`](spawn::Spawn)   |
 //!
 //! Underneath them is [`request`]: [`Request`](request::Request) and
 //! [`Asked`](request::Asked), the pattern that lets one context serve any
@@ -102,10 +103,11 @@
 //! # Spelling
 //!
 //! Trait methods are `fn … -> impl Future`, as `sans_effort::run::Run`
-//! spells `step`; implementors write `async fn`. No trait says anything about
-//! `Send`: whether a routine can cross threads is decided where its context
-//! is concrete (`Driver::new`, `tokio::spawn`), so a `!Send` context — an
-//! `Rc`-based test mock — works wherever nothing asks.
+//! spells `step`; implementors write `async fn`. Only one method says
+//! anything about `Send`: [`Spawn::spawn`](spawn::Spawn::spawn), whose child
+//! may move between threads. Otherwise whether a routine can cross threads is
+//! decided where its context is concrete (`Driver::new`, `tokio::spawn`), so
+//! a `!Send` context — an `Rc`-based test mock — works wherever nothing asks.
 //!
 //! # `no_std`
 //!
@@ -120,4 +122,5 @@ extern crate alloc;
 pub mod console;
 pub mod ctx;
 pub mod request;
+pub mod spawn;
 pub mod time;
