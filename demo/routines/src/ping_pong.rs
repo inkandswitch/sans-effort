@@ -4,7 +4,7 @@ use alloc::format;
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;
 use sans_effort::step::Step;
-use sans_effort_effects::{console::WriteLine, spawn::Spawn};
+use sans_effort::{console::WriteLine, spawn::Spawn};
 
 /// Spawns a [`Ponger`], then sends it `rounds` pings, waiting for each pong
 /// before the next.

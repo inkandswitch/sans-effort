@@ -31,7 +31,7 @@ use crate::{
     machine::{Drive, Machine},
     status::Status,
 };
-use sans_effort::{
+use sans_effort_core::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
@@ -447,7 +447,7 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Echo, Effect, View, framed, reply_str_record};
-    use sans_effort::step::Step;
+    use sans_effort_core::step::Step;
 
     #[test]
     fn round_trip_across_threads() {
@@ -618,7 +618,7 @@ mod tests {
     }
 
     fn frames_of(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
-        let mut r = sans_effort::boundary::codec::Reader::new(bytes);
+        let mut r = sans_effort_core::boundary::codec::Reader::new(bytes);
         let mut out = Vec::new();
         while !r.is_empty() {
             let kind = r.u8().expect("kind");

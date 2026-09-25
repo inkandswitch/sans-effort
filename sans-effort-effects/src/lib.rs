@@ -27,7 +27,7 @@
 //! vocabulary can carry.
 //!
 //! ```
-//! use sans_effort::{
+//! use sans_effort_core::{
 //!     driver::{Driver, status::Status},
 //!     step::Step,
 //! };
@@ -98,13 +98,13 @@
 //! outside the routine: input can end, so [`read_line`](console::ReadLine::read_line)
 //! is fallible; nothing a routine could act on makes a sleep fail, so
 //! [`sleep`](time::Sleep::sleep) is not. A fallible effect's reply crosses as
-//! `bytes`, encoded with `sans-effort`'s convention for `Result`.
+//! `bytes`, encoded with `sans-effort-core`'s convention for `Result`.
 //!
 //! # Spelling
 //!
 //! Trait methods are `fn … -> impl Future<Output = T> + Send`, as
-//! `sans_effort::step::Step` spells `step` but with `Send`; implementors write
-//! `async fn`. Declaring `Send` is what lets a routine generic over its
+//! `sans_effort_core::step::Step` spells `step` but with `Send`; implementors
+//! write `async fn`. Declaring `Send` is what lets a routine generic over its
 //! context prove a child it spawns is `Send`: otherwise each capability's
 //! future is opaque, and nothing in generic code could say it may cross
 //! threads. The price is that a context's futures must be `Send`, so a
@@ -115,8 +115,8 @@
 //! # `no_std`
 //!
 //! This crate is `no_std` + `alloc`. Its `std` and `spin` features only
-//! forward `sans-effort`'s choice of lock; a crate that names the traits and
-//! nothing else should depend with `default-features = false`.
+//! forward `sans-effort-core`'s choice of lock; a crate that names the traits
+//! and nothing else should depend with `default-features = false`.
 
 #![cfg_attr(not(test), no_std)]
 

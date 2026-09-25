@@ -274,7 +274,7 @@ impl<E> core::fmt::Debug for LocalDriver<E> {
 /// like the `Vec` it replaces:
 ///
 /// ```
-/// # use sans_effort::driver::Yield;
+/// # use sans_effort_core::driver::Yield;
 /// # use std::collections::VecDeque;
 /// let yielded = Yield::new(vec!["WriteLine", "ReadLine"], vec![]);
 /// let queue: VecDeque<_> = yielded.into();

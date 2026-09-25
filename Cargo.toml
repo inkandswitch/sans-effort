@@ -7,6 +7,7 @@ members = [
   "demo/native/tokio",
   "demo/native/wasm",
   "sans-effort",
+  "sans-effort-core",
   "sans-effort-effects",
   "sans-effort-host",
   "sans-effort-tokio",
@@ -22,6 +23,7 @@ authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]
 [workspace.dependencies]
 # Internal crates
 sans-effort = { version = "0.1.0", path = "sans-effort", default-features = false }
+sans-effort-core = { version = "0.1.0", path = "sans-effort-core", default-features = false }
 sans-effort-effects = { version = "0.1.0", path = "sans-effort-effects", default-features = false }
 sans-effort-host = { version = "0.1.0", path = "sans-effort-host" }
 sans-effort-tokio = { version = "0.1.0", path = "sans-effort-tokio" }

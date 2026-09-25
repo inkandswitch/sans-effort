@@ -20,7 +20,7 @@ use crate::{
     status::Status,
 };
 use alloc::vec::Vec;
-use sans_effort::{
+use sans_effort_core::{
     boundary::{codec::Encode, codec::Writer, host_effect::HostEffect},
     driver::{Driver, Yield},
 };
@@ -110,10 +110,10 @@ mod tests {
         Both, Echo, Holds, Impatient, View, closed_frame, framed, reply_str_record,
     };
     use alloc::string::String;
-    use sans_effort::{boundary::codec::DecodeError, step::Step};
+    use sans_effort_core::{boundary::codec::DecodeError, step::Step};
 
     fn encoded<F: core::future::Future<Output = ()> + Send + 'static>(
-        make: impl FnOnce(sans_effort::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
+        make: impl FnOnce(sans_effort_core::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
     ) -> Encoded<crate::fixtures::Effect> {
         Encoded::new(Machine::from_routine(make))
     }

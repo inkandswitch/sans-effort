@@ -14,33 +14,40 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-portable-atomic = { workspace = true, optional = true }
-portable-atomic-util = { workspace = true, optional = true }
-spin = { workspace = true, optional = true }
-thiserror = { workspace = true }
-
-[dev-dependencies]
-bolero = { workspace = true }
+sans-effort-core = { workspace = true }
+sans-effort-effects = { workspace = true }
+# Not the workspace entry: that one keeps the host crate's default `std`, and
+# here `std` and `spin` are forwarded like everything else.
+sans-effort-host = { version = "0.1.0", path = "../sans-effort-host", default-features = false, optional = true }
+sans-effort-tokio = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
 ## The driver's one lock is `std::sync::Mutex`. At least one of `std` and
-## `spin` must be enabled; when both are, `std` is used.
-std = []
-## The driver's one lock is `spin::Mutex`, for `no_std`. Needs CAS atomics
-## on the target unless `portable-atomic` supplies them.
-spin = ["dep:spin"]
-## Atomics for targets without native CAS or 64-bit atomics (e.g. `thumbv6m`).
-## Implies `spin`.
-portable-atomic = [
-  "spin",
-  "dep:portable-atomic",
-  "dep:portable-atomic-util",
-  "spin/portable-atomic",
+## `spin` must be enabled; when both are, `std` is used. A crate that only
+## names the traits — a routine — should depend with `default-features = false`
+## and leave the choice to the binary.
+std = [
+  "sans-effort-core/std",
+  "sans-effort-effects/std",
+  "sans-effort-host?/std",
 ]
+## The driver's one lock is `spin::Mutex`, for `no_std`.
+spin = [
+  "sans-effort-core/spin",
+  "sans-effort-effects/spin",
+  "sans-effort-host?/spin",
+]
+## Atomics for targets without native CAS or 64-bit atomics. Implies `spin`.
+portable-atomic = ["spin", "sans-effort-core/portable-atomic"]
 ## `portable-atomic` backed by a `critical-section` implementation the
 ## application provides.
-critical-section = ["portable-atomic", "portable-atomic/critical-section"]
+critical-section = ["portable-atomic", "sans-effort-core/critical-section"]
+## `host`: what a foreign-function binding needs — typed and byte-level
+## machines, and with `std` the process-wide handle table.
+host = ["dep:sans-effort-host"]
+## `tokio`: every standard capability as a real tokio future, no driver.
+tokio = ["std", "dep:sans-effort-tokio"]
 
 [package.metadata.docs.rs]
 all-features = true

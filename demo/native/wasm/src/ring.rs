@@ -5,7 +5,7 @@ use crate::{
     host::JsHost,
 };
 use routines::ring::Ring;
-use sans_effort::step::Step;
+use sans_effort_core::step::Step;
 use wasm_bindgen::prelude::*;
 
 /// A ring of 16 routines passing a counter 250 times around, over a JS host.

@@ -4,7 +4,7 @@ use alloc::{format, vec::Vec};
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;
 use sans_effort::step::Step;
-use sans_effort_effects::{console::WriteLine, spawn::Spawn};
+use sans_effort::{console::WriteLine, spawn::Spawn};
 
 /// Spawns `size - 1` [`Node`]s in a ring with itself, then sends a counter
 /// around it `laps` times; each hop adds one. Only this routine writes — one

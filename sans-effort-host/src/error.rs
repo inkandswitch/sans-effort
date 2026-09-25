@@ -1,7 +1,7 @@
 //! Why a call failed.
 
 use crate::contract;
-use sans_effort::{boundary::codec::DecodeError, reply::kind::Kind};
+use sans_effort_core::{boundary::codec::DecodeError, reply::kind::Kind};
 
 /// Why a call failed. [`code`](Self::code) is its wire form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]

@@ -4,7 +4,7 @@
 use super::ReadLineError;
 use crate::request::Request;
 use alloc::{string::String, vec::Vec};
-use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
+use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// The next line of input. Awaits `bytes`: an encoded
 /// `Result<String, ReadLineError>`, which [`ReadLine::reply`] builds.

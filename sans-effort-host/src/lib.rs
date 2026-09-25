@@ -7,7 +7,7 @@
 //! frame in some call's output (or `wakes()`) names — then `free(handle)`. A reply record is
 //! `kind · id · payload`, where the id came out on the wire with the effect
 //! and the kind is one of the reply menu's four
-//! ([`Kind`](sans_effort::reply::kind::Kind)).
+//! ([`Kind`](sans_effort_core::reply::kind::Kind)).
 //!
 //! Everything a foreign host needs — the handle table, the type check on
 //! replies, the encoding — over owned Rust types, in two layers:
@@ -23,8 +23,8 @@
 //!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` binding
 //!   calls it. Most machines migrate between threads; a pinned one, whose
 //!   future is not `Send`, runs over a
-//!   [`LocalDriver`](sans_effort::driver::LocalDriver) and stays on the thread
-//!   that first resumed it.
+//!   [`LocalDriver`](sans_effort_core::driver::LocalDriver) and stays on the
+//!   thread that first resumed it.
 //!
 //! The application adds the _binding_: the thin `unsafe` wrapper a foreign host
 //! actually calls — one `#[no_mangle]` wrapper per function in [`table`], each
@@ -45,11 +45,13 @@
 //!
 //! # Where the Boundary Is Split
 //!
-//! The [`HostEffect`](sans_effort::boundary::host_effect::HostEffect) and
-//! [`Encode`](sans_effort::boundary::codec::Encode) traits, [`Pending`](sans_effort::boundary::pending::Pending),
-//! and the codec live in [`sans_effort::boundary`]; the reply menu
-//! ([`Value`](sans_effort::reply::value::Value), [`Kind`](sans_effort::reply::kind::Kind))
-//! in [`sans_effort::reply`]. Both are `no_std`, so a routine's boundary
+//! The [`HostEffect`](sans_effort_core::boundary::host_effect::HostEffect) and
+//! [`Encode`](sans_effort_core::boundary::codec::Encode) traits,
+//! [`Pending`](sans_effort_core::boundary::pending::Pending), and the codec
+//! live in [`sans_effort_core::boundary`]; the reply menu
+//! ([`Value`](sans_effort_core::reply::value::Value),
+//! [`Kind`](sans_effort_core::reply::kind::Kind)) in
+//! [`sans_effort_core::reply`]. Both are `no_std`, so a routine's boundary
 //! crate may implement them. This crate decodes reply records (`1 id str`;
 //! `2 id u64`; `3 id`; `4 id bytes`), checks the kind, and keeps the table.
 //! `ABI.md` at the repository root is the contract in full.

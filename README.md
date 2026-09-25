@@ -48,7 +48,7 @@ The routine is the foundation and depends on nothing above it. The native path i
 ## The Routine
 
 ```rust
-use sans_effort_effects::{console::{ReadLine, WriteLine}, time::Sleep};  // the standard library
+use sans_effort::{console::{ReadLine, WriteLine}, time::Sleep};  // the standard library
 
 pub trait Lookup { async fn lookup(&self, name: String) -> String; }      // the application's own
 
@@ -133,7 +133,8 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 
 | Crate                                         | Purpose                                                                                                                                                                                          | Target             |
 |-----------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
-| [`sans-effort`](sans-effort/)                 | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
+| [`sans-effort`](sans-effort/)                 | The one dependency for routine authors: re-exports `-core` and `-effects` in one flat namespace; `tokio` and `host` behind features                                                               |
+| [`sans-effort-core`](sans-effort-core/)       | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
 | [`sans-effort-effects`](sans-effort-effects/) | A standard library of capabilities: `time` (`Sleep`) and `console` (`ReadLine`, `WriteLine`) — the traits, their effects, and the reifying `Ctx<E>`, written once                                | `no_std` + `alloc` |
 | [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per capability — `TokioClock` (`Sleep`), `TokioInput` (`ReadLine`), `TokioOutput` (`WriteLine`) — and `TokioCtx` with all of them — real futures, no driver | `std`              |
 | [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                                       | `std`              |

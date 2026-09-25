@@ -2,7 +2,7 @@
 //! returns borrows it, and a capability's future must be `Send`.
 
 use core::{cell::Cell, time::Duration};
-use sans_effort_effects::time::Sleep;
+use sans_effort::time::Sleep;
 use std::rc::Rc;
 
 struct Local(Rc<Cell<u32>>);

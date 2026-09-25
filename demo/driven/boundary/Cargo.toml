@@ -11,7 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sans-effort = { workspace = true }
+sans-effort-core = { workspace = true }
 sans-effort-effects = { workspace = true }
 sans-effort-host = { workspace = true, optional = true }
 routines = { version = "0.1.0", path = "../../routines" }
@@ -25,7 +25,7 @@ table = ["dep:sans-effort-host"]
 
 [dev-dependencies]
 bolero = { workspace = true }
-sans-effort = { workspace = true, features = ["std"] }
+sans-effort-core = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

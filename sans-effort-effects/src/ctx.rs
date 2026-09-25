@@ -2,7 +2,7 @@
 
 use crate::request::{Asked, Request};
 use alloc::boxed::Box;
-use sans_effort::{
+use sans_effort_core::{
     driver::{ask::Ask, outbox::Outbox},
     reply::handle::ReplyHandle,
 };

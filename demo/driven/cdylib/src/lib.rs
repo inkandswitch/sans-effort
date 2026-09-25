@@ -16,7 +16,7 @@ use routines::{
     fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
     ticker::Ticker,
 };
-use sans_effort::step::Step;
+use sans_effort_core::step::Step;
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
     contract::{OK, REVISION, code_of},

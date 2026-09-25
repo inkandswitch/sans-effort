@@ -4,7 +4,7 @@ use crate::PAUSE;
 use alloc::format;
 use core::ops::ControlFlow;
 use sans_effort::step::Step;
-use sans_effort_effects::{console::WriteLine, time::Sleep};
+use sans_effort::{console::WriteLine, time::Sleep};
 
 /// Ticks `n` times, pausing between, and never reads a line, looks anything
 /// up, or counts.

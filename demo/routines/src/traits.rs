@@ -6,7 +6,7 @@
 //!
 //! Laid out like a module of the standard library: each trait, its effect
 //! (in [`effect`]), and its reifying impl live together. The impl is written
-//! over [`AsCtx`], so it holds for [`Ctx`](sans_effort_effects::ctx::Ctx) and for
+//! over [`AsCtx`], so it holds for [`Ctx`](sans_effort::ctx::Ctx) and for
 //! any newtype wrapping one. The routines themselves (`greeter`, `fanout`,
 //! `ticker`) use only the traits.
 //!
@@ -23,7 +23,7 @@ pub mod effect;
 
 use alloc::string::String;
 use core::future::Future;
-use sans_effort_effects::{ctx::AsCtx, request::Asked};
+use sans_effort::{ctx::AsCtx, request::Asked};
 
 /// Count a greeting.
 pub trait Count {

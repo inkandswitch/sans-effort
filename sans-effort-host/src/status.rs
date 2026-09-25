@@ -1,7 +1,7 @@
 //! Where the routine stopped.
 
 use crate::contract;
-use sans_effort::driver::status::Status as DriveStatus;
+use sans_effort_core::driver::status::Status as DriveStatus;
 
 /// What one `resume` or `reply` reports. [`code`](Self::code) is its wire form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -14,7 +14,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sans-effort = { workspace = true }
+sans-effort-core = { workspace = true }
 thiserror = { workspace = true }
 
 [features]
@@ -23,10 +23,10 @@ default = ["std"]
 ## `static Mutex`, and `catch_unwind` for panic isolation. Without it the crate
 ## is `no_std` + `alloc`: the typed `Machine` and byte-level `Encoded`, for a
 ## binding that keeps its own statics.
-std = ["sans-effort/std"]
-## Forwarded to `sans-effort`: the lock for a `no_std` build. Exactly as
+std = ["sans-effort-core/std"]
+## Forwarded to `sans-effort-core`: the lock for a `no_std` build. Exactly as
 ## there, at least one of `std` and `spin` must be enabled.
-spin = ["sans-effort/spin"]
+spin = ["sans-effort-core/spin"]
 
 [dev-dependencies]
 async-channel = { workspace = true }

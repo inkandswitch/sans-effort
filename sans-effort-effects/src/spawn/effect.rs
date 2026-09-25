@@ -8,7 +8,7 @@
 
 use alloc::boxed::Box;
 use core::fmt;
-use sans_effort::driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox};
+use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox};
 
 /// Start a child that may move between threads: a tell.
 #[derive(Debug)]

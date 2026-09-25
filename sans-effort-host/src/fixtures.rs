@@ -2,7 +2,7 @@
 
 use alloc::{format, string::String, vec::Vec};
 use core::ops::ControlFlow;
-use sans_effort::{
+use sans_effort_core::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
@@ -67,7 +67,7 @@ pub(crate) struct Both(pub(crate) Outbox<Effect>);
 impl Step for Both {
     async fn step(&mut self) -> ControlFlow<()> {
         let (a, b) =
-            sans_effort::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
+            sans_effort_core::join::join(self.0.ask(Effect::Ask), self.0.ask(Effect::Ask)).await;
         self.0.tell(Effect::Say(format!("{a}+{b}")));
         ControlFlow::Break(())
     }

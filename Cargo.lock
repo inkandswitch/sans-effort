@@ -265,7 +265,7 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "routines",
- "sans-effort",
+ "sans-effort-core",
  "sans-effort-effects",
  "sans-effort-host",
 ]
@@ -276,7 +276,7 @@ version = "0.1.0"
 dependencies = [
  "greeter_boundary",
  "routines",
- "sans-effort",
+ "sans-effort-core",
  "sans-effort-effects",
  "sans-effort-host",
 ]
@@ -287,8 +287,6 @@ version = "0.1.0"
 dependencies = [
  "routines",
  "sans-effort",
- "sans-effort-effects",
- "sans-effort-tokio",
  "tokio",
  "tokio-util",
 ]
@@ -300,7 +298,7 @@ dependencies = [
  "async-channel",
  "js-sys",
  "routines",
- "sans-effort",
+ "sans-effort-core",
  "sans-effort-effects",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -481,7 +479,6 @@ dependencies = [
  "async-channel",
  "bolero",
  "sans-effort",
- "sans-effort-effects",
  "trybuild",
 ]
 
@@ -493,6 +490,16 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "sans-effort"
+version = "0.1.0"
+dependencies = [
+ "sans-effort-core",
+ "sans-effort-effects",
+ "sans-effort-host",
+ "sans-effort-tokio",
+]
+
+[[package]]
+name = "sans-effort-core"
 version = "0.1.0"
 dependencies = [
  "bolero",
@@ -507,7 +514,7 @@ name = "sans-effort-effects"
 version = "0.1.0"
 dependencies = [
  "bolero",
- "sans-effort",
+ "sans-effort-core",
  "thiserror",
 ]
 
@@ -517,7 +524,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "bolero",
- "sans-effort",
+ "sans-effort-core",
  "thiserror",
 ]
 
@@ -525,7 +532,7 @@ dependencies = [
 name = "sans-effort-tokio"
 version = "0.1.0"
 dependencies = [
- "sans-effort",
+ "sans-effort-core",
  "sans-effort-effects",
  "tokio",
  "tokio-util",

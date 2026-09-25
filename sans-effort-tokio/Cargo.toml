@@ -20,7 +20,7 @@ tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-sans-effort = { workspace = true, features = ["std"] }
+sans-effort-core = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [lints]

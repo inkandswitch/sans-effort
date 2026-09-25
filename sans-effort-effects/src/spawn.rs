@@ -12,7 +12,7 @@
 //!
 //! ```
 //! use core::ops::ControlFlow;
-//! use sans_effort::step::Step;
+//! use sans_effort_core::step::Step;
 //! use sans_effort_effects::{console::WriteLine, spawn::Spawn};
 //!
 //! struct Parent<C>(C);
@@ -49,7 +49,7 @@
 //!
 //! ```
 //! use core::{ops::ControlFlow, time::Duration};
-//! use sans_effort::step::Step;
+//! use sans_effort_core::step::Step;
 //! use sans_effort_effects::{spawn::Spawn, time::Sleep};
 //!
 //! struct Napper<C>(C);
@@ -84,7 +84,7 @@ pub mod effect;
 use crate::ctx::{AsCtx, Ctx};
 use alloc::boxed::Box;
 use core::future::Future;
-use sans_effort::driver::{BoxedRoutine, LocalBoxedRoutine};
+use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine};
 
 /// Start child routines.
 pub trait Spawn {
@@ -160,7 +160,7 @@ mod tests {
     use crate::console::{WriteLine, effect::WriteLine as Written};
     use alloc::{rc::Rc, string::String, vec::Vec};
     use core::ops::ControlFlow;
-    use sans_effort::{
+    use sans_effort_core::{
         driver::{Driver, LocalDriver, Yield, status::Status},
         step::Step,
     };

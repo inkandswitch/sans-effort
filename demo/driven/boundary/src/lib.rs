@@ -5,8 +5,8 @@
 //! [`Ctx`](sans_effort_effects::ctx::Ctx), and the `Sleep`, `ReadLine`, and
 //! `WriteLine` effects are `sans-effort-effects`, the standard library.
 //! `Ctx` serves every wait by recording a request that carries a
-//! [`ReplyHandle`](sans_effort::reply::handle::ReplyHandle) and suspending; a
-//! host replies by id. The demo's own capabilities, `Count` and `Lookup`,
+//! [`ReplyHandle`](sans_effort_core::reply::handle::ReplyHandle) and
+//! suspending; a host replies by id. The demo's own capabilities, `Count` and `Lookup`,
 //! carry their effects and `Ctx` impls with their traits in `routines`. This
 //! crate is the rest of what only the routine's author can write — the
 //! vocabularies a host may offer, and how a host sees them — and nothing
@@ -45,7 +45,7 @@
 //! never appear.
 //!
 //! ```compile_fail,E0277
-//! use sans_effort::{driver::Driver, step::Step};
+//! use sans_effort_core::{driver::Driver, step::Step};
 //! use routines::greeter::Greeter;
 //! use greeter_boundary::Quiet;
 //! use sans_effort_effects::ctx::Ctx;
@@ -86,7 +86,7 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 use routines::traits::effect::{Count, Lookup};
-use sans_effort::{
+use sans_effort_core::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
@@ -358,7 +358,7 @@ mod tests {
     use alloc::{collections::VecDeque, format, vec, vec::Vec};
     use core::future::Future;
     use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
-    use sans_effort::{
+    use sans_effort_core::{
         driver::{Driver, outbox::Outbox, status::Status},
         step::Step,
     };
@@ -590,7 +590,7 @@ mod tests {
     mod router {
         use super::*;
         use routines::{front_desk::FrontDesk, ping_pong::PingPong};
-        use sans_effort::{
+        use sans_effort_core::{
             driver::{LocalDriver, Yield},
             reply::{Reply, handle::ReplyHandle},
         };

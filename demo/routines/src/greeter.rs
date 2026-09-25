@@ -7,7 +7,7 @@ use crate::{
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
 use sans_effort::step::Step;
-use sans_effort_effects::{
+use sans_effort::{
     console::{ReadLine, WriteLine},
     time::Sleep,
 };

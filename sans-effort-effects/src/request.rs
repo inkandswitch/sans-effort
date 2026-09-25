@@ -29,7 +29,7 @@
 //! [`request`](crate::ctx::Ctx::request) and
 //! [`notify`](crate::ctx::Ctx::notify).
 
-use sans_effort::reply::{Reply, handle::ReplyHandle};
+use sans_effort_core::reply::{Reply, handle::ReplyHandle};
 
 /// A request names the type of its reply.
 pub trait Request {
@@ -40,7 +40,7 @@ pub trait Request {
 /// A request in flight: what was asked, and the handle the host replies
 /// through. A host's effect type carries these; the host layer splits them
 /// into a view and a
-/// [`Pending`](sans_effort::boundary::pending::Pending).
+/// [`Pending`](sans_effort_core::boundary::pending::Pending).
 #[derive(Debug)]
 pub struct Asked<R: Request> {
     /// What was asked.

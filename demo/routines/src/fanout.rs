@@ -6,11 +6,11 @@ use crate::{
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
-use sans_effort::{join::join, step::Step};
-use sans_effort_effects::{
+use sans_effort::{
     console::{ReadLine, WriteLine},
     time::Sleep,
 };
+use sans_effort::{join::join, step::Step};
 
 /// Reads a name, then looks up the greeting and counts _concurrently_; then
 /// waits out the pause while reading the farewell, likewise. If the input

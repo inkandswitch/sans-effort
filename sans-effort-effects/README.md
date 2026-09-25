@@ -14,9 +14,9 @@ Each module holds the trait, its effect structs (`effect::…`), and the trait's
 
 The impls are written over `AsCtx` — anything that can be viewed as a `Ctx` — which `Ctx<E>`, references, `Box`, `Rc`, and `Arc` implement. A newtype over `Ctx` implements it with one method and gets every capability, which is how a crate reifies a capability trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Nothing else needs `AsCtx`: routines name capabilities, and native contexts implement them directly.
 
-A trait returns `Result` exactly when its effect can fail for reasons outside the routine. A fallible effect's reply crosses as `bytes`, encoded with `sans-effort`'s convention for `Result`.
+A trait returns `Result` exactly when its effect can fail for reasons outside the routine. A fallible effect's reply crosses as `bytes`, encoded with `sans-effort-core`'s convention for `Result`.
 
-This crate is `no_std` + `alloc`. Its `std` and `spin` features only forward `sans-effort`'s choice of lock; a crate that names the traits and nothing else should depend with `default-features = false`.
+This crate is `no_std` + `alloc`. Its `std` and `spin` features only forward `sans-effort-core`'s choice of lock; a crate that names the traits and nothing else should depend with `default-features = false`.
 
 ## License
 

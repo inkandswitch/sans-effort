@@ -14,11 +14,11 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
-use sans_effort::{step::Step, testing::run_now};
-use sans_effort_effects::{
+use sans_effort::{
     console::{ReadLine, ReadLineError, WriteLine},
     time::Sleep,
 };
+use sans_effort::{step::Step, testing::run_now};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// What a routine did to its context, in order.

@@ -11,10 +11,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sans-effort = { workspace = true, features = ["std"] }
-sans-effort-effects = { workspace = true, features = ["std"] }
 routines = { version = "0.1.0", path = "../../routines" }
-sans-effort-tokio = { workspace = true }
+sans-effort = { workspace = true, features = ["std", "tokio"] }
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["rt"] }
 

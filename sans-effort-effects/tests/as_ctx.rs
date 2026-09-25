@@ -5,7 +5,7 @@
 #![expect(clippy::panic, reason = "let-else arms name the batch they expected")]
 
 use core::{future::Future, ops::ControlFlow, time::Duration};
-use sans_effort::{
+use sans_effort_core::{
     driver::{Driver, status::Status},
     step::Step,
 };

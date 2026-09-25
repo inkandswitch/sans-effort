@@ -12,7 +12,7 @@
 //! A message type implements both, field by field:
 //!
 //! ```
-//! use sans_effort::boundary::codec::{
+//! use sans_effort_core::boundary::codec::{
 //!     Decode, DecodeError, Encode, Reader, Writer,
 //! };
 //!

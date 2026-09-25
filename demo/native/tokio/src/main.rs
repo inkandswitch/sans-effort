@@ -30,7 +30,7 @@ use routines::{
     fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
 };
 use sans_effort::step::Step;
-use sans_effort_tokio::ctx::TokioCtx;
+use sans_effort::tokio::ctx::TokioCtx;
 use tokio_util::task::LocalPoolHandle;
 
 #[tokio::main]

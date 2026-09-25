@@ -5,7 +5,7 @@ pub mod effect;
 use crate::{ctx::AsCtx, request::Asked};
 use alloc::string::String;
 use core::future::Future;
-use sans_effort::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
+use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// Read a line.
 pub trait ReadLine {
@@ -86,7 +86,7 @@ mod tests {
     use crate::ctx::Ctx;
     use alloc::vec::Vec;
     use core::ops::ControlFlow;
-    use sans_effort::{
+    use sans_effort_core::{
         driver::{Driver, status::Status},
         step::Step,
     };

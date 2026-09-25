@@ -1,0 +1,49 @@
+[package]
+name = "sans-effort-core"
+version = "0.1.0"
+description = "The mechanism under sans-effort: the routine trait, the driver, and the boundary — small and slow to change, for runtime and binding authors"
+readme = "README.md"
+
+categories = ["asynchronous", "no-std"]
+keywords = ["async", "coroutine", "effects", "no_std", "sans-io"]
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+portable-atomic = { workspace = true, optional = true }
+portable-atomic-util = { workspace = true, optional = true }
+spin = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+bolero = { workspace = true }
+
+[features]
+default = ["std"]
+## The driver's one lock is `std::sync::Mutex`. At least one of `std` and
+## `spin` must be enabled; when both are, `std` is used.
+std = []
+## The driver's one lock is `spin::Mutex`, for `no_std`. Needs CAS atomics
+## on the target unless `portable-atomic` supplies them.
+spin = ["dep:spin"]
+## Atomics for targets without native CAS or 64-bit atomics (e.g. `thumbv6m`).
+## Implies `spin`.
+portable-atomic = [
+  "spin",
+  "dep:portable-atomic",
+  "dep:portable-atomic-util",
+  "spin/portable-atomic",
+]
+## `portable-atomic` backed by a `critical-section` implementation the
+## application provides.
+critical-section = ["portable-atomic", "portable-atomic/critical-section"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

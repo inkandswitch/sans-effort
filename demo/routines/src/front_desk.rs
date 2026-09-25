@@ -6,7 +6,7 @@ use alloc::{format, string::String, vec::Vec};
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;
 use sans_effort::step::Step;
-use sans_effort_effects::{
+use sans_effort::{
     console::{ReadLine, WriteLine},
     spawn::Spawn,
 };

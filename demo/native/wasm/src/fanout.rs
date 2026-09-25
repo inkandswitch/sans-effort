@@ -5,7 +5,7 @@ use crate::{
     host::JsHost,
 };
 use routines::fanout::Fanout;
-use sans_effort::step::Step;
+use sans_effort_core::step::Step;
 use wasm_bindgen::prelude::*;
 
 /// The fan-out greeter over a JS host: two waits in flight at once, as two

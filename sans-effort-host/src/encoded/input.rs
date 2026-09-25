@@ -1,7 +1,7 @@
 //! One decoded reply record: what the host is telling the routine.
 
 use alloc::{string::String, vec::Vec};
-use sans_effort::boundary::codec::{DecodeError, Reader};
+use sans_effort_core::boundary::codec::{DecodeError, Reader};
 
 pub(super) enum Input {
     Bytes(u64, Vec<u8>),

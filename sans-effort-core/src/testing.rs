@@ -8,7 +8,7 @@
 //!
 //! ```
 //! use core::{cell::RefCell, ops::ControlFlow};
-//! use sans_effort::{step::Step, testing::run_now};
+//! use sans_effort_core::{step::Step, testing::run_now};
 //!
 //! trait Console {
 //!     async fn read_line(&self) -> String;
@@ -85,7 +85,7 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
 ///
 /// ```
 /// use core::ops::ControlFlow;
-/// use sans_effort::{
+/// use sans_effort_core::{
 ///     driver::{Driver, outbox::Outbox},
 ///     reply::handle::ReplyHandle,
 ///     step::Step,

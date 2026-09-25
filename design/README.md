@@ -42,12 +42,17 @@ flowchart TB
 
 ```mermaid
 flowchart BT
-    core["sans-effort<br/>mechanism · no_std"]
+    facade["sans-effort<br/>re-exports only · no_std"]
+    core["sans-effort-core<br/>mechanism · no_std"]
     host_crate["sans-effort-host<br/>Machine · Encoded · table · std"]
     effects["sans-effort-effects<br/>traits · requests · Ctx#60;E#62; · no_std"]
     tokio_crate["sans-effort-tokio<br/>TokioClock · TokioInput · TokioOutput · TokioCtx · std"]
     binding["an application's binding<br/>extern C · the only unsafe"]
 
+    facade --> core
+    facade --> effects
+    facade -. feature tokio .-> tokio_crate
+    facade -. feature host .-> host_crate
     host_crate --> core
     effects --> core
     tokio_crate --> effects
@@ -56,7 +61,7 @@ flowchart BT
     classDef planned stroke-dasharray: 5 5
 ```
 
-The mechanism crate is meant to be small and close to frozen; everything opinionated lives in a crate above it, so it can change without breaking the mechanism.
+The mechanism crate is meant to be small and close to frozen; everything opinionated lives in a crate above it, so it can change without breaking the mechanism. The `sans-effort` crate holds no code: it re-exports the others so a routine author needs one dependency, while runtime and binding authors depend on the crates beneath it directly.
 
 ## Typical Flow
 

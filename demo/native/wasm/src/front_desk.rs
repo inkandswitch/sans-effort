@@ -6,7 +6,7 @@ use crate::{
     host::JsHost,
 };
 use routines::front_desk::FrontDesk;
-use sans_effort::step::Step;
+use sans_effort_core::step::Step;
 use wasm_bindgen::prelude::*;
 
 /// A front desk over a JS host. Construct, then `await` [`run`](Self::run).

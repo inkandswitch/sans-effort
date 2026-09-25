@@ -32,7 +32,7 @@ use core::{
 /// other.
 ///
 /// ```
-/// use sans_effort::{select::{Either, select}, testing::run_now};
+/// use sans_effort_core::{select::{Either, select}, testing::run_now};
 ///
 /// let first = run_now(select(async { 1 }, core::future::pending::<&str>()));
 /// assert_eq!(first, Either::Left(1));

@@ -28,22 +28,23 @@ in {
   "test:no_std" = cmd "Check the core crate (wasm32, thumbv6m) and the demo routine (wasm32) build without std" ''
     set -e
 
-    echo "===> Checking sans-effort (no_std: spin lock)..."
-    ${cargo} check -p sans-effort --no-default-features --features spin
+    echo "===> Checking sans-effort-core and the sans-effort facade (no_std: spin lock)..."
+    ${cargo} check -p sans-effort-core -p sans-effort --no-default-features --features spin
 
     echo ""
     echo "===> Checking every feature combination builds (or is refused on purpose)..."
+    ${cargo} hack check -p sans-effort-core --feature-powerset --at-least-one-of std,spin
     ${cargo} hack check -p sans-effort --feature-powerset --at-least-one-of std,spin
     ${cargo} hack check -p sans-effort-effects --feature-powerset --at-least-one-of std,spin
     ${cargo} hack check -p sans-effort-host --feature-powerset --at-least-one-of std,spin
 
     echo ""
-    echo "===> Checking sans-effort, sans-effort-effects, and sans-effort-host without std (wasm32-unknown-unknown)..."
-    ${cargo} check -p sans-effort -p sans-effort-effects -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
+    echo "===> Checking the library crates without std (wasm32-unknown-unknown)..."
+    ${cargo} check -p sans-effort -p sans-effort-core -p sans-effort-effects -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
 
     echo ""
-    echo "===> Checking sans-effort (thumbv6m-none-eabi, critical-section)..."
-    ${cargo} check -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
+    echo "===> Checking sans-effort-core and the facade (thumbv6m-none-eabi, critical-section)..."
+    ${cargo} check -p sans-effort-core -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
 
     echo ""
     echo "===> Checking the demo routines and their vocabulary crate are no_std too (wasm32)..."

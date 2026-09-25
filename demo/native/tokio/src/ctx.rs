@@ -14,12 +14,12 @@
 
 use core::{future::Future, time::Duration};
 use routines::traits::{Count, Lookup};
-use sans_effort_effects::{
+use sans_effort::tokio::ctx::TokioCtx;
+use sans_effort::{
     console::{ReadLine, ReadLineError, WriteLine},
     spawn::Spawn,
     time::Sleep,
 };
-use sans_effort_tokio::ctx::TokioCtx;
 use std::{
     io,
     sync::{

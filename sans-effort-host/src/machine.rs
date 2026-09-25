@@ -4,7 +4,7 @@
 use crate::{error::Error, status::Status};
 use alloc::{string::String, vec::Vec};
 use core::{future::Future, marker::PhantomData};
-use sans_effort::{
+use sans_effort_core::{
     boundary::{host_effect::HostEffect, pending::Pending},
     driver::{
         BoxedRoutine, Driver, LocalDriver, Yield, outbox::Outbox, status::Status as DriveStatus,
@@ -325,7 +325,7 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Both, Echo, Holds, Impatient, View};
-    use sans_effort::{reply::kind::Kind, step::Step};
+    use sans_effort_core::{reply::kind::Kind, step::Step};
 
     #[test]
     fn typed_layer() {

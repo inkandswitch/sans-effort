@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 async-channel = { workspace = true }
-sans-effort = { workspace = true, features = ["std"] }
+sans-effort-core = { workspace = true, features = ["std"] }
 sans-effort-effects = { workspace = true, features = ["std"] }
 js-sys = { workspace = true }
 routines = { version = "0.1.0", path = "../../routines" }
