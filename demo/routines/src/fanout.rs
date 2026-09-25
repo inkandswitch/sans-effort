@@ -60,7 +60,7 @@ mod tests {
     use alloc::vec;
 
     /// With every future ready at once, `join` polls left then right, so the
-    /// call order is fixed; what the test pins is that both capabilities are
+    /// call order is fixed; what the test pins is that both effect traits are
     /// used and the result assembled before the next write.
     #[test]
     fn fanout_on_any_script() {

@@ -1,7 +1,7 @@
 //! Native tokio contexts for `sans-effort` routines.
 //!
-//! A routine names the capabilities it needs as traits; a context decides
-//! what each call does. This crate is the native side: every capability in
+//! A routine names the effect traits it needs; a context decides
+//! what each call does. This crate is the native side: every effect trait in
 //! `sans-effort-effects` as a real tokio future, so a routine runs as an
 //! ordinary task — `tokio::spawn(routine.run())` — with no driver and no
 //! host.
@@ -15,8 +15,8 @@
 //! | [`TokioCtx`](ctx::TokioCtx)          | all of the above   |
 //!
 //! [`TokioCtx`](ctx::TokioCtx) is the ready-made context: one value with
-//! every capability, built from the components — one component per
-//! capability. The components are there to compose differently, and to
+//! every effect trait, built from the components — one component per
+//! effect trait. The components are there to compose differently, and to
 //! grant no more than a routine needs: a clock and output for a routine that
 //! never reads, or a paused clock with an in-memory output in a test.
 //!
@@ -31,10 +31,10 @@
 //! assert_eq!(written, b"hello\n");
 //! ```
 //!
-//! # Your Own Capabilities
+//! # Your Own Effect Traits
 //!
-//! A routine takes one context, which must provide every capability it
-//! names. An application with capabilities of its own wraps a `TokioCtx` in
+//! A routine takes one context, which must provide every effect trait it
+//! names. An application with effect traits of its own wraps a `TokioCtx` in
 //! a type of its own, implements its traits there, and forwards the stdlib
 //! ones — one line each:
 //!

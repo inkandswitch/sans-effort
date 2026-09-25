@@ -2,7 +2,7 @@
 //! boundary.
 //!
 //! Writing routines? Depend on `sans-effort` instead: it re-exports this
-//! crate's modules at the same paths, with the standard capabilities beside
+//! crate's modules at the same paths, with the standard effect traits beside
 //! them. This crate is for the authors of runtimes and bindings, and is kept
 //! small and slow to change.
 //!
@@ -80,10 +80,12 @@
 //! - [`driver::outbox::Outbox`] is what a _reifying context_ writes into:
 //!   [`tell`](driver::outbox::Outbox::tell) an effect and move on, or
 //!   [`ask`](driver::outbox::Outbox::ask) one and await the reply.
-//! - [`reply::handle::ReplyHandle`] is the typed, single-use capability to answer one
-//!   `ask`. It travels inside the effect to whoever performs it. What it
-//!   accepts is the sealed four-kind menu, [`reply::Reply`]: `str`, `u64`,
-//!   `unit`, `bytes`.
+//! - [`reply::handle::ReplyHandle`] is the typed, single-use capability to
+//!   answer one `ask`. It travels inside the effect to whoever performs it,
+//!   and accepts the [`reply::Answer`] the routine waits for — a `String`,
+//!   or a `Result<String, ReadLineError>` — which crosses as one of the
+//!   sealed four wire kinds, [`reply::Reply`]: `str`, `u64`, `unit`,
+//!   `bytes`.
 //! - [`driver::Driver`] turns a routine into something a host can resume:
 //!   [`resume`](driver::Driver::resume) to begin, then
 //!   [`reply`](driver::Driver::reply) with each handle the effects hand back,
@@ -195,7 +197,7 @@
 //! not the routine, decides what is on offer, and one context serves every
 //! host — describes each wait as a request value and states what the host
 //! must carry as a `From` bound. That pattern, a reifying context built on
-//! it, and a standard library of capabilities are `sans-effort-effects`.
+//! it, and a standard library of effect traits are `sans-effort-effects`.
 //!
 //! A host in another language cannot hold a `ReplyHandle`; see [`boundary`] and
 //! the `sans-effort-host` crate for that path. A host with a runtime needs

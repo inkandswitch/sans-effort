@@ -1,6 +1,6 @@
 //! The console: lines in from an async reader, lines out to a writer.
 //!
-//! Two components, one per capability, so a context can grant output
+//! Two components, one per effect trait, so a context can grant output
 //! without input or the other way round.
 
 use sans_effort_effects::console::{ReadLine, ReadLineError, WriteLine};

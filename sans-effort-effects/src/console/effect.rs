@@ -2,26 +2,17 @@
 //! record under a reifying context.
 
 use super::ReadLineError;
-use crate::request::Request;
-use alloc::{string::String, vec::Vec};
+use crate::ask::Ask;
+use alloc::string::String;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
-/// The next line of input. Awaits `bytes`: an encoded
-/// `Result<String, ReadLineError>`, which [`ReadLine::reply`] builds.
+/// The next line of input. Awaits a `Result<String, ReadLineError>`, which
+/// crosses as `bytes`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReadLine;
 
-impl ReadLine {
-    /// The reply for a line read, or for why none was: what a host sends
-    /// back through this request's handle.
-    #[must_use]
-    pub fn reply(line: Result<&str, ReadLineError>) -> Vec<u8> {
-        line.to_bytes()
-    }
-}
-
-impl Request for ReadLine {
-    type Reply = Vec<u8>;
+impl Ask for ReadLine {
+    type Reply = Result<String, ReadLineError>;
 }
 
 /// No fields.
@@ -35,7 +26,7 @@ impl Decode for ReadLine {
     }
 }
 
-/// Show a line. Fire-and-forget; not a [`Request`].
+/// Show a line. Fire-and-forget; not a [`Ask`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WriteLine(pub String);
 

@@ -8,7 +8,7 @@
 //! Compare `../../driven/cdylib` and `../wasm`, where the identical `Greeter` runs
 //! behind a `Driver` because the poller is not Rust.
 //!
-//! `tokio::spawn` needs the future to be `Send`. The capability traits
+//! `tokio::spawn` needs the future to be `Send`. The effect traits
 //! declare their futures `Send`, and the context is `Send`, so it is.
 //!
 //! ```sh
@@ -113,7 +113,7 @@ mod tests {
     /// anywhere — and its sleeps are tokio's: under a paused clock, three
     /// 50 ms pauses take no wall time and advance virtual time by 150 ms.
     ///
-    /// `tokio::spawn` accepts the future: the capability traits declare
+    /// `tokio::spawn` accepts the future: the effect traits declare
     /// their futures `Send`, and the context is `Send`.
     #[tokio::test(start_paused = true)]
     async fn greeter_runs_natively_in_virtual_time() {

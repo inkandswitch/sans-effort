@@ -1,11 +1,11 @@
 [package]
 name = "sans-effort-effects"
 version = "0.1.0"
-description = "A standard library of capabilities for sans-effort routines: the traits, their effects, and the reifying context, written once"
+description = "A standard library of effect traits for sans-effort routines: the traits, the effects they record, and the reifying context, written once"
 readme = "README.md"
 
 categories = ["asynchronous", "no-std"]
-keywords = ["async", "capabilities", "effects", "no_std", "sans-io"]
+keywords = ["async", "effect-traits", "effects", "no_std", "sans-io"]
 
 authors.workspace = true
 edition.workspace = true

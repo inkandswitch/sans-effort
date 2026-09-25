@@ -9,7 +9,7 @@
 //! of any requests it abandoned.
 //!
 //! An [`Outbox`] serves every wait the same way: return an
-//! [`Ask`](ask::Ask) holding the closure that builds the effect. Nothing has
+//! [`Asking`](asking::Asking) holding the closure that builds the effect. Nothing has
 //! happened yet — like a Rust future, it is lazy. Awaiting it turns it into
 //! an [`Awaiting`](awaiting::Awaiting): that one consuming step mints a
 //! [`ReplyHandle`], builds the effect around it, records it, and opens a
@@ -18,7 +18,7 @@
 //! there, the ids a host sees are gapless and increase in the order effects
 //! were recorded.
 //! The host replies through the handle, which puts the value in the slot; on
-//! the next poll the future finds it and the routine continues. An `Ask`
+//! the next poll the future finds it and the routine continues. An `Asking`
 //! dropped before it is awaited emitted nothing and was never numbered; an
 //! `Awaiting` dropped before its reply closes its
 //! slot, its id is reported in the yield's [`closed`](Yield::closed), and a late
@@ -59,7 +59,7 @@
 //! you anyway (a `#[wasm_bindgen]` struct, a `PyO3` class, a NIF resource) and
 //! holds a `Send` driver beside them.
 
-pub mod ask;
+pub mod asking;
 pub mod awaiting;
 pub mod outbox;
 pub mod status;
@@ -70,7 +70,10 @@ mod sync;
 mod wake;
 
 use self::{outbox::Outbox, status::Status, stepper::Stepper};
-use crate::reply::{Reply, handle::ReplyHandle};
+use crate::{
+    boundary::codec::DecodeError,
+    reply::{Answer, handle::ReplyHandle},
+};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::{future::Future, pin::Pin};
 
@@ -132,22 +135,44 @@ impl<E> Driver<E> {
         }
     }
 
-    /// Deliver the value a handle asked for and advance: the effects
+    /// Deliver the answer a handle asked for and advance: the effects
     /// recorded before the next wait.
     ///
-    /// Infallible. The handle is proof that this driver minted a request of
-    /// this type; if the routine has since dropped that request — the losing
-    /// arm of a [`select`](crate::select::select), say — the value is
+    /// The handle is proof that this driver minted a request for this
+    /// answer; if the routine has since dropped that request — the losing
+    /// arm of a [`select`](crate::select::select), say — the answer is
     /// discarded and the yield is empty, because the routine moved on without
     /// it.
     ///
     /// # Panics
     ///
-    /// If the handle was minted by another driver. That is a host bug, and it
-    /// is reported as one rather than delivered to whichever slot of this
-    /// driver shares the id.
-    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
+    /// If the handle was minted by another driver, or if it was retyped to a
+    /// wire kind (through a [`Pending`](crate::boundary::pending::Pending))
+    /// and `value` does not decode as the answer awaited. Both are host bugs,
+    /// reported as such rather than delivered. A host replying with wire
+    /// values from outside the process uses [`try_reply`](Self::try_reply).
+    pub fn reply<A: Answer>(&mut self, reply: ReplyHandle<A>, value: A) -> Yield<E> {
         self.stepper.reply(reply, value)
+    }
+
+    /// As [`reply`](Self::reply), but a value that does not decode as the
+    /// answer awaited is refused rather than a panic: for a host whose
+    /// replies arrive as bytes it cannot vouch for.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`], holding the handle back, if `value` is not a valid answer.
+    /// The request stays open; reply again.
+    ///
+    /// # Panics
+    ///
+    /// If the handle was minted by another driver.
+    pub fn try_reply<A: Answer>(
+        &mut self,
+        reply: ReplyHandle<A>,
+        value: A,
+    ) -> Result<Yield<E>, Refused<A>> {
+        self.stepper.try_reply(reply, value)
     }
 
     /// Run the routine to its next wait without delivering anything: what it
@@ -229,9 +254,26 @@ impl<E> LocalDriver<E> {
     ///
     /// # Panics
     ///
-    /// If the handle was minted by another driver.
-    pub fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
+    /// As [`Driver::reply`].
+    pub fn reply<A: Answer>(&mut self, reply: ReplyHandle<A>, value: A) -> Yield<E> {
         self.stepper.reply(reply, value)
+    }
+
+    /// As [`Driver::try_reply`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Driver::try_reply`].
+    ///
+    /// # Panics
+    ///
+    /// If the handle was minted by another driver.
+    pub fn try_reply<A: Answer>(
+        &mut self,
+        reply: ReplyHandle<A>,
+        value: A,
+    ) -> Result<Yield<E>, Refused<A>> {
+        self.stepper.try_reply(reply, value)
     }
 
     /// As [`Driver::resume`].
@@ -356,6 +398,37 @@ impl<T> From<Yield<T>> for Vec<T> {
 impl<T> From<Yield<T>> for VecDeque<T> {
     fn from(yielded: Yield<T>) -> Self {
         yielded.effects.into()
+    }
+}
+
+/// A reply that does not decode as the answer its request awaits, refused
+/// before the routine could see it. The request stays open.
+#[derive(thiserror::Error)]
+#[error("reply to request {} refused: {error}", reply.id())]
+pub struct Refused<A> {
+    reply: ReplyHandle<A>,
+    error: DecodeError,
+}
+
+impl<A> Refused<A> {
+    /// Why the value was refused.
+    #[must_use]
+    pub const fn error(&self) -> &DecodeError {
+        &self.error
+    }
+
+    /// The handle, to reply through again, and why the value was refused.
+    pub const fn into_parts(self) -> (ReplyHandle<A>, DecodeError) {
+        (self.reply, self.error)
+    }
+}
+
+impl<A> core::fmt::Debug for Refused<A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Refused")
+            .field("reply", &self.reply)
+            .field("error", &self.error)
+            .finish()
     }
 }
 

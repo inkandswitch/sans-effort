@@ -11,19 +11,19 @@
 //!     boundary  driver  join
 //!     reply  select  step
 //!     testing                  sans-effort-core
-//!     console  ctx  request
+//!     ask  console  ctx
 //!     spawn  time              sans-effort-effects
 //!     host     (feature)       sans-effort-host
 //!     tokio    (feature)       sans-effort-tokio
 //! ```
 //!
-//! The core and the standard capabilities share one flat namespace: together
+//! The core and the standard effect traits share one flat namespace: together
 //! they are the vocabulary a routine is written in. A runtime or a binding kit
 //! is opted into, and keeps its own module.
 //!
 //! # Example
 //!
-//! A routine names only the capabilities it uses, as trait bounds:
+//! A routine names only the effect traits it uses, as trait bounds:
 //!
 //! ```
 //! use core::{ops::ControlFlow, time::Duration};
@@ -60,7 +60,7 @@
 //! - `critical-section`: `portable-atomic` over the application's
 //!   `critical-section`.
 //! - `host`: `host`, the machines and the handle table for a binding.
-//! - `tokio`: `tokio`, every standard capability as a tokio future; implies
+//! - `tokio`: `tokio`, every standard effect trait as a tokio future; implies
 //!   `std`.
 //!
 //! At least one of `std` and `spin` must be enabled somewhere in the build.
@@ -71,7 +71,7 @@
 pub use sans_effort_core::{boundary, driver, join, reply, select, step, testing};
 
 #[doc(inline)]
-pub use sans_effort_effects::{console, ctx, request, spawn, time};
+pub use sans_effort_effects::{ask, console, ctx, spawn, time};
 
 #[cfg(feature = "host")]
 #[doc(inline)]

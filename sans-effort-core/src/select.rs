@@ -18,7 +18,7 @@
 //! already be under way.
 //!
 //! Both are converted into futures when `select` starts, `a` first, so two
-//! [`Ask`](crate::driver::ask::Ask)s are recorded in argument order. `a` is
+//! [`Asking`](crate::driver::asking::Asking)s are recorded in argument order. `a` is
 //! polled first on every poll, so if both are ready at once, `a` wins. Put
 //! the branch that should win ties first.
 

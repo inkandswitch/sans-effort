@@ -1,6 +1,6 @@
-//! The demo routines, written against capability traits.
+//! The demo routines, written against effect traits.
 //!
-//! Three routines share five capability traits: `Sleep`, `ReadLine`, and
+//! Three routines share five effect traits: `Sleep`, `ReadLine`, and
 //! `WriteLine` from `sans-effort-effects`, the standard library, and the
 //! demo's own [`traits`], `Count` and `Lookup`. [`greeter::Greeter`] is the
 //! one every host in the exploration this library came from drove: prompt,
@@ -30,7 +30,7 @@
 //!        └── C = Recording  (tests)           ready at once; one poll
 //! ```
 //!
-//! The capability traits declare their futures `Send`, so every context is
+//! The effect traits declare their futures `Send`, so every context is
 //! `Sync` and a routine over one is `Send`: `tokio::spawn` accepts a
 //! `Greeter<TokioCtx>`, `Driver::new` a `Greeter<Ctx<E>>`, and `PingPong`,
 //! generic as it is, can `spawn` a child that may run on any thread. A

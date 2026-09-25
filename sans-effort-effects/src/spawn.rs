@@ -3,7 +3,7 @@
 //! A child runs as a machine of its own, beside its parent rather than
 //! inside it. Parent and child talk through whatever the parent hands the
 //! child when it spawns it — typically the ends of a channel. Channels are
-//! plain Rust; they are not a capability.
+//! plain Rust; they are not an effect trait.
 //!
 //! Spawning is fire-and-forget: it records the child, unstarted, and returns.
 //! Whoever runs the parent decides when and where the child runs. The closure
@@ -43,7 +43,7 @@
 //!
 //! [`spawn`](Spawn::spawn) starts a child that may move between threads
 //! after it starts — work-stealing under tokio — so its future must be
-//! `Send`. Every capability in this crate declares its futures `Send`, so a
+//! `Send`. Every effect trait in this crate declares its futures `Send`, so a
 //! routine generic over its context proves that with `C::Child: Send + Sync`
 //! (`Sync` because a routine's methods borrow it across `.await`s):
 //!
@@ -114,7 +114,7 @@ pub trait Spawn {
 /// A reifying context records the child for the host. The child's context is
 /// a [`Ctx`] of the same vocabulary, so a child can do no more than its
 /// parent: attenuation passes down by type. It is a plain `Ctx`, not the
-/// parent's context type, so capabilities an application reifies on a
+/// parent's context type, so effect traits an application reifies on a
 /// newtype of its own are the parent's alone.
 impl<C: AsCtx> Spawn for C
 where
@@ -132,7 +132,7 @@ where
     ) {
         let child =
             effect::Child::new(move |outbox| -> BoxedRoutine { Box::pin(f(Ctx::new(outbox))) });
-        self.ctx().notify(effect::Spawn(child));
+        self.ctx().tell(effect::Spawn(child));
     }
 
     fn spawn_pinned<
@@ -145,7 +145,7 @@ where
         let child = effect::PinnedChild::new(move |outbox| -> LocalBoxedRoutine {
             Box::pin(f(Ctx::new(outbox)))
         });
-        self.ctx().notify(effect::SpawnPinned(child));
+        self.ctx().tell(effect::SpawnPinned(child));
     }
 }
 

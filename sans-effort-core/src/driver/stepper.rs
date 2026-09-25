@@ -4,13 +4,14 @@
 //! is `Send`, so this is generic over the (unsized) future type.
 
 use super::{
-    Yield,
+    Refused, Yield,
+    mail::Delivery,
     outbox::Outbox,
     status::Status,
     sync::Arc,
     wake::{Hook, Wakeup},
 };
-use crate::reply::{Reply, handle::ReplyHandle};
+use crate::reply::{Answer, Reply, handle::ReplyHandle};
 use alloc::boxed::Box;
 use core::{
     future::Future,
@@ -43,12 +44,30 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
         self.wakeup.set_hook(hook);
     }
 
-    pub(super) fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
-        if self.outbox.deliver(reply, value.into_value()) {
-            self.poll()
-        } else {
-            Yield::default()
+    pub(super) fn try_reply<A: Answer>(
+        &mut self,
+        reply: ReplyHandle<A>,
+        value: A,
+    ) -> Result<Yield<E>, Refused<A>> {
+        match self.outbox.deliver(reply, value.into_wire().into_value()) {
+            Delivery::Delivered => Ok(self.poll()),
+            Delivery::Gone => Ok(Yield::default()),
+            Delivery::Refused(reply, error) => Err(Refused { reply, error }),
         }
+    }
+
+    #[expect(
+        clippy::panic,
+        reason = "an answer in Rust always encodes validly; a refusal means a handle retyped from a `Pending` was replied to with bad bytes — a host bug, reported like a handle from another driver"
+    )]
+    pub(super) fn reply<A: Answer>(&mut self, reply: ReplyHandle<A>, value: A) -> Yield<E> {
+        self.try_reply(reply, value).unwrap_or_else(|refused| {
+            panic!(
+                "reply to request {} refused: {}",
+                refused.reply.id(),
+                refused.error
+            )
+        })
     }
 
     pub(super) const fn status(&self) -> Status {

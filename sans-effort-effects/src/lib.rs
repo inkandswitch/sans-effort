@@ -1,4 +1,4 @@
-//! A standard library of capabilities for `sans-effort` routines.
+//! A standard library of effect traits for `sans-effort` routines.
 //!
 //! A routine names what it needs as traits; a context decides what each call
 //! does. Most routines want the same few things — to sleep, to read and write
@@ -12,8 +12,8 @@
 //! | [`console`] | [`ReadLine`](console::ReadLine), [`WriteLine`](console::WriteLine) |
 //! | [`spawn`]   | [`Spawn`](spawn::Spawn)   |
 //!
-//! Underneath them is [`request`]: [`Request`](request::Request) and
-//! [`Asked`](request::Asked), the pattern that lets one context serve any
+//! Underneath them is [`ask`]: [`Ask`](ask::Ask) and
+//! [`Asked`](ask::Asked), the pattern that lets one context serve any
 //! host's vocabulary. The mechanism itself only has `ask` and `tell`, where
 //! the caller names a variant of one concrete enum; this crate is the layer
 //! that makes contexts generic over the enum.
@@ -34,7 +34,7 @@
 //! use sans_effort_effects::{
 //!     console::{ReadLine, ReadLineError, WriteLine, effect},
 //!     ctx::Ctx,
-//!     request::Asked,
+//!     ask::Asked,
 //! };
 //! use core::ops::ControlFlow;
 //!
@@ -75,7 +75,7 @@
 //!         Effect::WriteLine(effect::WriteLine(line)) => written.push(line),
 //!         Effect::ReadLine(Asked { reply, .. }) => {
 //!             let line = input.next().unwrap_or(Err(ReadLineError::Closed));
-//!             queue.extend(driver.reply(reply, effect::ReadLine::reply(line)));
+//!             queue.extend(driver.reply(reply, line.map(String::from)));
 //!         }
 //!     }
 //! }
@@ -84,12 +84,12 @@
 //! assert_eq!(driver.status(), Status::Complete);
 //! ```
 //!
-//! An application's own capabilities implement their traits the same way,
-//! through [`Ctx::request`](ctx::Ctx::request) and
-//! [`Ctx::notify`](ctx::Ctx::notify). Every impl in this crate is
+//! An application implements its own effect traits the same way,
+//! through [`Ctx::ask`](ctx::Ctx::ask) and
+//! [`Ctx::tell`](ctx::Ctx::tell). Every impl in this crate is
 //! written over [`AsCtx`](ctx::AsCtx), which `Ctx<E>` implements: `Ctx<E>`
-//! has every capability, and `AsCtx` exists so a newtype over it can too —
-//! one method, and a crate can then reify a capability trait it does not
+//! has every effect trait, and `AsCtx` exists so a newtype over it can too —
+//! one method, and a crate can then reify an effect trait it does not
 //! own on its own newtype. Nothing else needs it.
 //!
 //! # Fallible Where the World Can Fail
@@ -97,15 +97,17 @@
 //! A trait returns `Result` exactly when its effect can fail for reasons
 //! outside the routine: input can end, so [`read_line`](console::ReadLine::read_line)
 //! is fallible; nothing a routine could act on makes a sleep fail, so
-//! [`sleep`](time::Sleep::sleep) is not. A fallible effect's reply crosses as
-//! `bytes`, encoded with `sans-effort-core`'s convention for `Result`.
+//! [`sleep`](time::Sleep::sleep) is not. A fallible effect's request names
+//! its real answer — `type Reply = Result<String, ReadLineError>` — which
+//! crosses as `bytes` in `sans-effort-core`'s encoding; bytes that do not
+//! decode as it are refused before the routine sees them.
 //!
 //! # Spelling
 //!
 //! Trait methods are `fn … -> impl Future<Output = T> + Send`, as
 //! `sans_effort_core::step::Step` spells `step` but with `Send`; implementors
 //! write `async fn`. Declaring `Send` is what lets a routine generic over its
-//! context prove a child it spawns is `Send`: otherwise each capability's
+//! context prove a child it spawns is `Send`: otherwise each effect trait's
 //! future is opaque, and nothing in generic code could say it may cross
 //! threads. The price is that a context's futures must be `Send`, so a
 //! context is `Sync`: one that holds a value tied to its thread — a
@@ -122,8 +124,8 @@
 
 extern crate alloc;
 
+pub mod ask;
 pub mod console;
 pub mod ctx;
-pub mod request;
 pub mod spawn;
 pub mod time;

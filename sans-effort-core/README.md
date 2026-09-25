@@ -3,7 +3,7 @@
 The mechanism under [`sans-effort`](https://crates.io/crates/sans-effort): the routine trait, the driver, and the boundary. It is small and slow to change, for the authors of runtimes and bindings.
 
 > [!NOTE]
-> Writing routines? Depend on `sans-effort` instead. It re-exports this crate's modules at the same paths (`sans_effort::driver`, `sans_effort::step`, …), along with the standard capabilities and, behind features, the tokio runtime and the host kit.
+> Writing routines? Depend on `sans-effort` instead. It re-exports this crate's modules at the same paths (`sans_effort::driver`, `sans_effort::step`, …), along with the standard effect traits and, behind features, the tokio runtime and the host kit.
 
 A routine is ordinary, direct-style Rust (`async fn`, `.await`, loops, `?`) that asks for traits, not effects. On an executor it is a plain future; behind a `Driver`, every wait becomes a typed effect a host answers by id. This crate is that mechanism. It is `no_std` + `alloc`.
 
@@ -27,7 +27,7 @@ A routine is ordinary, direct-style Rust (`async fn`, `.await`, loops, `?`) that
 | `step::Step` | The shape of a routine: `step` (one loop iteration) and `run` (until it breaks) |
 | `driver::Driver` | Turns a routine into something a host can drive: `resume()` to begin, then `reply(handle, value)` until finished. Each returns a `Yield`: the effects, and the ids of requests abandoned along the way |
 | `driver::outbox::Outbox` | What a reifying context writes into: `tell` an effect, or `ask` and await the reply |
-| `reply::{ReplyHandle<T>, Reply}` | The typed, single-use capability to answer one `ask` — unforgeable, infallible to reply through — and the sealed four-kind menu (`str`, `u64`, `unit`, `bytes`) it accepts |
+| `reply::{ReplyHandle<A>, Answer, Reply}` | The typed, single-use capability to answer one `ask` — unforgeable — with the `Answer` the routine waits for (`String`, `Result<String, ReadLineError>`, …), which crosses as one of the sealed four wire kinds (`str`, `u64`, `unit`, `bytes`); a wire value that does not decode as the answer is refused |
 | `join::join` | Two waits at once — the reason request ids exist |
 | `select::select` | The first of two waits; the other is abandoned, and its id is reported closed |
 | `boundary` | What an effect type implements to cross to a host that cannot hold a Rust value: `HostEffect` (handles → ids), `Encode` (the codec), `Pending` |
@@ -76,7 +76,7 @@ for effect in driver.resume() {
 }
 ```
 
-This context names the variants of one enum, so it serves one vocabulary. For a context generic over _any_ host's vocabulary — and a standard library of capabilities built on one — see `sans-effort-effects`. A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. An FFI host cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
+This context names the variants of one enum, so it serves one vocabulary. For a context generic over _any_ host's vocabulary — and a standard library of effect traits built on one — see `sans-effort-effects`. A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. An FFI host cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
 
 ## Features
 

@@ -83,7 +83,7 @@ Behind a host — each call records a request and suspends until the host replie
 ```rust
 // in sans-effort-effects, written once for every application:
 impl<E: From<Asked<effect::Sleep>>> Sleep for Ctx<E> {
-    async fn sleep(&self, d: Duration) { self.request(effect::Sleep(d)).await }
+    async fn sleep(&self, d: Duration) { self.ask(effect::Sleep(d)).await }
 }
 // …
 Driver::<Full>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());   // ok
@@ -134,12 +134,12 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 | Crate                                         | Purpose                                                                                                                                                                                          | Target             |
 |-----------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
 | [`sans-effort`](sans-effort/)                 | The one dependency for routine authors: re-exports `-core` and `-effects` in one flat namespace; `tokio` and `host` behind features                                                               |
-| [`sans-effort-core`](sans-effort-core/)       | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Request`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
-| [`sans-effort-effects`](sans-effort-effects/) | A standard library of capabilities: `time` (`Sleep`) and `console` (`ReadLine`, `WriteLine`) — the traits, their effects, and the reifying `Ctx<E>`, written once                                | `no_std` + `alloc` |
-| [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per capability — `TokioClock` (`Sleep`), `TokioInput` (`ReadLine`), `TokioOutput` (`WriteLine`) — and `TokioCtx` with all of them — real futures, no driver | `std`              |
+| [`sans-effort-core`](sans-effort-core/)       | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Answer`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
+| [`sans-effort-effects`](sans-effort-effects/) | A standard library of effect traits: `time` (`Sleep`) and `console` (`ReadLine`, `WriteLine`) — the traits, their effects, and the reifying `Ctx<E>`, written once                                | `no_std` + `alloc` |
+| [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per effect trait — `TokioClock` (`Sleep`), `TokioInput` (`ReadLine`), `TokioOutput` (`WriteLine`) — and `TokioCtx` with all of them — real futures, no driver | `std`              |
 | [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                                       | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                                                                                                              | —                  |
-| [`design/`](design/)                          | How it works and why: assumptions, the effects stdlib, channels, capabilities, cancellation                                                                                                        | —                  |
+| [`design/`](design/)                          | How it works and why: assumptions, the effects stdlib, channels, effect traits, cancellation                                                                                                        | —                  |
 | [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java         | —                  |
 
 ### Next

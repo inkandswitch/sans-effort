@@ -12,7 +12,7 @@ This document lists what `sans-effort` assumes about its environment. Things the
 > [!IMPORTANT]
 > _Assumption:_ the host performs effects faithfully and schedules fairly. It answers each request with a true reply, resumes or frees every child a routine spawns, keeps each pinned machine on the thread that started it, and resumes idle machines eventually.
 
-The host owns the table of machines, performs every effect, and decides when each machine runs, so it is trusted by construction — the same position as a vat in E. Nothing in the design protects routines from their host, and no object-capability system claims to. What the discipline does protect against is one routine exceeding its capabilities or its channel ends; see [`capabilities`](capabilities.md).
+The host owns the table of machines, performs every effect, and decides when each machine runs, so it is trusted by construction — the same position as a vat in E. Nothing in the design protects routines from their host, and no object-capability system claims to. What the discipline does protect against is one routine exceeding the effects its context grants or the channel ends it holds; see [`capabilities`](capabilities.md).
 
 _Consequence of violation:_ a routine can be told anything, or never run again; a machine that never resumes holds its messages forever.
 
@@ -68,7 +68,7 @@ _Consequence of violation:_ the host (and, under tokio, every task on that worke
 > [!IMPORTANT]
 > _Assumption (planned):_ routine crates are `unsafe_code = "forbid"`.
 
-A channel end is an object reference, and a capability is a trait on the context: safe code can use only what it was given. `unsafe` code can read any memory, including the ends other routines hold.
+A channel end is an object reference, and an effect is reached only through the context a routine was given: safe code can use only what it was given. `unsafe` code can read any memory, including the ends other routines hold.
 
 _Consequence of violation:_ every guarantee between routines is void. See [`capabilities`](capabilities.md) for the design that would cover untrusted guests.
 

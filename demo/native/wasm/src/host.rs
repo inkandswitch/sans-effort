@@ -1,4 +1,4 @@
-//! The JS object a caller supplies: the five capabilities as methods.
+//! The JS object a caller supplies: the five effect traits as methods.
 //!
 //! Declared, not defined — `wasm-bindgen` generates the glue to call whatever
 //! the caller passed. Each method may return its value directly or a

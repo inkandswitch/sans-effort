@@ -1,4 +1,4 @@
-//! The demo's own capabilities. `Count` and `Lookup` are specific to the
+//! The demo's own effect traits. `Count` and `Lookup` are specific to the
 //! greeter; `Sleep`, `ReadLine`, and `WriteLine` come from
 //! `sans-effort-effects`, the standard library, because nearly every routine
 //! wants them. One trait per verb, each one thing a routine can do to, or
@@ -23,7 +23,7 @@ pub mod effect;
 
 use alloc::string::String;
 use core::future::Future;
-use sans_effort::{ctx::AsCtx, request::Asked};
+use sans_effort::{ask::Asked, ctx::AsCtx};
 
 /// Count a greeting.
 pub trait Count {
@@ -42,7 +42,7 @@ where
     C::Vocabulary: From<Asked<effect::Count>> + Send,
 {
     async fn count(&self) -> u64 {
-        self.ctx().request(effect::Count).await
+        self.ctx().ask(effect::Count).await
     }
 }
 
@@ -51,6 +51,6 @@ where
     C::Vocabulary: From<Asked<effect::Lookup>> + Send,
 {
     async fn lookup(&self, name: String) -> String {
-        self.ctx().request(effect::Lookup(name)).await
+        self.ctx().ask(effect::Lookup(name)).await
     }
 }

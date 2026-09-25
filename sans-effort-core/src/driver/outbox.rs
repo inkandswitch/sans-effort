@@ -1,11 +1,11 @@
 //! Where a routine's context records what it wants the host to do.
 
 use super::{
-    ask::Ask,
-    mail::Mail,
+    asking::Asking,
+    mail::{Check, Delivery, Mail},
     sync::{Arc, Mutex},
 };
-use crate::reply::{Reply, handle::ReplyHandle, value::Value};
+use crate::reply::{Answer, handle::ReplyHandle, value::Value};
 use alloc::vec::Vec;
 
 /// The shared half of a [`Driver`](super::Driver): effects go in from the
@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 ///
 /// # Laziness
 ///
-/// `ask` records nothing until the returned [`Ask`] is awaited, exactly as a
+/// `ask` records nothing until the returned [`Asking`] is awaited, exactly as a
 /// native future does nothing until awaited. `let a = out.ask(..); drop(a)`
 /// sends nothing. This matters because the same routine also runs
 /// under a native context, where `tokio::time::sleep(d)` is lazy, and the
@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 /// so a context written this way serves one vocabulary. A context generic
 /// over _any_ vocabulary describes each wait as a request value instead, and
 /// states what the host must carry as a `From` bound; that pattern, and the
-/// capabilities built on it, are `sans-effort-effects`.
+/// effect traits built on it, are `sans-effort-effects`.
 pub struct Outbox<E> {
     /// Effects and mailbox behind one lock, not two: every operation touches
     /// one or both, and taking the guard once per operation is most of what a
@@ -61,12 +61,12 @@ impl<E> Outbox<E> {
         self.inner.lock().effects.push(effect);
     }
 
-    /// Ask for a `T`: an [`Ask`] that, when awaited, mints a
+    /// Asking for a `T`: an [`Asking`] that, when awaited, mints a
     /// [`ReplyHandle`], builds the effect around it with `make`, records it,
     /// and then yields the reply. Nothing happens until it is awaited — not
     /// even numbering.
-    pub fn ask<T: Reply, F: FnOnce(ReplyHandle<T>) -> E>(&self, make: F) -> Ask<E, T, F> {
-        Ask::new(make, self.clone())
+    pub fn ask<A: Answer, F: FnOnce(ReplyHandle<A>) -> E>(&self, make: F) -> Asking<E, A, F> {
+        Asking::new(make, self.clone())
     }
 
     // -- the driver's and the awaiting future's side ------------------------
@@ -78,9 +78,9 @@ impl<E> Outbox<E> {
 
     /// Recording a request: open its slot and record its effect, under one
     /// lock.
-    pub(super) fn open(&self, id: u64, effect: E) {
+    pub(super) fn open(&self, id: u64, effect: E, check: Check) {
         let mut inner = self.inner.lock();
-        inner.mail.open(id);
+        inner.mail.open(id, check);
         inner.effects.push(effect);
     }
 
@@ -95,7 +95,7 @@ impl<E> Outbox<E> {
     }
 
     /// The host replied. `false` if nothing awaits the handle any more.
-    pub(super) fn deliver<T>(&self, reply: ReplyHandle<T>, value: Value) -> bool {
+    pub(super) fn deliver<T>(&self, reply: ReplyHandle<T>, value: Value) -> Delivery<T> {
         self.inner.lock().mail.deliver(reply, value)
     }
 

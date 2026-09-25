@@ -3,7 +3,7 @@
 // The third runtime for the same routine, and the second *native* one: like
 // tokio, the JS event loop is an executor, so the routine runs as a task on
 // it and nothing here loops over effects. The host supplies five functions —
-// the routine's capabilities — and awaits one promise. Compare
+// the routine's effect traits — and awaits one promise. Compare
 // ../python/main.py, where Python cannot poll a Rust future and so drives the
 // routine step by step over the C ABI.
 //

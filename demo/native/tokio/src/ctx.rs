@@ -1,14 +1,14 @@
 //! The demo's native context: `sans-effort-tokio`'s `TokioCtx`, plus the
-//! demo's own capabilities.
+//! demo's own effect traits.
 //!
 //! `TokioCtx` already serves `Sleep`, `ReadLine`, `WriteLine`, and `Spawn`
 //! with tokio futures and tasks. `Count` and `Lookup` are the demo's, and the
 //! orphan rule allows `impl Count for TokioCtx` in neither this crate nor any
 //! other that owns only one side — so they go on a type this crate owns,
-//! which forwards the stdlib capabilities to the `TokioCtx` inside it, one
+//! which forwards the stdlib effect traits to the `TokioCtx` inside it, one
 //! line each.
 //!
-//! Compare `greeter_boundary`'s vocabularies: there each capability records
+//! Compare `greeter_boundary`'s vocabularies: there each effect trait records
 //! an effect and suspends until a host replies. Here each one is a real
 //! future, and the routine is the task.
 
@@ -38,7 +38,7 @@ pub(crate) struct DemoCtx<R, W> {
 }
 
 impl<R, W> DemoCtx<R, W> {
-    /// The demo's capabilities on top of `tokio`.
+    /// The demo's effect traits on top of `tokio`.
     pub(crate) fn new(tokio: TokioCtx<R, W>) -> Self {
         Self {
             tokio,

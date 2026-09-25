@@ -7,12 +7,12 @@
 
 ```text
   the trait                     trait Sleep { async fn sleep(&self, d: Duration); }
-  the request + reifying impl   struct Sleep(Duration): Request
+  the request + reifying impl   struct Sleep(Duration): Ask
                                 impl<E: From<Asked<Sleep>>> Sleep for Ctx<E>
   the native impl               impl Sleep for TokioCtx
 ```
 
-The demo already holds all three rows for five capabilities, filed under `demo/`. Only two of them (`Count`, `Lookup`) are specific to the demo. This document is about moving the rest out, so they are written once.
+The demo already holds all three rows for five effect traits, filed under `demo/`. Only two of them (`Count`, `Lookup`) are specific to the demo. This document is about moving the rest out, so they are written once.
 
 ## Layout
 
@@ -22,7 +22,7 @@ The shape is `embedded-hal`'s: one crate of traits, implementations in separate 
 |-----------------------|--------------------------------------------------------------------------------------------------------|----------|
 | `sans-effort-core`    | The mechanism, unchanged, plus `Decode` and `select`                                                    | `no_std` |
 | `sans-effort-effects` | Per module: the trait, its effect structs (`effect::…`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
-| `sans-effort-tokio`   | One component per capability — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, `Spawn`           | `std`    |
+| `sans-effort-tokio`   | One component per effect trait — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, `Spawn`           | `std`    |
 
 Modules in `sans-effort-effects`:
 
@@ -30,7 +30,7 @@ Modules in `sans-effort-effects`:
 |-----------|-----------------------------------------------|
 | `time`    | `Sleep`                                       |
 | `console` | `ReadLine`, `WriteLine`                       |
-| `spawn`   | `Spawn` (`spawn`, `spawn_pinned`) — see [`channels`](channels.md). Channels themselves are plain Rust, not a capability |
+| `spawn`   | `Spawn` (`spawn`, `spawn_pinned`) — see [`channels`](channels.md). Channels themselves are plain Rust, not an effect trait |
 
 The vocabulary enum and its tags stay the application's. A host decides what it offers; the stdlib only makes the offer cheap to write.
 
@@ -41,7 +41,7 @@ The vocabulary enum and its tags stay the application's. A host decides what it 
 ```rust
 impl<E: From<Asked<time::effect::Sleep>>> time::Sleep for Ctx<E> {
     async fn sleep(&self, d: Duration) {
-        self.request(time::effect::Sleep(d)).await;
+        self.ask(time::effect::Sleep(d)).await;
     }
 }
 ```
@@ -53,15 +53,15 @@ enum Full {
     Sleep(Asked<time::effect::Sleep>),
     ReadLine(Asked<console::effect::ReadLine>),
     WriteLine(console::effect::WriteLine),
-    Lookup(Asked<effect::Lookup>),  // the application's own capability
+    Lookup(Asked<effect::Lookup>),  // the application's own effect trait
 }
 ```
 
 Each module names its effect structs in an `effect` submodule: `time::Sleep` is the trait, `time::effect::Sleep` what it records.
 
-### Application Capabilities Live with Their Traits
+### An Application's Own Effect Traits
 
-An application's own capabilities implement their traits the same way, through `Ctx::request` and `Ctx::notify` — enough to add a capability without handing out the outbox. The orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`, so the impl lives with the trait: an application lays out its capabilities the way the stdlib lays out a module — trait, effect, and reifying impl together — and its vocabulary crate holds only the vocabularies. In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
+An application implements its own effect traits the same way, through `Ctx::ask` and `Ctx::tell` — enough to add an effect trait without handing out the outbox. The orphan rule allows `impl Lookup for Ctx<E>` only in the crate that defines `Lookup` or the one that defines `Ctx`, so the impl lives with the trait: an application lays out its effect traits the way the stdlib lays out a module — trait, effect, and reifying impl together — and its vocabulary crate holds only the vocabularies. In the demo, `routines::traits` holds `Count` and `Lookup` with their effects and impls; the routines themselves still use only the traits.
 
 ### `AsCtx`: Newtypes over `Ctx`
 
@@ -73,13 +73,13 @@ pub trait AsCtx { type Vocabulary; fn ctx(&self) -> &Ctx<Self::Vocabulary>; }
 impl<C: AsCtx> Sleep for C where C::Vocabulary: From<Asked<time::effect::Sleep>> { … }
 ```
 
-`Ctx<E>` implements `AsCtx`, and so do references, `Box`, `Rc`, and `Arc` to anything that does. A newtype over `Ctx` implements it with one method and gets every capability — which is how a crate reifies a capability trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Without `AsCtx`, that newtype would have to forward every stdlib trait by hand.
+`Ctx<E>` implements `AsCtx`, and so do references, `Box`, `Rc`, and `Arc` to anything that does. A newtype over `Ctx` implements it with one method and gets every effect trait — which is how a crate reifies an effect trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Without `AsCtx`, that newtype would have to forward every stdlib trait by hand.
 
-It is opt-in. Routines name capabilities; `Ctx<E>` already implements `AsCtx`; native contexts implement capabilities directly and are unaffected. The price: a type that implements `AsCtx` cannot also implement a stdlib capability by hand, and the stdlib cannot add blanket forwarding impls for `&T` or `Box<T>` on its traits — those would overlap. Forwarding through `AsCtx` for references and smart pointers covers the same ground for reifying contexts.
+It is opt-in. Routines name effect traits; `Ctx<E>` already implements `AsCtx`; native contexts implement effect traits directly and are unaffected. The price: a type that implements `AsCtx` cannot also implement a stdlib effect trait by hand, and the stdlib cannot add blanket forwarding impls for `&T` or `Box<T>` on its traits — those would overlap. Forwarding through `AsCtx` for references and smart pointers covers the same ground for reifying contexts.
 
 ### Native Contexts Forward
 
-The native side has no equivalent of `AsCtx`. Blanket impls of the stdlib's traits can only live in the stdlib crate, and the stdlib's blanket is already over `AsCtx`. So a native context that needs capabilities of its own — the demo's `Count` and `Lookup` on tokio — is a type the application owns, wrapping `TokioCtx` and forwarding the stdlib capabilities in one line each:
+The native side has no equivalent of `AsCtx`. Blanket impls of the stdlib's traits can only live in the stdlib crate, and the stdlib's blanket is already over `AsCtx`. So a native context that needs effect traits of its own — the demo's `Count` and `Lookup` on tokio — is a type the application owns, wrapping `TokioCtx` and forwarding the stdlib effect traits in one line each:
 
 ```rust
 struct DemoCtx<R, W> { tokio: TokioCtx<R, W>, greeted: AtomicU64 }
@@ -90,7 +90,7 @@ impl<R, W> Sleep for DemoCtx<R, W> {
 // … ReadLine, WriteLine likewise; Count and Lookup directly.
 ```
 
-`sans-effort-tokio` offers one component per capability (`TokioClock`, `TokioInput`, `TokioOutput`) as well as the assembled `TokioCtx`, so a context can take just what it needs — a clock and output for a routine that never reads, or a paused clock with an in-memory output in a test. References and smart pointers do not forward capabilities for native contexts (that forwarding goes through `AsCtx`), so a routine owns its native context; a test that wants the output back shares the _writer_, not the context. If forwarding grows painful as the stdlib grows, a forwarding macro or `#[capability]`-style generation is the next step.
+`sans-effort-tokio` offers one component per effect trait (`TokioClock`, `TokioInput`, `TokioOutput`) as well as the assembled `TokioCtx`, so a context can take just what it needs — a clock and output for a routine that never reads, or a paused clock with an in-memory output in a test. References and smart pointers do not forward effect traits for native contexts (that forwarding goes through `AsCtx`), so a routine owns its native context; a test that wants the output back shares the _writer_, not the context. If forwarding grows painful as the stdlib grows, a forwarding macro is the next step.
 
 ## Why a Crate, and Not a Feature
 
@@ -100,9 +100,13 @@ The traits are small, `no_std`, and have no dependencies, so the usual reason fo
 - _The mechanism stays opinion-free._ "The library is the mechanism" remains literally true of `sans-effort-core`, and this stdlib sits on the same footing as anyone else's.
 - _The tokio crate must be separate anyway._ A `tokio` feature on the `no_std` crate would, by feature unification, pull `std` into every crate in a workspace that enables it — including `thumbv6m` builds.
 
-## Why "effects", and Not "caps"
+## Why "Effect Traits", and Not "Capabilities"
 
-"Caps" reads as _object capabilities_. The design is object-capability-shaped, but the name would promise more than bytes on a wire can deliver (see [`capabilities`](capabilities.md)). The crate holds effect definitions — the request structs — as well as the traits, so "effects" is accurate. "Capabilities style" stays the name of the _style_.
+A trait like `Sleep` is an _effect trait_: a trait whose calls become effects. It corresponds to an effect signature in the algebraic-effects literature, and a routine's bounds (`C: Sleep + ReadLine`) are its effect row. The effect itself is the value a call records: `effect::Sleep(50ms)`.
+
+"Capability" is kept for what object-capability discipline means by it: something _held_, which confers authority. The context value is the capability through which a routine uses its effect traits; a reply handle and a channel end are capabilities too. A trait is not held — it is the interface to an authority. This is the split drawn by "effects as capabilities" (Effekt): the effect is the interface, the capability the value that grants it. See [`capabilities`](capabilities.md).
+
+The crate holds the effects — the request structs — as well as the traits, so "effects" names it accurately.
 
 ## `Decode`
 
@@ -118,14 +122,14 @@ It returns `Result` rather than `Option`: parse, don't validate. `Reader`'s prim
 
 ### When the Four Reply Kinds Are Not Enough
 
-`ABI.md` already says "a richer reply crosses as `bytes` and is decoded on the routine's side". `Decode` gives that a type. It is needed for:
+A richer reply crosses as `bytes` and is decoded on the routine's side. `Decode` gives that a type, and `Answer` ties it to the request: `impl Ask for ReadLine { type Reply = Result<String, ReadLineError>; }` names the real answer, which crosses as `bytes`; the host layer refuses bytes that do not decode as it, so the routine only ever sees the answer. It is needed for:
 
 - _Structured replies to ordinary requests._ `Stat(path) → Metadata`, `HttpGet(url) → Response`, `Lookup(name) → Option<String>` — there is no reply kind for "absent".
 - _Fallible effects._ Every effect so far is infallible from the routine's side. Real ones fail: a missing file, a reset connection. The honest signature is `async fn read(&self, path) -> Result<Vec<u8>, IoError>`, and a `Result` can only cross as `bytes`.
 
 ## Where This Sits
 
-The capabilities style is the _tagless-final_ style with the representation fixed to `impl Future`. The traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one — it recovers the initial, tagged encoding (the vocabulary enum). A smaller vocabulary is a smaller algebra. This is why the effects style (a routine emitting a tagged enum) and the capabilities style share one mechanism: initial and final encodings convert into each other.
+The effect-trait style is the _tagless-final_ style with the representation fixed to `impl Future`. The traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one — it recovers the initial, tagged encoding (the vocabulary enum). A smaller vocabulary is a smaller algebra. This is why the tagged style (a routine emitting an enum of effects) and the effect-trait style share one mechanism: initial and final encodings convert into each other.
 
 ## Fallible Where the World Can Fail
 

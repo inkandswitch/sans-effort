@@ -69,7 +69,7 @@
 //!
 //! # `Send`
 //!
-//! Capability futures must be `Send`, and a `JsValue` is not, so
+//! Effect trait futures must be `Send`, and a `JsValue` is not, so
 //! [`ctx::JsCtx`] holds none: it talks over a channel to a dispatcher task
 //! that owns the host object. `Greeter<JsCtx>::run()` is then `Send`, like
 //! the same routine under `TokioCtx` — though nothing here needs it to be:

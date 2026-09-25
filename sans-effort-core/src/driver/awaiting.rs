@@ -1,7 +1,7 @@
 //! A recorded request, waiting for its reply.
 
 use super::outbox::Outbox;
-use crate::reply::Reply;
+use crate::reply::{Answer, Reply};
 use core::{
     future::Future,
     marker::PhantomData,
@@ -9,7 +9,7 @@ use core::{
     task::{Context, Poll},
 };
 
-/// A request that has been recorded: the future an [`Ask`](super::ask::Ask)
+/// A request that has been recorded: the future an [`Asking`](super::asking::Asking)
 /// becomes. It resolves once the host has replied.
 ///
 /// It always has an id — there is no way to build one without — so an id,
@@ -37,14 +37,17 @@ impl<E, T> Awaiting<E, T> {
     }
 }
 
-impl<E, T: Reply> Future for Awaiting<E, T> {
-    type Output = T;
+impl<E, A: Answer> Future for Awaiting<E, A> {
+    type Output = A;
 
-    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<T> {
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<A> {
         match self.outbox.collect(self.id) {
             Some(value) => {
-                Poll::Ready(T::from_value(value).unwrap_or_else(|| {
-                    unreachable!("a ReplyHandle<T> is only minted for a T slot")
+                let wire = A::Wire::from_value(value).unwrap_or_else(|| {
+                    unreachable!("a ReplyHandle is only minted for a slot of its kind")
+                });
+                Poll::Ready(A::from_wire(wire).unwrap_or_else(|_| {
+                    unreachable!("a reply is checked against its answer when delivered")
                 }))
             }
             None => Poll::Pending,

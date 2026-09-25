@@ -7,7 +7,7 @@ Routines that send each other messages and spawn new routines, on different thre
 
 ## Channels Are Plain Rust
 
-A channel is in-process synchronisation, not I/O. So routines use ordinary Rust channels — any primitive built on wakers works: `mpsc`, `oneshot`, `watch`, async mutexes, semaphores. They are not a capability and not an effect, and the library recommends no crate. The demo uses `async-channel`.
+A channel is in-process synchronisation, not I/O. So routines use ordinary Rust channels — any primitive built on wakers works: `mpsc`, `oneshot`, `watch`, async mutexes, semaphores. They are not an effect trait and not an effect, and the library recommends no crate. The demo uses `async-channel`.
 
 ```rust
 let (tx, rx) = async_channel::unbounded::<Ping>();
@@ -54,7 +54,7 @@ The driver's waker records the wake instead. The host crate turns it into a fram
 
 ## Spawning
 
-`Spawn` is a capability with two methods:
+`Spawn` is an effect trait with two methods:
 
 ```rust
 pub trait Spawn {
@@ -70,8 +70,8 @@ pub trait Spawn {
 }
 ```
 
-- `spawn` starts a child that may move between threads after it starts. Its future must be `Send`. Every capability declares its futures `Send`, so a routine generic over its context can prove it: `C::Child: Send + Sync`. The price is that every context is `Sync`; one over a value tied to its thread — a `JsValue` — keeps it behind a dispatcher task and talks to it over a channel.
-- `spawn_pinned` starts a child that stays on the thread that starts it. Only the closure must be `Send` — its future need not be — so the child may hold an `Rc` or a foreign handle across an `.await`.
+- `spawn` starts a child that may move between threads after it starts. Its future must be `Send`. Every effect trait declares its futures `Send`, so a routine generic over its context can prove it: `C::Child: Send + Sync`. The price is that every context is `Sync`; one over a value tied to its thread — a `JsValue` — keeps it behind a dispatcher task and talks to it over a channel.
+- `spawn_pinned` starts a child that stays on the thread that first resumes it. Only the closure must be `Send` — its future need not be — so the child may hold an `Rc` or a foreign handle across an `.await`.
 
 Two methods, because even a multithreaded application sometimes holds data that is not `Send` — an `Rc`, a foreign handle. `spawn_pinned` gives those children a home while the rest move freely, in one build.
 
@@ -88,7 +88,7 @@ Full::SpawnPinned(effect::SpawnPinned(child)) =>
     (View::SpawnedPinned { handle: table::park_pinned(move |outbox| child.start(outbox)) }, None),
 ```
 
-The host sees `Spawned { 9 }` or `SpawnedPinned { 9 }` and starts machine 9. None of the child crosses the FFI boundary — only its handle does. Core does not know which effect means "spawn", so a vocabulary may choose differently: its own statics, a test router's `Vec`, or no spawn variant at all, which grants no spawning.
+The host sees `Spawned { 9 }` or `SpawnedPinned { 9 }` and resumes machine 9 to begin it. None of the child crosses the FFI boundary — only its handle does. Core does not know which effect means "spawn", so a vocabulary may choose differently: its own statics, a test router's `Vec`, or no spawn variant at all, which grants no spawning.
 
 > [!IMPORTANT]
 > Under the reifying context, the child's context is `Ctx<E>` for the parent's own vocabulary `E`, so a parent limited to `Quiet` cannot spawn a child with `Full` and escape its own limits. The type enforces this.
@@ -133,7 +133,7 @@ The losing branch is dropped. If it was the sleep, its request is reported close
 
 ## What This Gives Up
 
-Messages never pass through the host, so the host cannot see their contents: no logging, quotas, or policy on messages, and they cannot leave the process. Host-routed channels — the host keeping a queue per channel and routing every message — would restore that, at the cost of wire handles, a handle codec, and a queue per channel in every host. They can be added later alongside plain channels; a channel capability that routines ask their context for would let them switch without a rewrite.
+Messages never pass through the host, so the host cannot see their contents: no logging, quotas, or policy on messages, and they cannot leave the process. Host-routed channels — the host keeping a queue per channel and routing every message — would restore that, at the cost of wire handles, a handle codec, and a queue per channel in every host. They can be added later alongside plain channels; a channel effect trait that routines ask their context for would let them switch without a rewrite.
 
 ## Demos
 

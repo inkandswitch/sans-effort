@@ -1,6 +1,6 @@
 //! What [`Sleep`](super::Sleep) records under a reifying context.
 
-use crate::request::Request;
+use crate::ask::Ask;
 use core::time::Duration;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
@@ -17,7 +17,7 @@ impl Sleep {
     }
 }
 
-impl Request for Sleep {
+impl Ask for Sleep {
     type Reply = ();
 }
 

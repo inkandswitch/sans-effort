@@ -1,6 +1,6 @@
 # demo
 
-The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five capability traits, then run four ways that must agree byte for byte; and two routines that spawn children and talk to them over plain channels. Four of the traits (`Sleep`, `ReadLine`, `WriteLine`, `Spawn`) and the reifying context `Ctx<E>` come from `sans-effort-effects`; two (`Count`, `Lookup`) are the demo's own.
+The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five effect traits, then run four ways that must agree byte for byte; and two routines that spawn children and talk to them over plain channels. Four of the traits (`Sleep`, `ReadLine`, `WriteLine`, `Spawn`) and the reifying context `Ctx<E>` come from `sans-effort-effects`; two (`Count`, `Lookup`) are the demo's own.
 
 ```text
   routines/        shared by both paths. The routines, one per module: greeter (the
@@ -9,9 +9,9 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    async-channels), front_desk (spawns a pinned clerk per name; each
                    replies on a one-shot channel), ring (16 routines pass a counter
                    4000 hops; the cost of a hop). no_std.
-                   traits.rs: the demo's own capabilities, Count and Lookup, each with
-                   its effect and its Ctx impl beside it (the orphan rule puts them
-                   there). The routines themselves use only traits.
+                   traits.rs: the demo's own effect traits, Count and Lookup, each
+                   with its effect and its Ctx impl beside it (the orphan rule puts
+                   them there). The routines themselves use only traits.
                    Tests: a Recording mock + testing::run_now — no driver, one poll.
 
   native/          the routine runs as an ordinary task on an executor. No Driver.
@@ -26,8 +26,8 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    generated.
 
   driven/          the routine runs behind a Driver; a foreign host replies by id.
-    boundary/      the host vocabularies. Full carries all five capabilities' effects
-                   and, with the default `table` feature, spawning (tags 6 and 7:
+    boundary/      the host vocabularies. Full carries the effects of all five effect
+                   traits and, with the default `table` feature, spawning (tags 6 and 7:
                    split registers the child in sans-effort-host's table); Quiet only
                    Sleep + WriteLine. View/HostEffect/Encode: the tag table.
                    Tests: through a Driver, as data; Greeter under Quiet is a

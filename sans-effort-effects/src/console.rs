@@ -2,7 +2,7 @@
 
 pub mod effect;
 
-use crate::{ctx::AsCtx, request::Asked};
+use crate::{ask::Asked, ctx::AsCtx};
 use alloc::string::String;
 use core::future::Future;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
@@ -31,8 +31,7 @@ where
     /// A reply that does not decode is a host bug the routine cannot report,
     /// so it reads as [`ReadLineError::Failed`].
     async fn read_line(&self) -> Result<String, ReadLineError> {
-        let bytes = self.ctx().request(effect::ReadLine).await;
-        Result::<String, ReadLineError>::from_bytes(&bytes).unwrap_or(Err(ReadLineError::Failed))
+        self.ctx().ask(effect::ReadLine).await
     }
 }
 
@@ -41,7 +40,7 @@ where
     C::Vocabulary: From<effect::WriteLine>,
 {
     fn write_line(&self, line: String) {
-        self.ctx().notify(effect::WriteLine(line));
+        self.ctx().tell(effect::WriteLine(line));
     }
 }
 
@@ -80,7 +79,11 @@ impl Decode for ReadLineError {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
+    #![expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests assert their preconditions; let-else arms name the outcome they expected"
+    )]
 
     use super::*;
     use crate::ctx::Ctx;
@@ -88,6 +91,7 @@ mod tests {
     use core::ops::ControlFlow;
     use sans_effort_core::{
         driver::{Driver, status::Status},
+        reply::{Answer, Reply},
         step::Step,
     };
 
@@ -123,7 +127,7 @@ mod tests {
     }
 
     /// What the routine wrote when the host answered its one read with `reply`.
-    fn written(reply: Vec<u8>) -> String {
+    fn written(reply: Result<String, ReadLineError>) -> String {
         let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
         let Some(Effect::ReadLine(Asked { reply: handle, .. })) =
             driver.resume().into_iter().next()
@@ -144,28 +148,45 @@ mod tests {
 
     #[test]
     fn a_line_a_closed_input_and_a_failure_arrive_as_themselves() {
-        assert_eq!(written(effect::ReadLine::reply(Ok("hi"))), "hi");
-        assert_eq!(
-            written(effect::ReadLine::reply(Err(ReadLineError::Closed))),
-            "input closed"
-        );
-        assert_eq!(
-            written(effect::ReadLine::reply(Err(ReadLineError::Failed))),
-            "input failed"
-        );
+        assert_eq!(written(Ok("hi".into())), "hi");
+        assert_eq!(written(Err(ReadLineError::Closed)), "input closed");
+        assert_eq!(written(Err(ReadLineError::Failed)), "input failed");
     }
 
+    /// A host replying over an ABI holds the wire kind, `bytes`. Bytes that
+    /// are not an encoded `Result<String, ReadLineError>` never reach the
+    /// routine: the reply is refused, the handle comes back, and the request
+    /// stays open for a good reply.
     #[test]
-    fn a_reply_that_does_not_decode_is_a_failure() {
-        assert_eq!(written(alloc::vec![7]), "input failed");
-    }
+    fn bytes_that_do_not_decode_are_refused_and_the_request_stays_open() {
+        let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
+        let Some(Effect::ReadLine(Asked { reply, .. })) = driver.resume().into_iter().next() else {
+            unreachable!("the routine reads first");
+        };
+        let Ok(wire) = Vec::<u8>::from_pending(Answer::pending(reply)) else {
+            unreachable!("a fallible read crosses as bytes");
+        };
 
-    #[test]
-    fn the_reply_helper_matches_an_owned_result() {
-        assert_eq!(
-            effect::ReadLine::reply(Ok("hi")),
-            Ok::<String, ReadLineError>("hi".into()).to_bytes()
-        );
+        let Err(refused) = driver.try_reply(wire, alloc::vec![7]) else {
+            panic!("7 is not an encoded result");
+        };
+        let (wire, _) = refused.into_parts();
+        assert_eq!(driver.status(), Status::Awaiting, "still waiting");
+
+        let Ok(written) =
+            driver.try_reply(wire, Ok::<String, ReadLineError>("hi".into()).to_bytes())
+        else {
+            panic!("a good reply is accepted");
+        };
+        let lines: Vec<String> = written
+            .into_iter()
+            .filter_map(|e| match e {
+                Effect::WriteLine(effect::WriteLine(line)) => Some(line),
+                Effect::ReadLine(_) => None,
+            })
+            .collect();
+        assert_eq!(lines, ["hi"]);
+        assert_eq!(driver.status(), Status::Complete);
     }
 
     #[test]

@@ -11,7 +11,10 @@
 //! lives in the host layer, where an untyped id arrives.
 
 use super::sync::AtomicU64;
-use crate::reply::{handle::ReplyHandle, value::Value};
+use crate::{
+    boundary::codec::DecodeError,
+    reply::{handle::ReplyHandle, value::Value},
+};
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
@@ -32,6 +35,23 @@ pub(super) struct Mail {
 struct Slot {
     id: u64,
     value: Option<Value>,
+    check: Check,
+}
+
+/// Whether a value is a valid answer for a slot: fixed when the request is
+/// minted, run before any reply is accepted.
+pub(super) type Check = fn(&Value) -> Result<(), DecodeError>;
+
+/// What became of a reply.
+pub(super) enum Delivery<T> {
+    /// Stored for the routine to collect.
+    Delivered,
+
+    /// The routine no longer waits for it; discarded.
+    Gone,
+
+    /// Not a valid answer; refused, and the handle given back.
+    Refused(ReplyHandle<T>, DecodeError),
 }
 
 impl Mail {
@@ -52,8 +72,12 @@ impl Mail {
         ReplyHandle::mint(self.driver, id)
     }
 
-    pub(super) fn open(&mut self, id: u64) {
-        self.slots.push(Slot { id, value: None });
+    pub(super) fn open(&mut self, id: u64, check: Check) {
+        self.slots.push(Slot {
+            id,
+            value: None,
+            check,
+        });
     }
 
     fn position(&self, id: u64) -> Option<usize> {
@@ -66,7 +90,7 @@ impl Mail {
     /// # Panics
     ///
     /// If the handle was minted by another driver.
-    pub(super) fn deliver<T>(&mut self, reply: ReplyHandle<T>, value: Value) -> bool {
+    pub(super) fn deliver<T>(&mut self, reply: ReplyHandle<T>, value: Value) -> Delivery<T> {
         let (driver, id) = reply.into_parts();
         assert_eq!(
             driver, self.driver,
@@ -75,11 +99,14 @@ impl Mail {
         );
 
         match self.position(id).and_then(|at| self.slots.get_mut(at)) {
-            Some(slot) => {
-                slot.value = Some(value);
-                true
-            }
-            None => false,
+            Some(slot) => match (slot.check)(&value) {
+                Ok(()) => {
+                    slot.value = Some(value);
+                    Delivery::Delivered
+                }
+                Err(error) => Delivery::Refused(ReplyHandle::mint(driver, id), error),
+            },
+            None => Delivery::Gone,
         }
     }
 

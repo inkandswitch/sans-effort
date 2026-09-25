@@ -2,7 +2,7 @@
 
 pub mod effect;
 
-use crate::{ctx::AsCtx, request::Asked};
+use crate::{ask::Asked, ctx::AsCtx};
 use core::{future::Future, time::Duration};
 
 /// Wait for a duration.
@@ -19,6 +19,6 @@ where
     C::Vocabulary: From<Asked<effect::Sleep>> + Send,
 {
     async fn sleep(&self, duration: Duration) {
-        self.ctx().request(effect::Sleep(duration)).await;
+        self.ctx().ask(effect::Sleep(duration)).await;
     }
 }

@@ -78,7 +78,7 @@ pub fn run_now<F: Future>(future: F) -> F::Output {
 /// Turn `future` into a future, poll it exactly once, and hand it back,
 /// whatever the poll returned.
 ///
-/// Under a driver, turning an [`Ask`](crate::driver::ask::Ask) into a future
+/// Under a driver, turning an [`Asking`](crate::driver::asking::Asking) into a future
 /// records its effect; this is how a test makes a request record itself and
 /// then abandons it, the way the losing branch of a
 /// [`select`](crate::select::select) is abandoned.

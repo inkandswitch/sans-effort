@@ -1,10 +1,10 @@
-//! A mock of all five capabilities, for the routines' tests.
+//! A mock of all five effect traits, for the routines' tests.
 //!
-//! The capabilities test story: a mock implements the traits, every future
+//! The routines' test story: a mock implements the traits, every future
 //! is ready at once, and one poll runs the routine to completion. No driver,
 //! no runtime, no vocabulary — and what the mock recorded is the assertion.
 //!
-//! The capability traits declare their futures `Send`, and each future
+//! The effect traits declare their futures `Send`, and each future
 //! borrows the context, so the mock is `Sync`: an `Arc`, locks, and an
 //! atomic, though every test runs it on one thread.
 

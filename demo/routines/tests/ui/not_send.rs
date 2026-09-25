@@ -1,5 +1,5 @@
-//! An `Rc`-based context cannot implement a capability: the future `sleep`
-//! returns borrows it, and a capability's future must be `Send`.
+//! An `Rc`-based context cannot implement an effect trait: the future `sleep`
+//! returns borrows it, and an effect trait's future must be `Send`.
 
 use core::{cell::Cell, time::Duration};
 use sans_effort::time::Sleep;

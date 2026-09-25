@@ -1,11 +1,11 @@
 [package]
 name = "sans-effort-tokio"
 version = "0.1.0"
-description = "Native tokio contexts for sans-effort routines: every capability in sans-effort-effects as a real future, no driver"
+description = "Native tokio contexts for sans-effort routines: every effect trait in sans-effort-effects as a real future, no driver"
 readme = "README.md"
 
 categories = ["asynchronous"]
-keywords = ["async", "capabilities", "effects", "sans-io", "tokio"]
+keywords = ["async", "effect-traits", "effects", "sans-io", "tokio"]
 
 authors.workspace = true
 edition.workspace = true

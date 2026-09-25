@@ -6,7 +6,7 @@
 The claim this design makes:
 
 > [!IMPORTANT]
-> Given an honest host and safe-Rust routines, a routine can use only the capabilities its context provides, and can reach another routine only through a channel end it created or was given.
+> Given an honest host and safe-Rust routines, a routine can perform only the effects its context grants, and can reach another routine only through a channel end it created or was given.
 
 In short: _object capabilities within a process, given an honest host._
 
@@ -30,8 +30,10 @@ The host — a Python loop, a Java loop, tokio, a test harness — is the vat. I
 
 | Authority | Held as | Granted by | Attenuated by |
 |-----------|---------|------------|---------------|
-| Asking the world for something: time, input, a lookup | a capability trait on the context | the host, by the vocabulary it offers | trait: a routine whose context lacks `Lookup` does not compile |
+| Asking the world for something: time, input, a lookup | the context, through the effect traits it implements | the host, by the vocabulary it offers | trait: a routine whose context lacks `Lookup` does not compile |
 | Reaching another routine | a channel end | whoever created the channel | reference: a routine can send only on the senders it holds |
+
+The context is the capability; an effect trait is the interface to part of its authority, not a capability itself. That is the split drawn by "effects as capabilities" (Effekt): the effect is the interface, the capability is the value that grants it.
 
 `ReplyHandle<T>` is a capability in the full sense today: unforgeable, single-use, and bound to the driver that minted it.
 
@@ -66,7 +68,7 @@ Given an honest host and routines in safe Rust:
 | Send anything of the right type on a sender it holds             | holding it is the authority                                |
 | Pass a channel end it holds to another routine                   | delegation is allowed                                      |
 | Spawn children, with at most its own vocabulary                  | the child's context has the parent's vocabulary            |
-| Create channels                                                  | channels are plain Rust, not a capability                  |
+| Create channels                                                  | channels are plain Rust, not an effect                     |
 | Exhaust memory with messages                                     | messages live in Rust memory the host does not see — see below |
 | Spawn many children                                              | the host can count, rate-limit, and refuse spawns — policy, not capability |
 
@@ -74,7 +76,7 @@ Given an honest host and routines in safe Rust:
 |------------------------------------------------------------------|------------------------------------------------------------|
 | Send on a channel it was never given a sender for                | a sender is an object reference, not a number              |
 | Receive on a channel it does not hold a receiver for             | the same                                                   |
-| Use a capability its context lacks                               | the routine does not compile under that context            |
+| Use an effect trait its context lacks                            | the routine does not compile under that context            |
 | Answer another routine's request                                 | `ReplyHandle` is unforgeable and bound to its driver       |
 
 ### Messages Are Outside Host Policy

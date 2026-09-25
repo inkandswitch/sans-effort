@@ -7,7 +7,8 @@ use core::{future::Future, marker::PhantomData};
 use sans_effort_core::{
     boundary::{host_effect::HostEffect, pending::Pending},
     driver::{
-        BoxedRoutine, Driver, LocalDriver, Yield, outbox::Outbox, status::Status as DriveStatus,
+        BoxedRoutine, Driver, LocalDriver, Refused, Yield, outbox::Outbox,
+        status::Status as DriveStatus,
     },
     reply::{Reply, handle::ReplyHandle},
 };
@@ -16,7 +17,16 @@ use sans_effort_core::{
 /// whose future is not `Send`. Sealed: the two are the only drivers.
 pub trait Drive<E>: sealed::Sealed {
     /// Deliver a reply and poll.
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E>;
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`], with the handle back, if the value does not decode as
+    /// the answer the routine awaits.
+    fn try_reply<T: Reply>(
+        &mut self,
+        reply: ReplyHandle<T>,
+        value: T,
+    ) -> Result<Yield<E>, Refused<T>>;
     /// Poll without delivering anything.
     fn resume(&mut self) -> Yield<E>;
     /// What the last poll reported.
@@ -34,8 +44,12 @@ mod sealed {
 }
 
 impl<E> Drive<E> for Driver<E> {
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
-        Driver::reply(self, reply, value)
+    fn try_reply<T: Reply>(
+        &mut self,
+        reply: ReplyHandle<T>,
+        value: T,
+    ) -> Result<Yield<E>, Refused<T>> {
+        Driver::try_reply(self, reply, value)
     }
 
     fn resume(&mut self) -> Yield<E> {
@@ -56,8 +70,12 @@ impl<E> Drive<E> for Driver<E> {
 }
 
 impl<E> Drive<E> for LocalDriver<E> {
-    fn reply<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<E> {
-        LocalDriver::reply(self, reply, value)
+    fn try_reply<T: Reply>(
+        &mut self,
+        reply: ReplyHandle<T>,
+        value: T,
+    ) -> Result<Yield<E>, Refused<T>> {
+        LocalDriver::try_reply(self, reply, value)
     }
 
     fn resume(&mut self) -> Yield<E> {
@@ -141,15 +159,17 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// Reply to the request with this id: the effects recorded before the
     /// next wait.
     ///
-    /// `T` is the kind the host chose; the check that it matches what the
-    /// routine asked for happens here, at run time, and is the one place in
-    /// the stack where a reply can be refused.
+    /// `T` is the kind the host chose. Two checks happen here, at run time —
+    /// the only place in the stack a reply can be refused: that `T` is the
+    /// kind the routine's answer crosses as, and that the value decodes as
+    /// that answer (bytes for a `Result`, say).
     ///
     /// # Errors
     ///
     /// [`Error::Finished`] if the routine has completed; [`Error::BadInput`]
     /// if nothing awaits `id`; [`Error::WrongKind`] if `id` awaits another
-    /// kind — the handle is kept, so the host may retry with the right one.
+    /// kind; [`Error::Malformed`] if the value does not decode as the answer.
+    /// On either of the last two the request is kept, so the host may retry.
     pub fn reply<T: Reply>(&mut self, id: u64, value: T) -> Result<Yield<E::View>, Error> {
         self.reply_shown(id, value).map(views)
     }
@@ -161,7 +181,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
         value: T,
     ) -> Result<Yield<Shown<E::View>>, Error> {
         match T::from_pending(self.take(id)?) {
-            Ok(reply) => Ok(self.deliver(reply, value)),
+            Ok(reply) => self.deliver(id, reply, value),
             Err(pending) => {
                 let expected = pending.kind();
                 self.pending.push((id, pending));
@@ -294,9 +314,22 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
         }
     }
 
-    fn deliver<T: Reply>(&mut self, reply: ReplyHandle<T>, value: T) -> Yield<Shown<E::View>> {
-        let effects = self.driver.reply(reply, value);
-        self.show(effects)
+    /// Deliver, or — if the value does not decode as the answer the routine
+    /// awaits — put the request back and report it malformed.
+    fn deliver<T: Reply>(
+        &mut self,
+        id: u64,
+        reply: ReplyHandle<T>,
+        value: T,
+    ) -> Result<Yield<Shown<E::View>>, Error> {
+        match self.driver.try_reply(reply, value) {
+            Ok(effects) => Ok(self.show(effects)),
+            Err(refused) => {
+                let (reply, error) = refused.into_parts();
+                self.pending.push((id, T::into_pending(reply)));
+                Err(Error::Malformed(error))
+            }
+        }
     }
 }
 

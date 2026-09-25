@@ -6,11 +6,11 @@
 //! `WriteLine` effects are `sans-effort-effects`, the standard library.
 //! `Ctx` serves every wait by recording a request that carries a
 //! [`ReplyHandle`](sans_effort_core::reply::handle::ReplyHandle) and
-//! suspending; a host replies by id. The demo's own capabilities, `Count` and `Lookup`,
-//! carry their effects and `Ctx` impls with their traits in `routines`. This
-//! crate is the rest of what only the routine's author can write — the
-//! vocabularies a host may offer, and how a host sees them — and nothing
-//! else.
+//! suspending; a host replies by id. The demo's own effect traits, `Count`
+//! and `Lookup`, carry their effects and `Ctx` impls with their traits in
+//! `routines`. This crate is the rest of what only the routine's author can
+//! write — the vocabularies a host may offer, and how a host sees them — and
+//! nothing else.
 //! Stepping, the handle table, and the type check on replies are
 //! `sans-effort-host`; the `extern "C"` surface is the _binding_ over both,
 //! in `../cdylib`. (`../../native/wasm` needs neither: JS is a runtime host.)
@@ -32,7 +32,7 @@
 //! # The Host Chooses the Vocabulary
 //!
 //! Each wait is a request struct (`Lookup`, `ReadLine`, …) naming its
-//! reply type through `Request`. `Ctx` implements each of the greeter's
+//! reply type through `Ask`. `Ctx` implements each of the greeter's
 //! traits for _any_ `E` that can carry the corresponding request —
 //! `E: From<Asked<Lookup>>` — so a host defines `E` and meets each bound
 //! with a `From` impl. [`Full`] carries all five; [`Quiet`] carries only
@@ -74,8 +74,9 @@
 //! | 7   | `SpawnedPinned(u64 handle)` | —       |
 //!
 //! Tags 6 and 7 name a child the routine spawned, already registered in
-//! `sans-effort-host`'s table: the host starts it. A `SpawnedPinned` child
-//! stays on the thread that starts it; a `Spawned` one may migrate. They exist
+//! `sans-effort-host`'s table: the host resumes it to begin it. A
+//! `SpawnedPinned` child stays on the thread that first resumes it; a
+//! `Spawned` one may migrate. They exist
 //! with the `table` feature (the default), because registering a child needs
 //! the table, and the table needs `std`; without it, `Full` offers no
 //! spawning and the crate is `no_std`.
@@ -84,7 +85,7 @@
 
 extern crate alloc;
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 use routines::traits::effect::{Count, Lookup};
 use sans_effort_core::{
     boundary::{
@@ -92,11 +93,11 @@ use sans_effort_core::{
         host_effect::HostEffect,
         pending::Pending,
     },
-    reply::Reply,
+    reply::Answer,
 };
 use sans_effort_effects::{
+    ask::Asked,
     console::effect::{ReadLine, WriteLine},
-    request::Asked,
     time::effect::Sleep,
 };
 
@@ -105,7 +106,7 @@ use sans_effort_effects::spawn::effect::{Spawn, SpawnPinned};
 
 // ---- Full: a host that offers everything ----------------------------------
 
-/// The vocabulary of a host that offers all five capabilities.
+/// The vocabulary of a host that offers all five effect traits.
 #[derive(Debug)]
 pub enum Full {
     /// Tag 1.
@@ -235,7 +236,7 @@ impl HostEffect for Full {
             ),
             Full::ReadLine(Asked { reply, .. }) => (
                 View::ReadLine { id: reply.id() },
-                Some(Vec::<u8>::pending(reply)),
+                Some(Answer::pending(reply)),
             ),
             Full::Sleep(Asked {
                 request: sleep,
@@ -395,7 +396,7 @@ mod tests {
                 Full::ReadLine(Asked { reply, .. }) => {
                     seen.push(View::ReadLine { id: reply.id() });
                     let line = lines.next().ok_or(ReadLineError::Closed);
-                    driver.reply(reply, ReadLine::reply(line))
+                    driver.reply(reply, line.map(String::from))
                 }
                 Full::Lookup(Asked {
                     request: Lookup(name),
@@ -502,7 +503,7 @@ mod tests {
                         reply: lookup,
                     }),
                     Full::Count(Asked { reply: count, .. }),
-                ] = exactly(driver.reply(read, ReadLine::reply(Ok("bob"))))
+                ] = exactly(driver.reply(read, Ok("bob".into())))
                 else {
                     panic!("second batch: lookup + count");
                 };
@@ -532,9 +533,9 @@ mod tests {
                 if *sleep_first {
                     fourth.extend(driver.reply(sleep, ()));
                     assert!(fourth.is_empty());
-                    fourth.extend(driver.reply(read, ReadLine::reply(Ok("carol"))));
+                    fourth.extend(driver.reply(read, Ok("carol".into())));
                 } else {
-                    fourth.extend(driver.reply(read, ReadLine::reply(Ok("carol"))));
+                    fourth.extend(driver.reply(read, Ok("carol".into())));
                     assert!(fourth.is_empty());
                     fourth.extend(driver.reply(sleep, ()));
                 }
@@ -546,6 +547,45 @@ mod tests {
                 assert_eq!(written, ["Who are you?", "Hi, bob! (#1)", "Bye, carol."]);
                 assert_eq!(driver.status(), Status::Complete);
             });
+    }
+
+    /// Through the host crate, as a foreign host would reply: bytes that are
+    /// not an encoded `Result<String, ReadLineError>` are `MALFORMED`, the
+    /// read stays open, and a good reply is accepted after.
+    #[cfg(feature = "table")]
+    #[test]
+    fn a_malformed_read_reply_is_refused_and_can_be_retried() {
+        use sans_effort_core::boundary::codec::Encode;
+        use sans_effort_host::{error::Error, machine::Machine};
+
+        let mut machine = Machine::<Full>::from_routine(greeter);
+        let read = machine
+            .resume()
+            .expect("begins")
+            .into_iter()
+            .find_map(|view| {
+                if let View::ReadLine { id } = view {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .expect("the greeter prompts, then reads");
+
+        assert!(matches!(
+            machine.reply_bytes(read, vec![7]),
+            Err(Error::Malformed(_))
+        ));
+
+        let good = Ok::<String, ReadLineError>("bob".into()).to_bytes();
+        let next = machine
+            .reply_bytes(read, good)
+            .expect("a good reply is accepted");
+        assert!(
+            next.into_iter()
+                .any(|view| matches!(view, View::Lookup { ref name, .. } if name == "bob")),
+            "the greeter looks bob up"
+        );
     }
 
     /// A `Quiet` host runs the ticker, and only ever sees tags 4 and 5.
@@ -592,7 +632,7 @@ mod tests {
         use routines::{front_desk::FrontDesk, ping_pong::PingPong};
         use sans_effort_core::{
             driver::{LocalDriver, Yield},
-            reply::{Reply, handle::ReplyHandle},
+            reply::{Answer, handle::ReplyHandle},
         };
 
         /// A machine the router drives: migrating or pinned. All run on the
@@ -610,7 +650,7 @@ mod tests {
                 }
             }
 
-            fn reply<T: Reply>(&mut self, handle: ReplyHandle<T>, value: T) -> Yield<Full> {
+            fn reply<A: Answer>(&mut self, handle: ReplyHandle<A>, value: A) -> Yield<Full> {
                 match self {
                     Machine::Migrating(d) => d.reply(handle, value),
                     Machine::Pinned(d) => d.reply(handle, value),
@@ -672,7 +712,7 @@ mod tests {
                             let line = lines.next().ok_or(ReadLineError::Closed);
                             (
                                 at,
-                                nth(&mut machines, at).reply(reply, ReadLine::reply(line)),
+                                nth(&mut machines, at).reply(reply, line.map(String::from)),
                             )
                         }
                         Full::Lookup(Asked {

@@ -1,4 +1,4 @@
-//! The five capability traits, served by a JS object behind a dispatcher.
+//! The five effect traits, served by a JS object behind a dispatcher.
 //!
 //! Compare `greeter_tokio`'s `TokioCtx`: there each trait method is a tokio
 //! future. Here each one is a call into JS and, if JS returned a `Promise`, a
@@ -8,7 +8,7 @@
 //!
 //! # A Dispatcher, So the Futures Are `Send`
 //!
-//! A capability's future must be `Send`, and `JsValue`s and `JsFuture`s are
+//! An effect trait's future must be `Send`, and `JsValue`s and `JsFuture`s are
 //! not. So `JsCtx` holds no JS value at all: it holds a channel to a
 //! dispatcher task that owns the [`JsHost`], and each call sends it a request
 //! and awaits the reply. The dispatcher calls the host's methods in the order

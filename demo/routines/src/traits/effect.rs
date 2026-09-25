@@ -2,7 +2,7 @@
 //! reifying context.
 
 use alloc::string::String;
-use sans_effort::request::Request;
+use sans_effort::ask::Ask;
 
 /// How many greetings so far. Awaits a `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,10 +12,10 @@ pub struct Count;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lookup(pub String);
 
-impl Request for Count {
+impl Ask for Count {
     type Reply = u64;
 }
 
-impl Request for Lookup {
+impl Ask for Lookup {
     type Reply = String;
 }

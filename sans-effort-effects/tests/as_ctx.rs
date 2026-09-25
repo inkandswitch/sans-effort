@@ -1,5 +1,5 @@
-//! A newtype over `Ctx` gets every stdlib capability from `AsCtx`, and can
-//! reify a capability its own crate adds — here, one the stdlib knows
+//! A newtype over `Ctx` gets every stdlib effect trait from `AsCtx`, and can
+//! reify an effect trait its own crate adds — here, one the stdlib knows
 //! nothing about.
 
 #![expect(clippy::panic, reason = "let-else arms name the batch they expected")]
@@ -10,24 +10,24 @@ use sans_effort_core::{
     step::Step,
 };
 use sans_effort_effects::{
+    ask::{Ask, Asked},
     console::{WriteLine, effect::WriteLine as WriteLineEffect},
     ctx::{AsCtx, Ctx},
-    request::{Asked, Request},
     time::{Sleep, effect::Sleep as SleepEffect},
 };
 
-/// A capability the stdlib does not have.
+/// An effect trait the stdlib does not have.
 trait Locate {
     fn locate(&self) -> impl Future<Output = String> + Send;
 }
 
 struct Where;
 
-impl Request for Where {
+impl Ask for Where {
     type Reply = String;
 }
 
-/// The newtype: one `AsCtx` impl, and the local capability on top.
+/// The newtype: one `AsCtx` impl, and the local effect trait on top.
 struct HostCtx<E>(Ctx<E>);
 
 impl<E> AsCtx for HostCtx<E> {
@@ -40,7 +40,7 @@ impl<E> AsCtx for HostCtx<E> {
 
 impl<E: From<Asked<Where>> + Send> Locate for HostCtx<E> {
     async fn locate(&self) -> String {
-        self.ctx().request(Where).await
+        self.ctx().ask(Where).await
     }
 }
 
@@ -68,7 +68,7 @@ impl From<Asked<Where>> for Effect {
     }
 }
 
-/// Uses two stdlib capabilities and the local one.
+/// Uses two stdlib effect traits and the local one.
 struct Postcard<C>(C);
 
 impl<C: Locate + Sleep + WriteLine> Step for Postcard<C> {
@@ -111,19 +111,19 @@ fn a_newtype_gets_the_stdlib_and_adds_its_own() {
     assert_eq!(driver.status(), Status::Complete);
 }
 
-/// Capabilities follow through references and smart pointers to any
+/// Effect traits follow through references and smart pointers to any
 /// `AsCtx`, so a context can be lent or shared. Not through `Rc`: it is never
-/// `Sync`, and a capability's future borrows its context across threads.
+/// `Sync`, and an effect trait's future borrows its context across threads.
 #[test]
 fn references_and_smart_pointers_forward() {
-    fn capabilities<C: Sleep + WriteLine>(_: &C) {}
+    fn has_both<C: Sleep + WriteLine>(_: &C) {}
 
     drop(Driver::<Effect>::new(|outbox| {
         let ctx = HostCtx(Ctx::new(outbox));
-        capabilities(&&ctx);
+        has_both(&&ctx);
         let boxed: Box<HostCtx<Effect>> = Box::new(ctx);
-        capabilities(&boxed);
-        capabilities(&std::sync::Arc::new(boxed));
+        has_both(&boxed);
+        has_both(&std::sync::Arc::new(boxed));
         async {}
     }));
 }

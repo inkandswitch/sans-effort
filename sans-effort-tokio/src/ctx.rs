@@ -1,4 +1,4 @@
-//! The ready-made context: every capability, built from the components.
+//! The ready-made context: every effect trait, built from the components.
 
 use crate::{
     clock::TokioClock,
@@ -15,11 +15,11 @@ use std::{io, sync::Arc};
 use tokio::io::{AsyncBufRead, BufReader, Stdin};
 use tokio_util::task::LocalPoolHandle;
 
-/// Every capability in `sans-effort-effects` as a tokio future: a
+/// Every effect trait in `sans-effort-effects` as a tokio future: a
 /// [`TokioClock`], a [`TokioInput`], a [`TokioOutput`], and a
 /// [`TokioSpawner`] in one value.
 ///
-/// A routine that names only stdlib capabilities runs on it directly:
+/// A routine that names only stdlib effect traits runs on it directly:
 /// `tokio::spawn(Ticker::new(TokioCtx::stdio(pool), 3).run())`. Cloning shares
 /// the input, the output, and the spawner: a spawned child's context is a
 /// clone of its parent's.
@@ -152,7 +152,7 @@ mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
-    async fn every_capability_through_one_value() {
+    async fn every_effect_trait_through_one_value() {
         let ctx = TokioCtx::new(&b"hi\n"[..], Vec::new(), LocalPoolHandle::new(1));
         let start = tokio::time::Instant::now();
 

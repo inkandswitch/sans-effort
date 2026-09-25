@@ -40,6 +40,12 @@ impl<T> ReplyHandle<T> {
     }
 
     /// Consume the handle: which driver minted it, and which request.
+    /// The same handle, typed as another form of its answer — its wire
+    /// kind, for the host layer's table.
+    pub(crate) const fn retype<U>(self) -> ReplyHandle<U> {
+        ReplyHandle::mint(self.driver, self.id)
+    }
+
     pub(crate) const fn into_parts(self) -> (u64, u64) {
         (self.driver, self.id)
     }
