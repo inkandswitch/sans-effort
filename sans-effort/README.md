@@ -1,92 +1,66 @@
 # sans-effort
 
-> Host-driven async coroutines whose every wait is a typed effect
+> _sans-io, without all the effort_
 
-A routine is an ordinary `async fn` whose waits are answered by whoever drives it: no waker, no executor, one `Box::pin` at the boundary. It is a sans-io state machine the compiler writes for you — and because the routine asks for _traits_ rather than effects, the same code is also a plain `async fn` that tokio runs natively with no driver at all.
+Write ordinary, direct-style Rust (`async fn`, `.await`, loops, `?`) and run it two ways:
 
-This crate is the mechanism. It is `no_std` + `alloc`.
+1. _Natively:_ on `tokio` or the JS event loop it is a plain future at native speed, with no driver.
+2. _Driven_ from an FFI host language through a sans-io interface: every wait becomes a typed effect that the host answers by id. The host owns I/O, time, and scheduling — which routine resumes, in what order replies arrive, whether the clock is real or virtual — and the output is typically byte-identical to the native run.
 
-```text
-  routine     Greeter<C: Sleep + Console>: Run      asks for traits; knows nothing of hosts
-  context     impl Sleep for TokioCtx  │ impl Sleep for Ctx<E>
-              a real future            │ records an effect, waits for the reply
-  host        tokio polls the task     │ a Driver polls; Python, JS, a test… replies by id
-```
+The routine asks for traits, not effects, and cannot tell which way it is running.
 
-## What is here
+This crate is the one dependency a routine author needs. It re-exports the crates underneath:
 
-| Item | Role |
-|------|------|
-| `run::Run` | The shape of a routine: `step` (one loop iteration) and `run` (until it breaks) |
-| `driver::Driver` | Turns a routine into something a host can drive: `start()`, then `reply(handle, value)` until finished |
-| `driver::outbox::Outbox` | What a reifying context writes into: `tell` an effect, or `ask` and await the reply |
-| `reply::ReplyHandle<T>` | The typed, single-use capability to answer one `ask`. Unforgeable; infallible to reply through |
-| `request::{Request, Asked}` | Waits as values, so a context is generic over the host's vocabulary and a host can offer a routine less than everything |
-| `join::join` | Two waits at once — the reason request ids exist |
-| `wire` | The four-kind reply menu, and the traits (`HostEffect`, `Encode`) an effect type implements to cross to a host that cannot hold a Rust value |
-| `testing::run_now` | Run a routine against a mock whose every future is ready, in one poll, with no driver |
+| Path | From | What |
+|---|---|---|
+| `sans_effort::{step, join, select, testing}` | `sans-effort-core` | The routine trait `Step`; two waits at once; the first of two; a one-poll test runner |
+| `sans_effort::{driver, reply, boundary}` | `sans-effort-core` | The mechanism: `Driver`, `resume`/`reply`, `Yield`, reply handles, the boundary traits |
+| `sans_effort::{ask, console, ctx, spawn, time}` | `sans-effort-effects` | The standard effect traits (`Sleep`, `ReadLine`, `WriteLine`, `Spawn`) and `Ctx<E>`, the context that turns each into an effect |
+| `sans_effort::tokio` | `sans-effort-tokio` | Feature `tokio`: every standard effect trait as a real tokio future |
+| `sans_effort::host` | `sans-effort-host` | Feature `host`: typed and byte-level machines and the handle table, for a foreign-function binding |
 
-## A routine, and a Rust host
+The authors of runtimes and bindings can depend on the underlying crates directly; `sans-effort-core` in particular is kept small and slow to change.
+
+## A Routine
+
+A routine names only the effect traits it uses, as trait bounds:
 
 ```rust
-use core::ops::ControlFlow;
-use sans_effort::{driver::{Driver, outbox::Outbox}, request::{Asked, Request}, run::Run};
+use core::{ops::ControlFlow, time::Duration};
+use sans_effort::{console::WriteLine, step::Step, time::Sleep};
 
-trait Console {
-    async fn read_line(&self) -> String;
-    fn write_line(&self, line: String);
+struct Countdown<C> {
+    ctx: C,
+    left: u32,
 }
 
-struct Greeter<C: Console>(C);
-
-impl<C: Console> Run for Greeter<C> {
+impl<C: Sleep + WriteLine> Step for Countdown<C> {
     async fn step(&mut self) -> ControlFlow<()> {
-        let name = self.0.read_line().await;
-        self.0.write_line(format!("Hello, {name}!"));
-        ControlFlow::Break(())
-    }
-}
-
-// A reifying context: each call becomes a request the host answers by id.
-struct ReadLine;
-struct WriteLine(String);
-impl Request for ReadLine { type Reply = String; }
-
-struct Ctx<E>(Outbox<E>);
-
-impl<E: From<Asked<ReadLine>> + From<WriteLine>> Console for Ctx<E> {
-    async fn read_line(&self) -> String { self.0.request(ReadLine).await }
-    fn write_line(&self, line: String) { self.0.notify(WriteLine(line)); }
-}
-
-enum Effect { ReadLine(Asked<ReadLine>), WriteLine(WriteLine) }
-impl From<Asked<ReadLine>> for Effect { fn from(a: Asked<ReadLine>) -> Self { Effect::ReadLine(a) } }
-impl From<WriteLine> for Effect { fn from(w: WriteLine) -> Self { Effect::WriteLine(w) } }
-
-let mut driver = Driver::<Effect>::new(|outbox| Greeter(Ctx(outbox)).run());
-for effect in driver.start() {
-    if let Effect::ReadLine(Asked { reply, .. }) = effect {
-        for effect in driver.reply(reply, "bob".into()) {
-            if let Effect::WriteLine(WriteLine(text)) = effect {
-                assert_eq!(text, "Hello, bob!");
-            }
+        if self.left == 0 {
+            return ControlFlow::Break(());
         }
+        self.ctx.write_line(format!("{}", self.left));
+        self.ctx.sleep(Duration::from_millis(10)).await;
+        self.left -= 1;
+        ControlFlow::Continue(())
     }
 }
 ```
 
-A host with a runtime needs none of this: implement `Console` with real futures and `tokio::spawn` the routine. A host in another language cannot hold a `ReplyHandle`; see `sans-effort-host` and `ABI.md` in the repository.
+On tokio, `tokio::spawn(Countdown { ctx: TokioCtx::new(…), left: 3 }.run())`. Behind a driver, `Driver::new(|outbox| Countdown { ctx: Ctx::new(outbox), left: 3 }.run())`, then `resume()` and `reply(handle, value)` until it finishes.
 
 ## Features
 
-| Feature | Effect |
-|---------|--------|
-| `std` (default) | The driver's one lock is `std::sync::Mutex` |
-| `spin` | The lock is `spin::Mutex`, for `no_std`; needs CAS atomics unless… |
-| `portable-atomic` | …this supplies them, for targets without native CAS or 64-bit atomics. Implies `spin` |
-| `critical-section` | `portable-atomic` backed by an application-provided `critical-section` |
+| Feature | Default | Enables |
+|---|---|---|
+| `std` | yes | The driver's one lock is `std::sync::Mutex` |
+| `spin` | | The lock is `spin::Mutex`, for `no_std` |
+| `portable-atomic` | | Atomics for targets without native CAS or 64-bit atomics; implies `spin` |
+| `critical-section` | | `portable-atomic` backed by an application-provided `critical-section` |
+| `host` | | `sans_effort::host` |
+| `tokio` | | `sans_effort::tokio`; implies `std` |
 
-At least one of `std` and `spin` must be enabled; the crate refuses to build otherwise, with a message saying so.
+At least one of `std` and `spin` must be enabled somewhere in the build. A library of routines should depend with `default-features = false` and leave the choice to the binary.
 
 ## License
 

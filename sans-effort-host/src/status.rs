@@ -1,17 +1,19 @@
 //! Where the routine stopped.
 
-use crate::code;
-use sans_effort::driver::status::Status as DriveStatus;
+use crate::contract;
+use sans_effort_core::driver::status::Status as DriveStatus;
 
-/// What one `start` or `reply` reports. [`code`](Self::code) is its wire form.
+/// What one `resume` or `reply` reports. [`code`](Self::code) is its wire form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
     /// At least one request awaits a reply.
     Awaiting,
     /// The routine returned.
     Complete,
-    /// Pending with no request outstanding; will never progress.
-    Stalled,
+    /// Pending with no request outstanding: waiting on something inside the
+    /// process, such as a channel another routine sends on. `resume` it once
+    /// that may have changed.
+    Idle,
 }
 
 impl Status {
@@ -19,9 +21,9 @@ impl Status {
     #[must_use]
     pub const fn code(self) -> i32 {
         match self {
-            Status::Awaiting => code::AWAITING,
-            Status::Complete => code::COMPLETE,
-            Status::Stalled => code::STALLED,
+            Status::Awaiting => contract::AWAITING,
+            Status::Complete => contract::COMPLETE,
+            Status::Idle => contract::IDLE,
         }
     }
 }
@@ -31,7 +33,7 @@ impl From<DriveStatus> for Status {
         match status {
             DriveStatus::Awaiting => Status::Awaiting,
             DriveStatus::Complete => Status::Complete,
-            DriveStatus::Stalled => Status::Stalled,
+            DriveStatus::Idle => Status::Idle,
         }
     }
 }

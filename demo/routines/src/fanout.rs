@@ -2,14 +2,19 @@
 
 use crate::{
     PAUSE,
-    traits::{Count, Lookup, ReadLine, Sleep, WriteLine},
+    traits::{count::Count, lookup::Lookup},
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;
-use sans_effort::{join::join, run::Run};
+use sans_effort::{
+    console::{ReadLine, WriteLine},
+    time::Sleep,
+};
+use sans_effort::{join::join, step::Step};
 
 /// Reads a name, then looks up the greeting and counts _concurrently_; then
-/// waits out the pause while reading the farewell, likewise.
+/// waits out the pause while reading the farewell, likewise. If the input
+/// ends early, it says a plain goodbye.
 ///
 /// On tokio each [`join`] is two native futures polled together. Behind a
 /// reifying context it is two requests in one batch, replied to in either
@@ -27,16 +32,22 @@ impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Fanout<C> {
     }
 }
 
-impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Run for Fanout<C> {
+impl<C: Count + Lookup + ReadLine + Sleep + WriteLine> Step for Fanout<C> {
     async fn step(&mut self) -> ControlFlow<()> {
         self.ctx.write_line(String::from("Who are you?"));
-        let name = self.ctx.read_line().await;
+        let Ok(name) = self.ctx.read_line().await else {
+            self.ctx.write_line(String::from("Bye."));
+            return ControlFlow::Break(());
+        };
 
         let (greeting, n) = join(self.ctx.lookup(name.clone()), self.ctx.count()).await;
         self.ctx.write_line(format!("{greeting}, {name}! (#{n})"));
 
         let ((), farewell) = join(self.ctx.sleep(PAUSE), self.ctx.read_line()).await;
-        self.ctx.write_line(format!("Bye, {farewell}."));
+        self.ctx.write_line(match farewell {
+            Ok(farewell) => format!("Bye, {farewell}."),
+            Err(_) => String::from("Bye."),
+        });
 
         ControlFlow::Break(())
     }
@@ -49,7 +60,7 @@ mod tests {
     use alloc::vec;
 
     /// With every future ready at once, `join` polls left then right, so the
-    /// call order is fixed; what the test pins is that both capabilities are
+    /// call order is fixed; what the test pins is that both effect traits are
     /// used and the result assembled before the next write.
     #[test]
     fn fanout_on_any_script() {

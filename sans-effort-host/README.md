@@ -1,32 +1,32 @@
 # sans-effort-host
 
-> The host side of a routine, for hosts that cannot hold a Rust value
+> The host side of a routine, for FFI hosts that cannot hold a Rust value
 
-A Rust host drives a routine through `sans_effort::driver::Driver`, replying through typed `ReplyHandle`s. A host in another language has neither the handle nor the type: it has a `u64` request id and some bytes. This crate is the layer between — safe Rust, over owned types, with `unsafe_code = "forbid"`. The application adds the `extern "C"` (or wasm-bindgen, or `erl_nif`) skin: one wrapper per function, each a line plus the `unsafe` needed to touch foreign memory.
+A Rust host drives a routine through `sans_effort_core::driver::Driver`, replying through typed `ReplyHandle`s. An FFI host has neither the handle nor the type: it has a `u64` request id and some bytes. This crate is the layer between — safe Rust, over owned types, with `unsafe_code = "forbid"`. The application adds the `extern "C"` (or wasm-bindgen, or `erl_nif`) binding: one wrapper per function, each a line plus the `unsafe` needed to touch foreign memory.
 
-Everything but `table` is `no_std` + `alloc`; the table needs a process-wide `static Mutex`, a `HashMap`, and `catch_unwind`, so it is behind the default `std` feature. A skin on a target without `std` holds its `Encoded` machines in statics of its own.
+Everything but `table` is `no_std` + `alloc`; the table needs a process-wide `static Mutex`, a `HashMap`, and `catch_unwind`, so it is behind the default `std` feature. A binding on a target without `std` holds its `Encoded` machines in statics of its own.
 
 ```text
-  app skin (unsafe, ~40 lines)   ─▶   sans-effort-host (this crate)   ─▶   sans_effort::Driver
-  new / start / reply / free            Machine: id → ReplyHandle, kind check
-  buf_free                              table:   u64 handles, BUSY, panic isolation
-                                        bytes:   decode one reply record, encode the effects
+  app binding (unsafe, ~40 lines)   ─▶   sans-effort-host (this crate)   ─▶   sans_effort_core::Driver
+  abi_version / new / resume            Machine: id → ReplyHandle, kind check
+  reply / free / buf_free               table:   u64 handles, BUSY, panic isolation
+                                        Encoded: decode one reply record, encode the effects
 ```
 
-## What is here
+## What Is Here
 
 | Item                                      | Role                                                                                                                                                                                                                                                                              |
 |-------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Machine<E>`                              | A `Driver<E>` plus a wallet of the `ReplyHandle`s its effects carried out, keyed by id. `start()` and `reply(id, value)` return `Vec<E::View>` — effects with handles replaced by ids — and check the reply's kind at run time, the one place in the stack a reply can be refused |
-| `Machine::{start_encoded, reply_encoded}` | The byte layer: one reply record (`kind · id · payload`) in, the effects encoded out                                                                                                                                                                                              |
-| `table`                                   | `new(routine) → u64`, `start(h)`, `reply(h, record)`, `free(h)`. Handles never `0`, never reused. Any thread, one at a time per handle (`BUSY` on collision). A panicking routine is caught, removed, and reported as `PANICKED`                                                  |
-| `code`, `Status`, `Error`                 | The status and error codes as they cross the ABI, and their Rust forms                                                                                                                                                                                                            |
+| `Machine<E, D>`                           | A `Driver<E>` — or, as `LocalMachine<E>`, a `LocalDriver<E>` for a future that is not `Send` — plus a wallet of the `ReplyHandle`s its effects carried out, keyed by id. `resume()` (the first begins it) and `reply(id, value)` return a `Yield<E::View>` — effects with handles replaced by ids, and the ids the routine abandoned — and check the reply's kind at run time, the one place in the stack a reply can be refused. `reply_str`/`reply_u64`/`reply_unit`/`reply_bytes` wrap it for bindings that cannot call a generic method |
+| `Encoded<E, D>`                           | The byte layer over a `Machine`, same calls: one reply record (`kind · id · payload`) in, the effects encoded out                                                                                                                                                             |
+| `table`                                   | `new(routine) → u64`, `park_pinned(routine) → u64`, `resume(h)` (the first begins it), `reply(h, record)`, `wakes()`, `free(h)`. A machine woken by another's poll is named by a `woke` frame at the end of that call's output; one woken outside any call, by `wakes()`. Handles never `0`, never reused. Migrating machines: any thread, one at a time per handle (`BUSY` on collision). Pinned machines: built by the thread that starts them and kept there (`WRONG_THREAD` from any other). A panicking routine is caught, removed, and reported as `PANICKED` |
+| `contract`, `Status`, `Error`             | The numbers in `ABI.md` — its revision (`REVISION`), frame kinds, and status and error codes — and the codes' Rust forms — including `Error::WrongKind`, `Error::Malformed`, and `Error::Stale` — why a reply was refused                                                                          |
 
-`ABI.md` in the repository root is the contract a foreign host assumes, and `demo/` there has a C-ABI skin with a Python host driving the same routine that runs natively on tokio and on the JS event loop.
+`ABI.md` in the repository root is the contract a foreign host assumes, and `demo/` there has a C-ABI binding with a Python host driving the same routine that runs natively on tokio and on the JS event loop.
 
-## Two kinds of skin
+## Two Kinds of Binding
 
-The raw path: a `cdylib` exports the five functions over `table`, and any language that can `dlopen` and hand over a byte buffer drives the routine, decoding effects from a tag table the routine's author documents. The generated path: a `PyO3` or Rustler class holds a `Machine` directly and converts `View`s to native objects — no handle table, no codec, a per-language toolchain. (A JS host with wasm-bindgen usually needs neither: the event loop is an executor, so a routine runs there natively, as `demo/wasm` shows.) The routine cannot tell which it is under.
+The raw path: a `cdylib` exports the functions over `table`, and any language that can `dlopen` and hand over a byte buffer drives the routine, decoding effects from a tag table the routine's author documents. The generated path: a `PyO3` or Rustler class holds a `Machine` directly and converts `View`s to native objects — no handle table, no codec, a per-language toolchain. (A JS host with wasm-bindgen usually needs neither: the event loop is an executor, so a routine runs there natively, as `demo/native/wasm` shows.) The routine cannot tell which it is under.
 
 ## License
 

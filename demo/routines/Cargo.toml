@@ -1,7 +1,7 @@
 [package]
 name = "routines"
 version = "0.1.0"
-description = "The demo routines — a greeter, its fan-out variant, and a ticker — written against capability traits. They know nothing of effects, handles, drivers, or hosts"
+description = "The demo routines — a greeter, its fan-out variant, and a ticker — written against effect traits. They know nothing of effects, handles, drivers, or hosts"
 publish = false
 
 authors.workspace = true
@@ -11,6 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-channel = { workspace = true }
 sans-effort = { workspace = true }
 
 [dev-dependencies]

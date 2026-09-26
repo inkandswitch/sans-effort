@@ -1,0 +1,31 @@
+[package]
+name = "greeter_boundary"
+version = "0.1.0"
+description = "The greeter's reifying context and wire vocabulary: what only the routine's author can write, and nothing else"
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sans-effort-core = { workspace = true }
+sans-effort-effects = { workspace = true }
+sans-effort-host = { workspace = true, optional = true }
+routines = { version = "0.1.0", path = "../../routines" }
+
+[features]
+default = ["table"]
+## `Full`'s spawn tags (6 and 7): registering a spawned child needs
+## `sans-effort-host`'s table, and so `std`. Without it the crate is `no_std`
+## and `Full` offers no spawning.
+table = ["dep:sans-effort-host"]
+
+[dev-dependencies]
+bolero = { workspace = true }
+sans-effort-core = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

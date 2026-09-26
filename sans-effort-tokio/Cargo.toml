@@ -1,0 +1,27 @@
+[package]
+name = "sans-effort-tokio"
+version = "0.1.0"
+description = "Native tokio contexts for sans-effort routines: every effect trait in sans-effort-effects as a real future, no driver"
+readme = "README.md"
+
+categories = ["asynchronous"]
+keywords = ["async", "effect-traits", "effects", "sans-io", "tokio"]
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sans-effort-effects = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "rt", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+sans-effort-core = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

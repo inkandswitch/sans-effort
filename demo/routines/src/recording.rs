@@ -1,26 +1,25 @@
-//! A mock of all five capabilities, for the routines' tests.
+//! A mock of all five effect traits, for the routines' tests.
 //!
-//! The capabilities test story: a mock implements the traits, every future
+//! The routines' test story: a mock implements the traits, every future
 //! is ready at once, and one poll runs the routine to completion. No driver,
 //! no runtime, no vocabulary — and what the mock recorded is the assertion.
 //!
-//! `Recording` is `Rc`-based and so `!Send`, and this is fine: nothing here
-//! spawns, so nothing asks. Had the traits demanded `Send`, this mock could
-//! not exist.
+//! The effect traits declare their futures `Send`, and each future
+//! borrows the context, so the mock is `Sync`: an `Arc`, locks, and an
+//! atomic, though every test runs it on one thread.
 
-use crate::traits::{Count, Lookup, ReadLine, Sleep, WriteLine};
-use alloc::{
-    collections::VecDeque,
-    format,
-    rc::Rc,
-    string::{String, ToString},
-    vec::Vec,
-};
+use crate::traits::{count::Count, lookup::Lookup};
+use alloc::{collections::VecDeque, format, string::String, sync::Arc, vec::Vec};
 use core::{
-    cell::{Cell, RefCell},
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
-use sans_effort::{run::Run, testing::run_now};
+use sans_effort::{
+    console::{ReadLine, ReadLineError, WriteLine},
+    time::Sleep,
+};
+use sans_effort::{step::Step, testing::run_now};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// What a routine did to its context, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,30 +40,35 @@ pub(crate) fn greeting_for(name: &str) -> String {
 /// and a log of every call. `Clone` shares the log, so a test keeps a handle
 /// after moving one into the routine.
 #[derive(Clone)]
-pub(crate) struct Recording(Rc<Inner>);
+pub(crate) struct Recording(Arc<Inner>);
 
 struct Inner {
-    calls: RefCell<Vec<Call>>,
-    count: Cell<u64>,
-    lines: RefCell<VecDeque<String>>,
+    calls: Mutex<Vec<Call>>,
+    count: AtomicU64,
+    lines: Mutex<VecDeque<String>>,
 }
 
 impl Recording {
     pub(crate) fn new(script: &[String]) -> Self {
-        Self(Rc::new(Inner {
-            calls: RefCell::new(Vec::new()),
-            count: Cell::new(0),
-            lines: RefCell::new(script.iter().cloned().collect()),
+        Self(Arc::new(Inner {
+            calls: Mutex::new(Vec::new()),
+            count: AtomicU64::new(0),
+            lines: Mutex::new(script.iter().cloned().collect()),
         }))
     }
 
     fn log(&self, call: Call) {
-        self.0.calls.borrow_mut().push(call);
+        lock(&self.0.calls).push(call);
     }
 
     pub(crate) fn calls(&self) -> Vec<Call> {
-        self.0.calls.borrow().clone()
+        lock(&self.0.calls).clone()
     }
+}
+
+/// A poisoned lock means a test already panicked; the data is still usable.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl Sleep for Recording {
@@ -76,8 +80,7 @@ impl Sleep for Recording {
 impl Count for Recording {
     async fn count(&self) -> u64 {
         self.log(Call::Count);
-        self.0.count.set(self.0.count.get() + 1);
-        self.0.count.get()
+        self.0.count.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 
@@ -89,13 +92,10 @@ impl Lookup for Recording {
 }
 
 impl ReadLine for Recording {
-    async fn read_line(&self) -> String {
+    /// The next scripted line, or `Closed` once the script runs out.
+    async fn read_line(&self) -> Result<String, ReadLineError> {
         self.log(Call::ReadLine);
-        self.0
-            .lines
-            .borrow_mut()
-            .pop_front()
-            .unwrap_or_else(|| "quit".to_string())
+        lock(&self.0.lines).pop_front().ok_or(ReadLineError::Closed)
     }
 }
 
@@ -106,7 +106,7 @@ impl WriteLine for Recording {
 }
 
 /// Run a routine against a recording of the script; return what it did.
-pub(crate) fn transcript<P: Run>(
+pub(crate) fn transcript<P: Step>(
     routine: impl FnOnce(Recording) -> P,
     script: &[String],
 ) -> Vec<Call> {

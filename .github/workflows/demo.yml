@@ -51,7 +51,7 @@ jobs:
         run: |
           cargo build -p greeter_cdylib
           cargo build -p greeter_wasm --release --target wasm32-unknown-unknown
-          wasm-bindgen --target nodejs --out-dir demo/js/pkg \
+          wasm-bindgen --target nodejs --out-dir demo/native/js/pkg \
             target/wasm32-unknown-unknown/release/greeter_wasm.wasm
 
       - name: Native host (tokio, no driver)
@@ -61,20 +61,20 @@ jobs:
 
       - name: Python host
         run: |
-          python3 demo/python/main.py > python.txt
-          python3 demo/python/main.py --fanout > python-fanout.txt
-          python3 demo/python/main.py --ticker
+          python3 demo/driven/python/main.py > python.txt
+          python3 demo/driven/python/main.py --fanout > python-fanout.txt
+          python3 demo/driven/python/main.py --ticker
 
       - name: JS host (native)
         run: |
-          node demo/js/main.mjs > js.txt
-          node demo/js/main.mjs --fanout > js-fanout.txt
+          node demo/native/js/main.mjs > js.txt
+          node demo/native/js/main.mjs --fanout > js-fanout.txt
 
       - name: Java host (Panama, C ABI)
         run: |
-          java --enable-native-access=ALL-UNNAMED demo/java/Main.java > java.txt
-          java --enable-native-access=ALL-UNNAMED demo/java/Main.java --fanout > java-fanout.txt
-          java --enable-native-access=ALL-UNNAMED demo/java/Main.java --ticker
+          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java > java.txt
+          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --fanout > java-fanout.txt
+          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --ticker
 
       - name: Transcripts agree
         run: |
