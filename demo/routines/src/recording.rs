@@ -8,7 +8,7 @@
 //! borrows the context, so the mock is `Sync`: an `Arc`, locks, and an
 //! atomic, though every test runs it on one thread.
 
-use crate::traits::{Count, Lookup};
+use crate::traits::{count::Count, lookup::Lookup};
 use alloc::{collections::VecDeque, format, string::String, sync::Arc, vec::Vec};
 use core::{
     sync::atomic::{AtomicU64, Ordering},

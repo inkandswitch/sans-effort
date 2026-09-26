@@ -13,7 +13,7 @@
 //! future, and the routine is the task.
 
 use core::{future::Future, time::Duration};
-use routines::traits::{Count, Lookup};
+use routines::traits::{count::Count, lookup::Lookup};
 use sans_effort::tokio::ctx::TokioCtx;
 use sans_effort::{
     console::{ReadLine, ReadLineError, WriteLine},

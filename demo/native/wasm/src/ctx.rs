@@ -21,7 +21,7 @@ use crate::host::JsHost;
 use async_channel::{Receiver, Sender};
 use core::time::Duration;
 use js_sys::Promise;
-use routines::traits::{Count, Lookup};
+use routines::traits::{count::Count, lookup::Lookup};
 use sans_effort_effects::{
     console::{ReadLine, ReadLineError, WriteLine},
     spawn::Spawn,

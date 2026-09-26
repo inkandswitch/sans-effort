@@ -39,7 +39,7 @@
 //! `Sleep` and `WriteLine`.
 //!
 //! That is attenuation, checked where the routine is built and visible on
-//! the wire: `Ctx<Quiet>` does not implement `traits::Lookup`, so a
+//! the wire: `Ctx<Quiet>` does not implement `traits::lookup::Lookup`, so a
 //! `Greeter` cannot be spawned under it, while a `Ticker` can — and a host
 //! driving a `Quiet` machine knows from the type alone that tags 1–3 can
 //! never appear.
@@ -86,7 +86,7 @@
 extern crate alloc;
 
 use alloc::string::String;
-use routines::traits::effect::{Count, Lookup};
+use routines::traits::{count::effect::Count, lookup::effect::Lookup};
 use sans_effort_core::{
     boundary::{
         codec::{Encode, Writer},

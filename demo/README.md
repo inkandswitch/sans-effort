@@ -9,9 +9,9 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    async-channels), front_desk (spawns a pinned clerk per name; each
                    replies on a one-shot channel), ring (16 routines pass a counter
                    4000 hops; the cost of a hop). no_std.
-                   traits.rs: the demo's own effect traits, Count and Lookup, each
-                   with its effect and its Ctx impl beside it (the orphan rule puts
-                   them there). The routines themselves use only traits.
+                   traits/: the demo's own effect traits, one module each (count,
+                   lookup), each with its effect and its Ctx impl beside it (the
+                   orphan rule puts them there). The routines themselves use only traits.
                    Tests: a Recording mock + testing::run_now — no driver, one poll.
 
   native/          the routine runs as an ordinary task on an executor. No Driver.
