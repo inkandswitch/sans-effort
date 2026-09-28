@@ -82,8 +82,8 @@ Behind a host — each call records a request and suspends until the host replie
 
 ```rust
 // in sans-effort-effects, written once for every application:
-impl<E: From<Asked<effect::Sleep>>> Sleep for Ctx<E> {
-    async fn sleep(&self, d: Duration) { self.ask(effect::Sleep(d)).await }
+impl<E: From<Asked<SleepEffect>>> Sleep for Ctx<E> {
+    async fn sleep(&self, d: Duration) { self.ask(SleepEffect(d)).await }
 }
 // …
 Driver::<Full>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());   // ok

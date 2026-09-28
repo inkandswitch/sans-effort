@@ -79,12 +79,10 @@
 //! thread that starts it: only the closure must be `Send`, so the child's
 //! future may hold an `Rc` or a value tied to its thread.
 
-pub mod effect;
-
 use crate::ctx::{AsCtx, Ctx};
 use alloc::boxed::Box;
-use core::future::Future;
-use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine};
+use core::{fmt, future::Future};
+use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox};
 
 /// Start child routines.
 pub trait Spawn {
@@ -119,7 +117,7 @@ pub trait Spawn {
 impl<C: AsCtx> Spawn for C
 where
     C::Vocabulary:
-        From<effect::Spawn<C::Vocabulary>> + From<effect::SpawnPinned<C::Vocabulary>> + 'static,
+        From<SpawnEffect<C::Vocabulary>> + From<SpawnPinnedEffect<C::Vocabulary>> + 'static,
 {
     type Child = Ctx<C::Vocabulary>;
 
@@ -130,9 +128,8 @@ where
         &self,
         f: F,
     ) {
-        let child =
-            effect::Child::new(move |outbox| -> BoxedRoutine { Box::pin(f(Ctx::new(outbox))) });
-        self.ctx().tell(effect::Spawn(child));
+        let child = Child::new(move |outbox| -> BoxedRoutine { Box::pin(f(Ctx::new(outbox))) });
+        self.ctx().tell(SpawnEffect(child));
     }
 
     fn spawn_pinned<
@@ -142,10 +139,80 @@ where
         &self,
         f: F,
     ) {
-        let child = effect::PinnedChild::new(move |outbox| -> LocalBoxedRoutine {
-            Box::pin(f(Ctx::new(outbox)))
-        });
-        self.ctx().tell(effect::SpawnPinned(child));
+        let child =
+            PinnedChild::new(move |outbox| -> LocalBoxedRoutine { Box::pin(f(Ctx::new(outbox))) });
+        self.ctx().tell(SpawnPinnedEffect(child));
+    }
+}
+
+/// Start a child that may move between threads: a tell.
+///
+/// Each spawn effect carries the child itself, unstarted: a closure from the
+/// child's own outbox to its boxed future. The host's vocabulary decides what
+/// spawning means — typically registering the child as a machine of its own
+/// and telling the host its handle. None of it crosses an FFI boundary; only
+/// that handle does.
+#[derive(Debug)]
+pub struct SpawnEffect<E>(pub Child<E>);
+
+/// Start a child that stays on the thread that starts it: a tell.
+#[derive(Debug)]
+pub struct SpawnPinnedEffect<E>(pub PinnedChild<E>);
+
+/// A child routine, unstarted; its future is `Send`.
+///
+/// Only [`Spawn`] builds one, so a child always gets a context
+/// built around its own outbox.
+pub struct Child<E> {
+    make: Box<dyn FnOnce(Outbox<E>) -> BoxedRoutine + Send>,
+}
+
+impl<E> Child<E> {
+    fn new<M: FnOnce(Outbox<E>) -> BoxedRoutine + Send + 'static>(make: M) -> Self {
+        Self {
+            make: Box::new(make),
+        }
+    }
+
+    /// Build the child's future around `outbox`, the outbox of the machine
+    /// that will run it — `Driver::from_boxed(|outbox| child.start(outbox))`.
+    #[must_use]
+    pub fn start(self, outbox: Outbox<E>) -> BoxedRoutine {
+        (self.make)(outbox)
+    }
+}
+
+impl<E> fmt::Debug for Child<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Child").finish_non_exhaustive()
+    }
+}
+
+/// A child routine, unstarted; its future need not be `Send`, so it is built
+/// and run on one thread. The closure that builds it is `Send`, so the child
+/// can be handed to that thread first.
+pub struct PinnedChild<E> {
+    make: Box<dyn FnOnce(Outbox<E>) -> LocalBoxedRoutine + Send>,
+}
+
+impl<E> PinnedChild<E> {
+    fn new<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine + Send + 'static>(make: M) -> Self {
+        Self {
+            make: Box::new(make),
+        }
+    }
+
+    /// Build the child's future around `outbox`, on the thread that will run
+    /// it — `LocalDriver::from_boxed(|outbox| child.start(outbox))`.
+    #[must_use]
+    pub fn start(self, outbox: Outbox<E>) -> LocalBoxedRoutine {
+        (self.make)(outbox)
+    }
+}
+
+impl<E> fmt::Debug for PinnedChild<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PinnedChild").finish_non_exhaustive()
     }
 }
 
@@ -157,7 +224,7 @@ mod tests {
     )]
 
     use super::*;
-    use crate::console::{WriteLine, effect::WriteLine as Written};
+    use crate::console::{WriteLine, WriteLineEffect as Written};
     use alloc::{rc::Rc, string::String, vec::Vec};
     use core::ops::ControlFlow;
     use sans_effort_core::{
@@ -166,19 +233,19 @@ mod tests {
     };
 
     enum Effect {
-        Spawn(effect::Spawn<Effect>),
-        SpawnPinned(effect::SpawnPinned<Effect>),
+        Spawn(SpawnEffect<Effect>),
+        SpawnPinned(SpawnPinnedEffect<Effect>),
         WriteLine(Written),
     }
 
-    impl From<effect::Spawn<Effect>> for Effect {
-        fn from(spawn: effect::Spawn<Effect>) -> Self {
+    impl From<SpawnEffect<Effect>> for Effect {
+        fn from(spawn: SpawnEffect<Effect>) -> Self {
             Effect::Spawn(spawn)
         }
     }
 
-    impl From<effect::SpawnPinned<Effect>> for Effect {
-        fn from(spawn: effect::SpawnPinned<Effect>) -> Self {
+    impl From<SpawnPinnedEffect<Effect>> for Effect {
+        fn from(spawn: SpawnPinnedEffect<Effect>) -> Self {
             Effect::SpawnPinned(spawn)
         }
     }
@@ -242,10 +309,10 @@ mod tests {
         let mut effects = parent.resume().into_iter();
         assert_eq!(parent.status(), Status::Complete);
 
-        let Some(Effect::Spawn(effect::Spawn(child))) = effects.next() else {
+        let Some(Effect::Spawn(SpawnEffect(child))) = effects.next() else {
             panic!("the migrating child first");
         };
-        let Some(Effect::SpawnPinned(effect::SpawnPinned(pinned))) = effects.next() else {
+        let Some(Effect::SpawnPinned(SpawnPinnedEffect(pinned))) = effects.next() else {
             panic!("then the pinned one");
         };
         let Some(Effect::WriteLine(Written(line))) = effects.next() else {

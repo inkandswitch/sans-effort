@@ -18,7 +18,8 @@
 //! the caller names a variant of one concrete enum; this crate is the layer
 //! that makes contexts generic over the enum.
 //!
-//! Each module holds the trait, its effect structs (in `effect`), and the impl
+//! Each module holds the trait, its effect structs (the trait's name plus
+//! `Effect`: [`SleepEffect`](time::SleepEffect)), and the impl
 //! of the trait for [`Ctx`](ctx::Ctx) — the reifying context, which records
 //! each call as an effect for a host to perform. `Ctx` is generic over the
 //! host's vocabulary `E`, so one impl serves every application: an
@@ -32,7 +33,9 @@
 //!     step::Step,
 //! };
 //! use sans_effort_effects::{
-//!     console::{ReadLine, ReadLineError, WriteLine, effect},
+//!     console::{
+//!         ReadLine, ReadLineEffect, ReadLineError, WriteLine, WriteLineEffect,
+//!     },
 //!     ctx::Ctx,
 //!     ask::Asked,
 //! };
@@ -53,16 +56,18 @@
 //!
 //! // The host's vocabulary: which effects it offers.
 //! enum Effect {
-//!     ReadLine(Asked<effect::ReadLine>),
-//!     WriteLine(effect::WriteLine),
+//!     ReadLine(Asked<ReadLineEffect>),
+//!     WriteLine(WriteLineEffect),
 //! }
 //!
-//! impl From<Asked<effect::ReadLine>> for Effect {
-//!     fn from(asked: Asked<effect::ReadLine>) -> Self { Effect::ReadLine(asked) }
+//! impl From<Asked<ReadLineEffect>> for Effect {
+//!     fn from(asked: Asked<ReadLineEffect>) -> Self {
+//!         Effect::ReadLine(asked)
+//!     }
 //! }
 //!
-//! impl From<effect::WriteLine> for Effect {
-//!     fn from(write: effect::WriteLine) -> Self { Effect::WriteLine(write) }
+//! impl From<WriteLineEffect> for Effect {
+//!     fn from(write: WriteLineEffect) -> Self { Effect::WriteLine(write) }
 //! }
 //!
 //! let mut driver = Driver::<Effect>::new(|outbox| Echo(Ctx::new(outbox)).run());
@@ -72,7 +77,7 @@
 //!
 //! while let Some(e) = queue.pop_front() {
 //!     match e {
-//!         Effect::WriteLine(effect::WriteLine(line)) => written.push(line),
+//!         Effect::WriteLine(WriteLineEffect(line)) => written.push(line),
 //!         Effect::ReadLine(Asked { reply, .. }) => {
 //!             let line = input.next().unwrap_or(Err(ReadLineError::Closed));
 //!             queue.extend(driver.reply(reply, line.map(String::from)));

@@ -1,7 +1,7 @@
 //! A receptionist and a clerk per visitor: spawning, and replies over
 //! one-shot channels.
 
-use crate::traits::lookup::Lookup;
+use crate::effects::lookup::Lookup;
 use alloc::{format, string::String, vec::Vec};
 use async_channel::{Receiver, Sender};
 use core::ops::ControlFlow;

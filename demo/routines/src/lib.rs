@@ -2,7 +2,7 @@
 //!
 //! Three routines share five effect traits: `Sleep`, `ReadLine`, and
 //! `WriteLine` from `sans-effort-effects`, the standard library, and the
-//! demo's own [`traits`], `Count` and `Lookup`. [`greeter::Greeter`] is the
+//! demo's own [`effects`], `Count` and `Lookup`. [`greeter::Greeter`] is the
 //! one every host in the exploration this library came from drove: prompt,
 //! read a name, look up a greeting, pause, greet, count, repeat; `quit` or
 //! the end of input ends it. [`fanout::Fanout`] is the same conversation
@@ -44,13 +44,13 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub mod effects;
 pub mod fanout;
 pub mod front_desk;
 pub mod greeter;
 pub mod ping_pong;
 pub mod ring;
 pub mod ticker;
-pub mod traits;
 
 #[cfg(test)]
 mod recording;

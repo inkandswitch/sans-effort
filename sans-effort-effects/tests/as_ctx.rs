@@ -11,9 +11,9 @@ use sans_effort_core::{
 };
 use sans_effort_effects::{
     ask::{Ask, Asked},
-    console::{WriteLine, effect::WriteLine as WriteLineEffect},
+    console::{WriteLine, WriteLineEffect},
     ctx::{AsCtx, Ctx},
-    time::{Sleep, effect::Sleep as SleepEffect},
+    time::{Sleep, SleepEffect},
 };
 
 /// An effect trait the stdlib does not have.

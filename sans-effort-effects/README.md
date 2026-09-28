@@ -10,7 +10,7 @@ A routine names what it needs as traits; a context decides whether each call is 
 | `console` | `WriteLine` | No                              |
 | `console` | `ReadLine`  | `Result<String, ReadLineError>` |
 
-Each module holds the trait, its effect structs (`effect::…`), and the trait's impl for the reifying context `Ctx<E>`. `Ctx` is generic over the host's vocabulary `E`, so one impl serves every application: an application writes its vocabulary enum with a `From` impl per effect it offers, and `Ctx<E>` implements exactly the traits that vocabulary can carry. An application implements its own effect traits the same way, through `Ctx::ask` and `Ctx::tell`.
+Each module holds the trait, its effect structs (the trait's name plus `Effect`: `SleepEffect`), and the trait's impl for the reifying context `Ctx<E>`. `Ctx` is generic over the host's vocabulary `E`, so one impl serves every application: an application writes its vocabulary enum with a `From` impl per effect it offers, and `Ctx<E>` implements exactly the traits that vocabulary can carry. An application implements its own effect traits the same way, through `Ctx::ask` and `Ctx::tell`.
 
 The impls are written over `AsCtx` — anything that can be viewed as a `Ctx` — which `Ctx<E>`, references, `Box`, `Rc`, and `Arc` implement. A newtype over `Ctx` implements it with one method and gets every effect trait, which is how a crate reifies an effect trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Nothing else needs `AsCtx`: routines name effect traits, and native contexts implement them directly.
 

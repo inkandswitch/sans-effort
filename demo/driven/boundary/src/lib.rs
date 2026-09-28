@@ -39,7 +39,7 @@
 //! `Sleep` and `WriteLine`.
 //!
 //! That is attenuation, checked where the routine is built and visible on
-//! the wire: `Ctx<Quiet>` does not implement `traits::lookup::Lookup`, so a
+//! the wire: `Ctx<Quiet>` does not implement `effects::lookup::Lookup`, so a
 //! `Greeter` cannot be spawned under it, while a `Ticker` can — and a host
 //! driving a `Quiet` machine knows from the type alone that tags 1–3 can
 //! never appear.
@@ -86,7 +86,7 @@
 extern crate alloc;
 
 use alloc::string::String;
-use routines::traits::{count::effect::Count, lookup::effect::Lookup};
+use routines::effects::{count::CountEffect, lookup::LookupEffect};
 use sans_effort_core::{
     boundary::{
         codec::{Encode, Writer},
@@ -97,12 +97,12 @@ use sans_effort_core::{
 };
 use sans_effort_effects::{
     ask::Asked,
-    console::effect::{ReadLine, WriteLine},
-    time::effect::Sleep,
+    console::{ReadLineEffect, WriteLineEffect},
+    time::SleepEffect,
 };
 
 #[cfg(feature = "table")]
-use sans_effort_effects::spawn::effect::{Spawn, SpawnPinned};
+use sans_effort_effects::spawn::{SpawnEffect, SpawnPinnedEffect};
 
 // ---- Full: a host that offers everything ----------------------------------
 
@@ -110,63 +110,63 @@ use sans_effort_effects::spawn::effect::{Spawn, SpawnPinned};
 #[derive(Debug)]
 pub enum Full {
     /// Tag 1.
-    Count(Asked<Count>),
+    Count(Asked<CountEffect>),
     /// Tag 2.
-    Lookup(Asked<Lookup>),
+    Lookup(Asked<LookupEffect>),
     /// Tag 3.
-    ReadLine(Asked<ReadLine>),
+    ReadLine(Asked<ReadLineEffect>),
     /// Tag 4.
-    Sleep(Asked<Sleep>),
+    Sleep(Asked<SleepEffect>),
     /// Tag 5.
-    WriteLine(WriteLine),
+    WriteLine(WriteLineEffect),
     /// Tag 6.
     #[cfg(feature = "table")]
-    Spawn(Spawn<Full>),
+    Spawn(SpawnEffect<Full>),
     /// Tag 7.
     #[cfg(feature = "table")]
-    SpawnPinned(SpawnPinned<Full>),
+    SpawnPinned(SpawnPinnedEffect<Full>),
 }
 
 #[cfg(feature = "table")]
-impl From<Spawn<Full>> for Full {
-    fn from(spawn: Spawn<Full>) -> Self {
+impl From<SpawnEffect<Full>> for Full {
+    fn from(spawn: SpawnEffect<Full>) -> Self {
         Full::Spawn(spawn)
     }
 }
 
 #[cfg(feature = "table")]
-impl From<SpawnPinned<Full>> for Full {
-    fn from(spawn: SpawnPinned<Full>) -> Self {
+impl From<SpawnPinnedEffect<Full>> for Full {
+    fn from(spawn: SpawnPinnedEffect<Full>) -> Self {
         Full::SpawnPinned(spawn)
     }
 }
 
-impl From<Asked<Count>> for Full {
-    fn from(asked: Asked<Count>) -> Self {
+impl From<Asked<CountEffect>> for Full {
+    fn from(asked: Asked<CountEffect>) -> Self {
         Full::Count(asked)
     }
 }
 
-impl From<Asked<Lookup>> for Full {
-    fn from(asked: Asked<Lookup>) -> Self {
+impl From<Asked<LookupEffect>> for Full {
+    fn from(asked: Asked<LookupEffect>) -> Self {
         Full::Lookup(asked)
     }
 }
 
-impl From<Asked<ReadLine>> for Full {
-    fn from(asked: Asked<ReadLine>) -> Self {
+impl From<Asked<ReadLineEffect>> for Full {
+    fn from(asked: Asked<ReadLineEffect>) -> Self {
         Full::ReadLine(asked)
     }
 }
 
-impl From<Asked<Sleep>> for Full {
-    fn from(asked: Asked<Sleep>) -> Self {
+impl From<Asked<SleepEffect>> for Full {
+    fn from(asked: Asked<SleepEffect>) -> Self {
         Full::Sleep(asked)
     }
 }
 
-impl From<WriteLine> for Full {
-    fn from(write: WriteLine) -> Self {
+impl From<WriteLineEffect> for Full {
+    fn from(write: WriteLineEffect) -> Self {
         Full::WriteLine(write)
     }
 }
@@ -225,7 +225,7 @@ impl HostEffect for Full {
                 (View::Count { id: reply.id() }, Some(u64::pending(reply)))
             }
             Full::Lookup(Asked {
-                request: Lookup(name),
+                request: LookupEffect(name),
                 reply,
             }) => (
                 View::Lookup {
@@ -248,16 +248,16 @@ impl HostEffect for Full {
                 },
                 Some(<()>::pending(reply)),
             ),
-            Full::WriteLine(WriteLine(text)) => (View::WriteLine { text }, None),
+            Full::WriteLine(WriteLineEffect(text)) => (View::WriteLine { text }, None),
             #[cfg(feature = "table")]
-            Full::Spawn(Spawn(child)) => (
+            Full::Spawn(SpawnEffect(child)) => (
                 View::Spawned {
                     handle: sans_effort_host::table::new_boxed(move |outbox| child.start(outbox)),
                 },
                 None,
             ),
             #[cfg(feature = "table")]
-            Full::SpawnPinned(SpawnPinned(child)) => (
+            Full::SpawnPinned(SpawnPinnedEffect(child)) => (
                 View::SpawnedPinned {
                     handle: sans_effort_host::table::park_pinned(move |outbox| child.start(outbox)),
                 },
@@ -312,19 +312,19 @@ impl Encode for View {
 #[derive(Debug)]
 pub enum Quiet {
     /// Tag 4.
-    Sleep(Asked<Sleep>),
+    Sleep(Asked<SleepEffect>),
     /// Tag 5.
-    WriteLine(WriteLine),
+    WriteLine(WriteLineEffect),
 }
 
-impl From<Asked<Sleep>> for Quiet {
-    fn from(asked: Asked<Sleep>) -> Self {
+impl From<Asked<SleepEffect>> for Quiet {
+    fn from(asked: Asked<SleepEffect>) -> Self {
         Quiet::Sleep(asked)
     }
 }
 
-impl From<WriteLine> for Quiet {
-    fn from(write: WriteLine) -> Self {
+impl From<WriteLineEffect> for Quiet {
+    fn from(write: WriteLineEffect) -> Self {
         Quiet::WriteLine(write)
     }
 }
@@ -388,7 +388,7 @@ mod tests {
 
         while let Some(effect) = queue.pop_front() {
             let more = match effect {
-                Full::WriteLine(WriteLine(text)) => {
+                Full::WriteLine(WriteLineEffect(text)) => {
                     seen.push(View::WriteLine { text: text.clone() });
                     written.push(text);
                     continue;
@@ -399,7 +399,7 @@ mod tests {
                     driver.reply(reply, line.map(String::from))
                 }
                 Full::Lookup(Asked {
-                    request: Lookup(name),
+                    request: LookupEffect(name),
                     reply,
                 }) => {
                     seen.push(View::Lookup {
@@ -409,7 +409,7 @@ mod tests {
                     driver.reply(reply, format!("Hello to {name}"))
                 }
                 Full::Sleep(Asked {
-                    request: Sleep(after),
+                    request: SleepEffect(after),
                     reply,
                 }) => {
                     seen.push(View::Sleep {
@@ -489,7 +489,7 @@ mod tests {
                 let mut written = Vec::new();
 
                 let [
-                    Full::WriteLine(WriteLine(prompt)),
+                    Full::WriteLine(WriteLineEffect(prompt)),
                     Full::ReadLine(Asked { reply: read, .. }),
                 ] = exactly(driver.resume())
                 else {
@@ -499,7 +499,7 @@ mod tests {
 
                 let [
                     Full::Lookup(Asked {
-                        request: Lookup(name),
+                        request: LookupEffect(name),
                         reply: lookup,
                     }),
                     Full::Count(Asked { reply: count, .. }),
@@ -520,7 +520,7 @@ mod tests {
                     third.extend(driver.reply(lookup, String::from("Hi")));
                 }
                 let [
-                    Full::WriteLine(WriteLine(greeting)),
+                    Full::WriteLine(WriteLineEffect(greeting)),
                     Full::Sleep(Asked { reply: sleep, .. }),
                     Full::ReadLine(Asked { reply: read, .. }),
                 ] = exactly(third)
@@ -539,7 +539,7 @@ mod tests {
                     assert!(fourth.is_empty());
                     fourth.extend(driver.reply(sleep, ()));
                 }
-                let [Full::WriteLine(WriteLine(bye))] = exactly(fourth) else {
+                let [Full::WriteLine(WriteLineEffect(bye))] = exactly(fourth) else {
                     panic!("last batch: bye");
                 };
                 written.push(bye);
@@ -597,9 +597,9 @@ mod tests {
 
         while let Some(effect) = queue.pop_front() {
             match effect {
-                Quiet::WriteLine(WriteLine(text)) => written.push(text),
+                Quiet::WriteLine(WriteLineEffect(text)) => written.push(text),
                 Quiet::Sleep(Asked { request, reply }) => {
-                    assert_eq!(request, Sleep(PAUSE));
+                    assert_eq!(request, SleepEffect(PAUSE));
                     queue.extend(driver.reply(reply, ()));
                 }
             }
@@ -691,16 +691,16 @@ mod tests {
             loop {
                 while let Some((at, effect)) = queue.pop_front() {
                     let (from, more) = match effect {
-                        Full::WriteLine(WriteLine(text)) => {
+                        Full::WriteLine(WriteLineEffect(text)) => {
                             written.push(text);
                             continue;
                         }
-                        Full::Spawn(Spawn(child)) => adopt(
+                        Full::Spawn(SpawnEffect(child)) => adopt(
                             &mut machines,
                             Machine::Migrating(Driver::from_boxed(|outbox| child.start(outbox))),
                             &woken,
                         ),
-                        Full::SpawnPinned(SpawnPinned(child)) => adopt(
+                        Full::SpawnPinned(SpawnPinnedEffect(child)) => adopt(
                             &mut machines,
                             Machine::Pinned(LocalDriver::from_boxed(|outbox| child.start(outbox))),
                             &woken,
@@ -716,7 +716,7 @@ mod tests {
                             )
                         }
                         Full::Lookup(Asked {
-                            request: Lookup(name),
+                            request: LookupEffect(name),
                             reply,
                         }) => {
                             let greeting = match name.as_str() {

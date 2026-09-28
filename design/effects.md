@@ -21,7 +21,7 @@ The shape is `embedded-hal`'s: one crate of traits, implementations in separate 
 | Crate                 | Contents                                                                                               | Target   |
 |-----------------------|--------------------------------------------------------------------------------------------------------|----------|
 | `sans-effort-core`    | The mechanism, unchanged, plus `Decode` and `select`                                                    | `no_std` |
-| `sans-effort-effects` | Per module: the trait, its effect structs (`effect::…`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
+| `sans-effort-effects` | Per module: the trait, its effect structs (the trait's name plus `Effect`: `SleepEffect`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
 | `sans-effort-tokio`   | One component per effect trait — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, `Spawn`           | `std`    |
 
 Modules in `sans-effort-effects`:
@@ -39,9 +39,9 @@ The vocabulary enum and its tags stay the application's. A host decides what it 
 `Ctx<E>` is generic over the vocabulary, so one impl per trait covers every application:
 
 ```rust
-impl<E: From<Asked<time::effect::Sleep>>> time::Sleep for Ctx<E> {
+impl<E: From<Asked<time::SleepEffect>>> time::Sleep for Ctx<E> {
     async fn sleep(&self, d: Duration) {
-        self.ask(time::effect::Sleep(d)).await;
+        self.ask(time::SleepEffect(d)).await;
     }
 }
 ```
@@ -50,14 +50,14 @@ An application writes its vocabulary — eventually with a derive — and both i
 
 ```rust
 enum Full {
-    Sleep(Asked<time::effect::Sleep>),
-    ReadLine(Asked<console::effect::ReadLine>),
-    WriteLine(console::effect::WriteLine),
-    Lookup(Asked<effect::Lookup>),  // the application's own effect trait
+    Sleep(Asked<time::SleepEffect>),
+    ReadLine(Asked<console::ReadLineEffect>),
+    WriteLine(console::WriteLineEffect),
+    Lookup(Asked<LookupEffect>),  // the application's own effect trait
 }
 ```
 
-Each module names its effect structs in an `effect` submodule: `time::Sleep` is the trait, `time::effect::Sleep` what it records.
+Each module holds its effect structs beside the trait, named for it with an `Effect` suffix — a trait and a struct cannot share a name in one module: `time::Sleep` is the trait, `time::SleepEffect` what it records.
 
 ### An Application's Own Effect Traits
 
@@ -70,7 +70,7 @@ Every reifying impl — the stdlib's and, by convention, an application's — is
 ```rust
 pub trait AsCtx { type Vocabulary; fn ctx(&self) -> &Ctx<Self::Vocabulary>; }
 
-impl<C: AsCtx> Sleep for C where C::Vocabulary: From<Asked<time::effect::Sleep>> { … }
+impl<C: AsCtx> Sleep for C where C::Vocabulary: From<Asked<time::SleepEffect>> { … }
 ```
 
 `Ctx<E>` implements `AsCtx`, and so do references, `Box`, `Rc`, and `Arc` to anything that does. A newtype over `Ctx` implements it with one method and gets every effect trait — which is how a crate reifies an effect trait it does not own: the orphan rule forbids `impl TheirTrait for Ctx<E>`, but allows it on a local newtype. Without `AsCtx`, that newtype would have to forward every stdlib trait by hand.
@@ -102,7 +102,7 @@ The traits are small, `no_std`, and have no dependencies, so the usual reason fo
 
 ## Why "Effect Traits", and Not "Capabilities"
 
-A trait like `Sleep` is an _effect trait_: a trait whose calls become effects. It corresponds to an effect signature in the algebraic-effects literature, and a routine's bounds (`C: Sleep + ReadLine`) are its effect row. The effect itself is the value a call records: `effect::Sleep(50ms)`.
+A trait like `Sleep` is an _effect trait_: a trait whose calls become effects. It corresponds to an effect signature in the algebraic-effects literature, and a routine's bounds (`C: Sleep + ReadLine`) are its effect row. The effect itself is the value a call records: `SleepEffect(50ms)`.
 
 "Capability" is kept for what object-capability discipline means by it: something _held_, which confers authority. The context value is the capability through which a routine uses its effect traits; a reply handle and a channel end are capabilities too. A trait is not held — it is the interface to an authority. This is the split drawn by "effects as capabilities" (Effekt): the effect is the interface, the capability the value that grants it. See [`capabilities`](capabilities.md).
 

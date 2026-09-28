@@ -11,7 +11,7 @@ use sans_effort_core::{
 ///
 /// Generic over the host's vocabulary `E`. Each trait in this crate is
 /// implemented for `Ctx<E>` exactly when `E` can carry that trait's effect —
-/// `E: From<Asked<time::effect::Sleep>>` for [`Sleep`](crate::time::Sleep) —
+/// `E: From<Asked<time::SleepEffect>>` for [`Sleep`](crate::time::Sleep) —
 /// so the set of traits `Ctx<E>` implements _is_ the set of effect traits the
 /// host has agreed to provide.
 ///

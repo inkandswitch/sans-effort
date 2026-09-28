@@ -1,8 +1,9 @@
 //! The console: reading and writing lines.
 
-pub mod effect;
-
-use crate::{ask::Asked, ctx::AsCtx};
+use crate::{
+    ask::{Ask, Asked},
+    ctx::AsCtx,
+};
 use alloc::string::String;
 use core::future::Future;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
@@ -26,21 +27,58 @@ pub trait WriteLine {
 
 impl<C: AsCtx + Sync> ReadLine for C
 where
-    C::Vocabulary: From<Asked<effect::ReadLine>> + Send,
+    C::Vocabulary: From<Asked<ReadLineEffect>> + Send,
 {
     /// A reply that does not decode is a host bug the routine cannot report,
     /// so it reads as [`ReadLineError::Failed`].
     async fn read_line(&self) -> Result<String, ReadLineError> {
-        self.ctx().ask(effect::ReadLine).await
+        self.ctx().ask(ReadLineEffect).await
     }
 }
 
 impl<C: AsCtx> WriteLine for C
 where
-    C::Vocabulary: From<effect::WriteLine>,
+    C::Vocabulary: From<WriteLineEffect>,
 {
     fn write_line(&self, line: String) {
-        self.ctx().tell(effect::WriteLine(line));
+        self.ctx().tell(WriteLineEffect(line));
+    }
+}
+
+/// The next line of input. Awaits a `Result<String, ReadLineError>`, which
+/// crosses as `bytes`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadLineEffect;
+
+impl Ask for ReadLineEffect {
+    type Reply = Result<String, ReadLineError>;
+}
+
+/// No fields.
+impl Encode for ReadLineEffect {
+    fn encode(&self, _: &mut Writer) {}
+}
+
+impl Decode for ReadLineEffect {
+    fn decode(_: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        Ok(ReadLineEffect)
+    }
+}
+
+/// Show a line. Fire-and-forget; not a [`Ask`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WriteLineEffect(pub String);
+
+/// The line, as a `str`.
+impl Encode for WriteLineEffect {
+    fn encode(&self, w: &mut Writer) {
+        w.str(&self.0);
+    }
+}
+
+impl Decode for WriteLineEffect {
+    fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        r.str().map(WriteLineEffect)
     }
 }
 
@@ -96,18 +134,18 @@ mod tests {
     };
 
     enum Effect {
-        ReadLine(Asked<effect::ReadLine>),
-        WriteLine(effect::WriteLine),
+        ReadLine(Asked<ReadLineEffect>),
+        WriteLine(WriteLineEffect),
     }
 
-    impl From<Asked<effect::ReadLine>> for Effect {
-        fn from(asked: Asked<effect::ReadLine>) -> Self {
+    impl From<Asked<ReadLineEffect>> for Effect {
+        fn from(asked: Asked<ReadLineEffect>) -> Self {
             Effect::ReadLine(asked)
         }
     }
 
-    impl From<effect::WriteLine> for Effect {
-        fn from(write: effect::WriteLine) -> Self {
+    impl From<WriteLineEffect> for Effect {
+        fn from(write: WriteLineEffect) -> Self {
             Effect::WriteLine(write)
         }
     }
@@ -138,7 +176,7 @@ mod tests {
             .reply(handle, reply)
             .into_iter()
             .find_map(|e| match e {
-                Effect::WriteLine(effect::WriteLine(line)) => Some(line),
+                Effect::WriteLine(WriteLineEffect(line)) => Some(line),
                 Effect::ReadLine(_) => None,
             })
             .expect("the routine writes once");
@@ -181,7 +219,7 @@ mod tests {
         let lines: Vec<String> = written
             .into_iter()
             .filter_map(|e| match e {
-                Effect::WriteLine(effect::WriteLine(line)) => Some(line),
+                Effect::WriteLine(WriteLineEffect(line)) => Some(line),
                 Effect::ReadLine(_) => None,
             })
             .collect();

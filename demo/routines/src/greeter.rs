@@ -2,7 +2,7 @@
 
 use crate::{
     PAUSE,
-    traits::{count::Count, lookup::Lookup},
+    effects::{count::Count, lookup::Lookup},
 };
 use alloc::{format, string::String};
 use core::ops::ControlFlow;

@@ -82,9 +82,9 @@ Both are fire-and-forget: they record the unstarted child and return. The closur
 Behind a driver, the child rides in the effect: `Spawn` records a tell whose payload is the unstarted child. The vocabulary's `split` decides what spawning means. The demo registers it with the host table:
 
 ```rust
-Full::Spawn(effect::Spawn(child)) =>
+Full::Spawn(SpawnEffect(child)) =>
     (View::Spawned { handle: table::new_boxed(move |outbox| child.start(outbox)) }, None),
-Full::SpawnPinned(effect::SpawnPinned(child)) =>
+Full::SpawnPinned(SpawnPinnedEffect(child)) =>
     (View::SpawnedPinned { handle: table::park_pinned(move |outbox| child.start(outbox)) }, None),
 ```
 

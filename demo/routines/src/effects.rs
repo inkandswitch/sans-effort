@@ -4,9 +4,10 @@
 //! wants them. One trait per verb, each one thing a routine can do to, or
 //! wait on from, its environment.
 //!
-//! Laid out like a module of the standard library: one module per trait,
-//! holding the trait, its reifying impl, and its effect (in `effect`). The
-//! impl is written over [`AsCtx`](sans_effort::ctx::AsCtx), so it holds for
+//! One module per trait, holding the trait, its reifying impl, and its
+//! effect — named for the trait with an `Effect` suffix (`CountEffect`), as
+//! in the standard library, since a trait and a struct cannot share a name.
+//! The impl is written over [`AsCtx`](sans_effort::ctx::AsCtx), so it holds for
 //! [`Ctx`](sans_effort::ctx::Ctx) and for any newtype wrapping one. The
 //! routines themselves use only the traits.
 //!
