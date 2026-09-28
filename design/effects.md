@@ -22,15 +22,18 @@ The shape is `embedded-hal`'s: one crate of traits, implementations in separate 
 |-----------------------|--------------------------------------------------------------------------------------------------------|----------|
 | `sans-effort-core`    | The mechanism, unchanged, plus `Decode` and `select`                                                    | `no_std` |
 | `sans-effort-effects` | Per module: the trait, its effect structs (the trait's name plus `Effect`: `SleepEffect`), and the reifying `Ctx<E>` impl. No tags     | `no_std` |
-| `sans-effort-tokio`   | One component per effect trait — `TokioClock` (`Sleep`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`) — and `TokioCtx<R, W>` built from them; later, `Spawn`           | `std`    |
+| `sans-effort-tokio`   | One component per effect trait — `TokioClock` (`Sleep`, `Now`), `TokioInput<R>` (`ReadLine`), `TokioOutput<W>` (`WriteLine`), `TokioFs`, `TokioEnv`, `TokioRandom`, `TokioSpawner` — and `TokioCtx<R, W>` built from them           | `std`    |
 
 Modules in `sans-effort-effects`:
 
 | Module    | Traits                                        |
 |-----------|-----------------------------------------------|
-| `time`    | `Sleep`                                       |
+| `time`    | `Sleep`, `Now`                                |
 | `console` | `ReadLine`, `WriteLine`                       |
-| `spawn`   | `Spawn` (`spawn`, `spawn_pinned`) — see [`channels`](channels.md). Channels themselves are plain Rust, not an effect trait |
+| `fs`      | `ReadFile`, `WriteFile` (whole files; paths are UTF-8 strings the host interprets) |
+| `env`     | `Var`                                         |
+| `random`  | `Random` (host-supplied, so a replay can repeat it) |
+| `spawn`   | `Spawn` (`spawn`) and `SpawnPinned` (`spawn_pinned`) — see [`channels`](channels.md). Channels themselves are plain Rust, not an effect trait |
 
 The vocabulary enum and its tags stay the application's. A host decides what it offers; the stdlib only makes the offer cheap to write.
 

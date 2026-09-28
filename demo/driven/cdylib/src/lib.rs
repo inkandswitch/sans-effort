@@ -13,8 +13,8 @@
 
 use greeter_boundary::{Full, Quiet};
 use routines::{
-    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
-    ticker::Ticker,
+    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal, ping_pong::PingPong,
+    ring::Ring, ticker::Ticker,
 };
 use sans_effort_core::step::Step;
 use sans_effort_effects::ctx::Ctx;
@@ -74,6 +74,13 @@ pub extern "C" fn greeter_new_ring() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_front_desk() -> u64 {
     table::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
+}
+
+/// Create a journal that appends three entries: it asks for a variable, a
+/// file, the time, and random bytes (tags 8–12), and writes the file back.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_journal() -> u64 {
+    table::new(|outbox| Journal::new(Ctx::<Full>::new(outbox), 3).run())
 }
 
 /// Deliver one reply record — `kind · id · payload` — and receive the effects

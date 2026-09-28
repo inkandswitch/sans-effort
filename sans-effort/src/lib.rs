@@ -12,6 +12,7 @@
 //!     reply  select  step
 //!     testing                  sans-effort-core
 //!     ask  console  ctx
+//!     env  fs  random
 //!     spawn  time              sans-effort-effects
 //!     host     (feature)       sans-effort-host
 //!     tokio    (feature)       sans-effort-tokio
@@ -71,7 +72,7 @@
 pub use sans_effort_core::{boundary, driver, join, reply, select, step, testing};
 
 #[doc(inline)]
-pub use sans_effort_effects::{ask, console, ctx, spawn, time};
+pub use sans_effort_effects::{ask, console, ctx, env, fs, random, spawn, time};
 
 #[cfg(feature = "host")]
 #[doc(inline)]

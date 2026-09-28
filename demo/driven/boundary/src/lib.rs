@@ -72,6 +72,14 @@
 //! | 5   | `WriteLine(str)`         | —          |
 //! | 6   | `Spawned(u64 handle)`    | —          |
 //! | 7   | `SpawnedPinned(u64 handle)` | —       |
+//! | 8   | `Now · id`               | `2 id u64` (nanoseconds since the epoch) |
+//! | 9   | `Random(u32 len) · id`   | `4 id bytes` (exactly `len`) |
+//! | 10  | `Var(str name) · id`     | `4 id bytes`: `00` unset, `01 · str` |
+//! | 11  | `ReadFile(str path) · id` | `4 id bytes`: `00 · bytes`, or `01 · u8` error |
+//! | 12  | `WriteFile(str path, bytes) · id` | `4 id bytes`: `00`, or `01 · u8` error |
+//!
+//! A file error is one byte: `00` not found, `01` permission denied, `02`
+//! anything else. `bytes` inside a payload is `u32 len` + the bytes.
 //!
 //! Tags 6 and 7 name a child the routine spawned, already registered in
 //! `sans-effort-host`'s table: the host resumes it to begin it. A
@@ -85,7 +93,7 @@
 
 extern crate alloc;
 
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use routines::effects::{count::CountEffect, lookup::LookupEffect};
 use sans_effort_core::{
     boundary::{
@@ -98,7 +106,10 @@ use sans_effort_core::{
 use sans_effort_effects::{
     ask::Asked,
     console::{ReadLineEffect, WriteLineEffect},
-    time::SleepEffect,
+    env::VarEffect,
+    fs::{ReadFileEffect, WriteFileEffect},
+    random::RandomEffect,
+    time::{NowEffect, SleepEffect},
 };
 
 #[cfg(feature = "table")]
@@ -106,7 +117,8 @@ use sans_effort_effects::spawn::{SpawnEffect, SpawnPinnedEffect};
 
 // ---- Full: a host that offers everything ----------------------------------
 
-/// The vocabulary of a host that offers all five effect traits.
+/// The vocabulary of a host that offers every effect trait the demo's routines
+/// use.
 #[derive(Debug)]
 pub enum Full {
     /// Tag 1.
@@ -119,6 +131,16 @@ pub enum Full {
     Sleep(Asked<SleepEffect>),
     /// Tag 5.
     WriteLine(WriteLineEffect),
+    /// Tag 8.
+    Now(Asked<NowEffect>),
+    /// Tag 9.
+    Random(Asked<RandomEffect>),
+    /// Tag 10.
+    Var(Asked<VarEffect>),
+    /// Tag 11.
+    ReadFile(Asked<ReadFileEffect>),
+    /// Tag 12.
+    WriteFile(Asked<WriteFileEffect>),
     /// Tag 6.
     #[cfg(feature = "table")]
     Spawn(SpawnEffect<Full>),
@@ -165,6 +187,36 @@ impl From<Asked<SleepEffect>> for Full {
     }
 }
 
+impl From<Asked<NowEffect>> for Full {
+    fn from(asked: Asked<NowEffect>) -> Self {
+        Full::Now(asked)
+    }
+}
+
+impl From<Asked<RandomEffect>> for Full {
+    fn from(asked: Asked<RandomEffect>) -> Self {
+        Full::Random(asked)
+    }
+}
+
+impl From<Asked<VarEffect>> for Full {
+    fn from(asked: Asked<VarEffect>) -> Self {
+        Full::Var(asked)
+    }
+}
+
+impl From<Asked<ReadFileEffect>> for Full {
+    fn from(asked: Asked<ReadFileEffect>) -> Self {
+        Full::ReadFile(asked)
+    }
+}
+
+impl From<Asked<WriteFileEffect>> for Full {
+    fn from(asked: Asked<WriteFileEffect>) -> Self {
+        Full::WriteFile(asked)
+    }
+}
+
 impl From<WriteLineEffect> for Full {
     fn from(write: WriteLineEffect) -> Self {
         Full::WriteLine(write)
@@ -202,6 +254,41 @@ pub enum View {
     WriteLine {
         /// What to show.
         text: String,
+    },
+    /// Tag 8.
+    Now {
+        /// Request id.
+        id: u64,
+    },
+    /// Tag 9.
+    Random {
+        /// How many bytes.
+        len: u32,
+        /// Request id.
+        id: u64,
+    },
+    /// Tag 10.
+    Var {
+        /// The variable's name.
+        name: String,
+        /// Request id.
+        id: u64,
+    },
+    /// Tag 11.
+    ReadFile {
+        /// The file.
+        path: String,
+        /// Request id.
+        id: u64,
+    },
+    /// Tag 12.
+    WriteFile {
+        /// The file.
+        path: String,
+        /// Its new contents.
+        bytes: Vec<u8>,
+        /// Request id.
+        id: u64,
     },
     /// Tag 6: a child that may migrate between threads. Resume it to begin it.
     Spawned {
@@ -249,6 +336,50 @@ impl HostEffect for Full {
                 Some(<()>::pending(reply)),
             ),
             Full::WriteLine(WriteLineEffect(text)) => (View::WriteLine { text }, None),
+            Full::Now(Asked { reply, .. }) => {
+                (View::Now { id: reply.id() }, Some(Answer::pending(reply)))
+            }
+            Full::Random(Asked {
+                request: RandomEffect(len),
+                reply,
+            }) => (
+                View::Random {
+                    len,
+                    id: reply.id(),
+                },
+                Some(Answer::pending(reply)),
+            ),
+            Full::Var(Asked {
+                request: VarEffect(name),
+                reply,
+            }) => (
+                View::Var {
+                    name,
+                    id: reply.id(),
+                },
+                Some(Answer::pending(reply)),
+            ),
+            Full::ReadFile(Asked {
+                request: ReadFileEffect(path),
+                reply,
+            }) => (
+                View::ReadFile {
+                    path,
+                    id: reply.id(),
+                },
+                Some(Answer::pending(reply)),
+            ),
+            Full::WriteFile(Asked {
+                request: WriteFileEffect { path, bytes },
+                reply,
+            }) => (
+                View::WriteFile {
+                    path,
+                    bytes,
+                    id: reply.id(),
+                },
+                Some(Answer::pending(reply)),
+            ),
             #[cfg(feature = "table")]
             Full::Spawn(SpawnEffect(child)) => (
                 View::Spawned {
@@ -291,6 +422,31 @@ impl Encode for View {
             View::WriteLine { text } => {
                 w.u8(5);
                 w.str(text);
+            }
+            View::Now { id } => {
+                w.u8(8);
+                w.u64(*id);
+            }
+            View::Random { len, id } => {
+                w.u8(9);
+                w.u32(*len);
+                w.u64(*id);
+            }
+            View::Var { name, id } => {
+                w.u8(10);
+                w.str(name);
+                w.u64(*id);
+            }
+            View::ReadFile { path, id } => {
+                w.u8(11);
+                w.str(path);
+                w.u64(*id);
+            }
+            View::WriteFile { path, bytes, id } => {
+                w.u8(12);
+                w.str(path);
+                w.bytes(bytes);
+                w.u64(*id);
             }
             View::Spawned { handle } => {
                 w.u8(6);
@@ -423,6 +579,11 @@ mod tests {
                     greeted += 1;
                     driver.reply(reply, greeted)
                 }
+                Full::Now(_)
+                | Full::Random(_)
+                | Full::Var(_)
+                | Full::ReadFile(_)
+                | Full::WriteFile(_) => panic!("the greeter never keeps a journal"),
                 #[cfg(feature = "table")]
                 Full::Spawn(_) | Full::SpawnPinned(_) => panic!("the greeter never spawns"),
             };
@@ -471,7 +632,12 @@ mod tests {
                 View::Count { id }
                 | View::Lookup { id, .. }
                 | View::ReadLine { id }
-                | View::Sleep { id, .. } => Some(*id),
+                | View::Sleep { id, .. }
+                | View::Now { id }
+                | View::Random { id, .. }
+                | View::Var { id, .. }
+                | View::ReadFile { id, .. }
+                | View::WriteFile { id, .. } => Some(*id),
                 View::WriteLine { .. } | View::Spawned { .. } | View::SpawnedPinned { .. } => None,
             })
             .collect();
@@ -731,6 +897,13 @@ mod tests {
                         }
                         Full::Count(Asked { reply, .. }) => {
                             (at, nth(&mut machines, at).reply(reply, 0))
+                        }
+                        Full::Now(_)
+                        | Full::Random(_)
+                        | Full::Var(_)
+                        | Full::ReadFile(_)
+                        | Full::WriteFile(_) => {
+                            panic!("no routine the router runs keeps a journal")
                         }
                     };
                     queue.extend(more.into_iter().map(|e| (from, e)));

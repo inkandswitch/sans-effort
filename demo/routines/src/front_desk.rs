@@ -8,7 +8,7 @@ use core::ops::ControlFlow;
 use sans_effort::step::Step;
 use sans_effort::{
     console::{ReadLine, WriteLine},
-    spawn::Spawn,
+    spawn::SpawnPinned,
 };
 
 /// Reads names until the input closes (or someone types `quit`), spawning a
@@ -34,7 +34,7 @@ impl<C> FrontDesk<C> {
     }
 }
 
-impl<C: ReadLine + WriteLine + Spawn> Step for FrontDesk<C>
+impl<C: ReadLine + WriteLine + SpawnPinned> Step for FrontDesk<C>
 where
     C::Child: Lookup + 'static,
 {

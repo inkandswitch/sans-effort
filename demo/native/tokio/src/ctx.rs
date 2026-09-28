@@ -8,6 +8,12 @@
 //! which forwards the stdlib effect traits to the `TokioCtx` inside it, one
 //! line each.
 //!
+//! For the journal it also keeps a small world of its own — a variable,
+//! files in memory, a clock that starts at 1 700 000 000 000 ms and moves a
+//! second per reading, and counting random bytes — the same one every demo
+//! host keeps, so the transcripts agree. `TokioCtx`'s real clock, files,
+//! environment, and entropy are `sans-effort-tokio`'s, tested there.
+//!
 //! Compare `greeter_boundary`'s vocabularies: there each effect trait records
 //! an effect and suspends until a host replies. Here each one is a real
 //! future, and the routine is the task.
@@ -17,25 +23,45 @@ use routines::effects::{count::Count, lookup::Lookup};
 use sans_effort::tokio::ctx::TokioCtx;
 use sans_effort::{
     console::{ReadLine, ReadLineError, WriteLine},
-    spawn::Spawn,
-    time::Sleep,
+    env::Var,
+    fs::{FsError, ReadFile, WriteFile},
+    random::Random,
+    spawn::{Spawn, SpawnPinned},
+    time::{Now, Sleep, UnixTime},
 };
 use std::{
+    collections::HashMap,
     io,
     sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU8, AtomicU64, Ordering},
     },
 };
 use tokio::io::AsyncBufRead;
 
-/// `TokioCtx` with a greeting counter and a fixed directory. Cloning shares
-/// both, as a spawned child's context does.
+/// `TokioCtx` with a greeting counter, a fixed directory, and the journal's
+/// world. Cloning shares all of it, as a spawned child's context does.
 #[derive(Debug)]
 pub(crate) struct DemoCtx<R, W> {
     tokio: TokioCtx<R, W>,
     greeted: Arc<AtomicU64>,
+    world: Arc<World>,
 }
+
+/// What the journal reads and writes: files in memory, a clock that moves a
+/// second per reading, and the next random byte.
+#[derive(Debug, Default)]
+struct World {
+    files: Mutex<HashMap<String, Vec<u8>>>,
+    readings: AtomicU64,
+    next_byte: AtomicU8,
+}
+
+/// The one variable the journal asks for.
+const JOURNAL: (&str, &str) = ("JOURNAL", "notes.txt");
+
+/// Where the demo clock starts.
+const EPOCH_MILLIS: u64 = 1_700_000_000_000;
 
 impl<R, W> DemoCtx<R, W> {
     /// The demo's effect traits on top of `tokio`.
@@ -43,6 +69,7 @@ impl<R, W> DemoCtx<R, W> {
         Self {
             tokio,
             greeted: Arc::new(AtomicU64::new(0)),
+            world: Arc::default(),
         }
     }
 }
@@ -52,6 +79,7 @@ impl<R, W> Clone for DemoCtx<R, W> {
         Self {
             tokio: self.tokio.clone(),
             greeted: Arc::clone(&self.greeted),
+            world: Arc::clone(&self.world),
         }
     }
 }
@@ -73,6 +101,55 @@ impl<R, W> Lookup for DemoCtx<R, W> {
             _ => "Greetings",
         };
         core::future::ready(greeting.to_owned())
+    }
+}
+
+impl<R, W> Var for DemoCtx<R, W> {
+    fn var(&self, name: String) -> impl Future<Output = Option<String>> + Send {
+        core::future::ready((name == JOURNAL.0).then(|| JOURNAL.1.to_owned()))
+    }
+}
+
+impl<R: Sync, W: Sync> ReadFile for DemoCtx<R, W> {
+    fn read_file(&self, path: String) -> impl Future<Output = Result<Vec<u8>, FsError>> + Send {
+        let files = self
+            .world
+            .files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        core::future::ready(files.get(&path).cloned().ok_or(FsError::NotFound))
+    }
+}
+
+impl<R: Sync, W: Sync> WriteFile for DemoCtx<R, W> {
+    fn write_file(
+        &self,
+        path: String,
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<(), FsError>> + Send {
+        self.world
+            .files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path, bytes);
+        core::future::ready(Ok(()))
+    }
+}
+
+impl<R, W> Now for DemoCtx<R, W> {
+    fn now(&self) -> impl Future<Output = UnixTime> + Send {
+        let reading = self.world.readings.fetch_add(1, Ordering::Relaxed);
+        let millis = EPOCH_MILLIS + 1_000 * reading;
+        core::future::ready(UnixTime::from_since_epoch(Duration::from_millis(millis)))
+    }
+}
+
+impl<R, W> Random for DemoCtx<R, W> {
+    fn random_bytes(&self, len: u32) -> impl Future<Output = Vec<u8>> + Send {
+        let bytes = (0..len)
+            .map(|_| self.world.next_byte.fetch_add(1, Ordering::Relaxed))
+            .collect();
+        core::future::ready(bytes)
     }
 }
 
@@ -105,6 +182,11 @@ impl<R: Send + 'static, W: Send + 'static> Spawn for DemoCtx<R, W> {
     ) {
         self.tokio.spawner().spawn(f(self.clone()));
     }
+}
+
+/// As for [`Spawn`]: a clone, run on the pool's thread.
+impl<R: Send + 'static, W: Send + 'static> SpawnPinned for DemoCtx<R, W> {
+    type Child = Self;
 
     fn spawn_pinned<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + 'static>(
         &self,

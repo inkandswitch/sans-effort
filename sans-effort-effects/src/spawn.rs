@@ -1,4 +1,5 @@
-//! Spawning: starting a child routine.
+//! Spawning: starting a child routine, as [`Spawn`] (a child that may move
+//! between threads) or [`SpawnPinned`] (one that stays on its thread).
 //!
 //! A child runs as a machine of its own, beside its parent rather than
 //! inside it. Parent and child talk through whatever the parent hands the
@@ -13,7 +14,7 @@
 //! ```
 //! use core::ops::ControlFlow;
 //! use sans_effort_core::step::Step;
-//! use sans_effort_effects::{console::WriteLine, spawn::Spawn};
+//! use sans_effort_effects::{console::WriteLine, spawn::SpawnPinned};
 //!
 //! struct Parent<C>(C);
 //!
@@ -28,7 +29,7 @@
 //!
 //! impl<C> Step for Parent<C>
 //! where
-//!     C: Spawn,
+//!     C: SpawnPinned,
 //!     C::Child: WriteLine + 'static,
 //! {
 //!     async fn step(&mut self) -> ControlFlow<()> {
@@ -39,7 +40,12 @@
 //! }
 //! ```
 //!
-//! # Two Methods
+//! # Two Traits
+//!
+//! A routine names only the kind of spawning it uses, and a host grants each
+//! separately: a vocabulary without [`SpawnPinnedEffect`] lets a routine
+//! start migrating children but not pinned ones. A routine that uses both
+//! names its child context through one of them: `<C as Spawn>::Child`.
 //!
 //! [`spawn`](Spawn::spawn) starts a child that may move between threads
 //! after it starts — work-stealing under tokio — so its future must be
@@ -75,7 +81,7 @@
 //! }
 //! ```
 //!
-//! [`spawn_pinned`](Spawn::spawn_pinned) starts a child that stays on the
+//! [`spawn_pinned`](SpawnPinned::spawn_pinned) starts a child that stays on the
 //! thread that starts it: only the closure must be `Send`, so the child's
 //! future may hold an `Rc` or a value tied to its thread.
 
@@ -84,7 +90,7 @@ use alloc::boxed::Box;
 use core::{fmt, future::Future};
 use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox};
 
-/// Start child routines.
+/// Start child routines that may move between threads.
 pub trait Spawn {
     /// The child's context.
     type Child;
@@ -97,9 +103,15 @@ pub trait Spawn {
         &self,
         f: F,
     );
+}
 
-    /// Start a child that stays on the thread that starts it. Its future need
-    /// not be `Send`.
+/// Start child routines that stay on one thread.
+pub trait SpawnPinned {
+    /// The child's context.
+    type Child;
+
+    /// Start a child that stays on the thread that first resumes it. Its
+    /// future need not be `Send`.
     fn spawn_pinned<
         F: FnOnce(Self::Child) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
@@ -116,8 +128,7 @@ pub trait Spawn {
 /// newtype of its own are the parent's alone.
 impl<C: AsCtx> Spawn for C
 where
-    C::Vocabulary:
-        From<SpawnEffect<C::Vocabulary>> + From<SpawnPinnedEffect<C::Vocabulary>> + 'static,
+    C::Vocabulary: From<SpawnEffect<C::Vocabulary>> + 'static,
 {
     type Child = Ctx<C::Vocabulary>;
 
@@ -131,6 +142,15 @@ where
         let child = Child::new(move |outbox| -> BoxedRoutine { Box::pin(f(Ctx::new(outbox))) });
         self.ctx().tell(SpawnEffect(child));
     }
+}
+
+/// As for [`Spawn`]: the child's context is a [`Ctx`] of the parent's
+/// vocabulary.
+impl<C: AsCtx> SpawnPinned for C
+where
+    C::Vocabulary: From<SpawnPinnedEffect<C::Vocabulary>> + 'static,
+{
+    type Child = Ctx<C::Vocabulary>;
 
     fn spawn_pinned<
         F: FnOnce(Self::Child) -> Fut + Send + 'static,

@@ -8,10 +8,13 @@
 //!
 //! | Type                                 | Implements         |
 //! |--------------------------------------|--------------------|
-//! | [`TokioClock`](clock::TokioClock)    | `Sleep`            |
+//! | [`TokioClock`](clock::TokioClock)    | `Sleep`, `Now`     |
 //! | [`TokioInput`](console::TokioInput)  | `ReadLine`         |
 //! | [`TokioOutput`](console::TokioOutput) | `WriteLine`       |
-//! | [`TokioSpawner`](spawn::TokioSpawner) | `Spawn`, for the contexts built on it |
+//! | [`TokioFs`](fs::TokioFs)             | `ReadFile`, `WriteFile` |
+//! | [`TokioEnv`](env::TokioEnv)          | `Var`              |
+//! | [`TokioRandom`](random::TokioRandom) | `Random`           |
+//! | [`TokioSpawner`](spawn::TokioSpawner) | `Spawn`, `SpawnPinned`, for the contexts built on it |
 //! | [`TokioCtx`](ctx::TokioCtx)          | all of the above   |
 //!
 //! [`TokioCtx`](ctx::TokioCtx) is the ready-made context: one value with
@@ -63,4 +66,7 @@
 pub mod clock;
 pub mod console;
 pub mod ctx;
+pub mod env;
+pub mod fs;
+pub mod random;
 pub mod spawn;

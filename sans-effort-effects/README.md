@@ -4,11 +4,17 @@
 
 A routine names what it needs as traits; a context decides whether each call is a real future or an effect recorded for a host. Most routines want the same few things, and without this crate every application writes each of them three times: the trait, the effect and its reifying impl, and a native impl. Here the first two are written once.
 
-| Module    | Traits      | Fallible?                       |
-|-----------|-------------|---------------------------------|
-| `time`    | `Sleep`     | No                              |
-| `console` | `WriteLine` | No                              |
-| `console` | `ReadLine`  | `Result<String, ReadLineError>` |
+| Module    | Traits        | Fallible?                       |
+|-----------|---------------|---------------------------------|
+| `time`    | `Sleep`       | No                              |
+| `time`    | `Now`         | No: a `UnixTime`                |
+| `console` | `WriteLine`   | No                              |
+| `console` | `ReadLine`    | `Result<String, ReadLineError>` |
+| `fs`      | `ReadFile`    | `Result<Vec<u8>, FsError>`      |
+| `fs`      | `WriteFile`   | `Result<(), FsError>`           |
+| `env`     | `Var`         | No: `Option<String>`            |
+| `random`  | `Random`      | No                              |
+| `spawn`   | `Spawn`, `SpawnPinned` | No                     |
 
 Each module holds the trait, its effect structs (the trait's name plus `Effect`: `SleepEffect`), and the trait's impl for the reifying context `Ctx<E>`. `Ctx` is generic over the host's vocabulary `E`, so one impl serves every application: an application writes its vocabulary enum with a `From` impl per effect it offers, and `Ctx<E>` implements exactly the traits that vocabulary can carry. An application implements its own effect traits the same way, through `Ctx::ask` and `Ctx::tell`.
 

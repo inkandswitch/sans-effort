@@ -58,22 +58,26 @@ jobs:
         run: |
           printf 'alice\nbob\nquit\n' | cargo run -q -p greeter_tokio > rust.txt
           printf 'bob\ncarol\n' | cargo run -q -p greeter_tokio -- --fanout > rust-fanout.txt
+          cargo run -q -p greeter_tokio -- --journal < /dev/null > rust-journal.txt
 
       - name: Python host
         run: |
           python3 demo/driven/python/main.py > python.txt
           python3 demo/driven/python/main.py --fanout > python-fanout.txt
+          python3 demo/driven/python/main.py --journal > python-journal.txt
           python3 demo/driven/python/main.py --ticker
 
       - name: JS host (native)
         run: |
           node demo/native/js/main.mjs > js.txt
           node demo/native/js/main.mjs --fanout > js-fanout.txt
+          node demo/native/js/main.mjs --journal > js-journal.txt
 
       - name: Java host (Panama, C ABI)
         run: |
           java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java > java.txt
           java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --fanout > java-fanout.txt
+          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --journal > java-journal.txt
           java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --ticker
 
       - name: Transcripts agree
@@ -84,4 +88,7 @@ jobs:
           diff rust-fanout.txt js-fanout.txt
           diff rust.txt java.txt
           diff rust-fanout.txt java-fanout.txt
-          cat rust.txt rust-fanout.txt
+          diff rust-journal.txt python-journal.txt
+          diff rust-journal.txt js-journal.txt
+          diff rust-journal.txt java-journal.txt
+          cat rust.txt rust-fanout.txt rust-journal.txt

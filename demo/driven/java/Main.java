@@ -36,7 +36,7 @@
 /// routine runs natively.
 ///
 ///     cargo build -p greeter_cdylib
-///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring] [--trace]
+///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal] [--trace]
 ///
 /// `--trace` logs every call to stderr — thread, call, handle, status — to
 /// show which worker polled what.
@@ -91,6 +91,7 @@ public class Main {
         final ByteBuffer buf;
         Reader(byte[] data) { buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN); }
         int u8() { return Byte.toUnsignedInt(buf.get()); }
+        long u32() { return Integer.toUnsignedLong(buf.getInt()); }
         long u64() { return buf.getLong(); }
         byte[] bytes() {
             byte[] b = new byte[buf.getInt()];
@@ -105,7 +106,7 @@ public class Main {
     static final class Library {
         /** Shared: the symbols are called from every driver thread. */
         final Arena arena = Arena.ofShared();
-        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, reply, resume, wakes, free, bufFree;
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, reply, resume, wakes, free, bufFree;
 
         Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
@@ -121,6 +122,7 @@ public class Main {
             newPingPong  = linker.downcallHandle(lib.find("greeter_new_ping_pong").get(), FunctionDescriptor.of(u64));
             newFrontDesk = linker.downcallHandle(lib.find("greeter_new_front_desk").get(), FunctionDescriptor.of(u64));
             newRing      = linker.downcallHandle(lib.find("greeter_new_ring").get(), FunctionDescriptor.of(u64));
+            newJournal   = linker.downcallHandle(lib.find("greeter_new_journal").get(), FunctionDescriptor.of(u64));
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             resume     = linker.downcallHandle(lib.find("greeter_resume").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             wakes      = linker.downcallHandle(lib.find("greeter_wakes").get(), FunctionDescriptor.of(i32, ptr, ptr));
@@ -138,6 +140,7 @@ public class Main {
                 case "ping-pong" -> (long) newPingPong.invokeExact();
                 case "front-desk" -> (long) newFrontDesk.invokeExact();
                 case "ring" -> (long) newRing.invokeExact();
+                case "journal" -> (long) newJournal.invokeExact();
                 default -> (long) newGreeter.invokeExact();
             };
         }
@@ -195,7 +198,26 @@ public class Main {
     // ---- the greeter's tag table (the program's, not the ABI's) ------------
 
     /** One decoded effect. `id` is a request id, or a machine's handle for `spawned`/`spawned_pinned`/`woke`. */
-    record Effect(String kind, long id, String name, long millis, String text) {}
+    record Effect(String kind, long id, String name, long millis, String text, byte[] bytes) {
+        Effect(String kind, long id, String name, long millis, String text) {
+            this(kind, id, name, millis, text, null);
+        }
+    }
+
+    /** An encoded `Option<String>`: `00` for none, `01 · str` for some. */
+    static byte[] someStr(String s) {
+        if (s == null) return new byte[] {0};
+        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        return ByteBuffer.allocate(1 + 4 + b.length).order(ByteOrder.LITTLE_ENDIAN)
+            .put((byte) 1).putInt(b.length).put(b).array();
+    }
+
+    /** An encoded `Result<Vec<u8>, FsError>`: `00 · bytes`, or `01 · 00` (not found). */
+    static byte[] okBytes(byte[] b) {
+        if (b == null) return new byte[] {1, 0};
+        return ByteBuffer.allocate(1 + 4 + b.length).order(ByteOrder.LITTLE_ENDIAN)
+            .put((byte) 0).putInt(b.length).put(b).array();
+    }
 
     /**
      * `read_line` is fallible, so it is answered with bytes: an encoded
@@ -244,11 +266,20 @@ public class Main {
                 case 5 -> new Effect("write_line", 0, null, 0, r.str());
                 case 6 -> new Effect("spawned", r.u64(), null, 0, null);
                 case 7 -> new Effect("spawned_pinned", r.u64(), null, 0, null);
+                case 8 -> new Effect("now", r.u64(), null, 0, null);
+                case 9 -> { long len = r.u32(); yield new Effect("random", r.u64(), null, len, null); }
+                case 10 -> { String name = r.str(); yield new Effect("var", r.u64(), name, 0, null); }
+                case 11 -> { String path = r.str(); yield new Effect("read_file", r.u64(), path, 0, null); }
+                case 12 -> {
+                    String path = r.str();
+                    byte[] b = r.bytes();
+                    yield new Effect("write_file", r.u64(), path, 0, null, b);
+                }
                 default -> null;
             };
             if (e == null) {
                 if (f.kind() == FRAME_TELL) continue; // a tell this host doesn't know: skip it
-                throw new IllegalStateException("frame " + n + " asks with unknown tag " + tag + ": this host cannot answer it; it knows 1..7");
+                throw new IllegalStateException("frame " + n + " asks with unknown tag " + tag + ": this host cannot answer it; it knows 1..12");
             }
             if (!r.done())
                 throw new IllegalStateException("frame " + n + " (" + e.kind() + ") has bytes this host did not expect: its tag table disagrees with the routine's");
@@ -260,6 +291,12 @@ public class Main {
     // ---- the host loop ----------------------------------------------------
 
     static final Map<String, String> GREETINGS = Map.of("alice", "Hello", "bob", "Hi", "carol", "Hey");
+
+    // The journal's world, the same in every host so transcripts agree: one
+    // variable, files in memory, a clock that starts at 1 700 000 000 000 ms
+    // and moves a second per reading, and random bytes that count up from 00.
+    static final Map<String, String> ENVIRONMENT = Map.of("JOURNAL", "notes.txt");
+    static final long EPOCH_MILLIS = 1_700_000_000_000L;
 
     /** A request in flight: request ids are per machine, so the handle is part of its name. */
     record Request(long handle, long id) {}
@@ -278,6 +315,9 @@ public class Main {
         final Library lib;
         final Iterator<String> lines;
         final AtomicLong greeted = new AtomicLong();
+        final Map<String, byte[]> files = new ConcurrentHashMap<>();
+        final AtomicLong readings = new AtomicLong();
+        int nextByte;
         final ExecutorService[] workers;
         final AtomicInteger nextWorker = new AtomicInteger();
         final ExecutorService effects = Executors.newVirtualThreadPerTaskExecutor();
@@ -447,8 +487,20 @@ public class Main {
                 case "lookup" -> replyStr(e.id(), GREETINGS.getOrDefault(e.name(), "Greetings"));
                 case "sleep" -> { Thread.sleep(e.millis()); yield replyUnit(e.id()); }
                 case "count" -> replyU64(e.id(), greeted.incrementAndGet());
+                case "now" -> replyU64(e.id(), (EPOCH_MILLIS + 1_000 * readings.getAndIncrement()) * 1_000_000L);
+                case "random" -> replyBytes(e.id(), randomBytes((int) e.millis()));
+                case "var" -> replyBytes(e.id(), someStr(ENVIRONMENT.get(e.name())));
+                case "read_file" -> replyBytes(e.id(), okBytes(files.get(e.name())));
+                case "write_file" -> { files.put(e.name(), e.bytes()); yield replyBytes(e.id(), new byte[] {0}); }
                 default -> throw new IllegalStateException(e.kind());
             };
+        }
+
+        /** Bytes that count up from wherever the last draw stopped. */
+        synchronized byte[] randomBytes(int len) {
+            byte[] b = new byte[len];
+            for (int i = 0; i < len; i++) b[i] = (byte) nextByte++;
+            return b;
         }
 
         /** Run `root` and everything it spawns until nothing can progress. */
@@ -498,11 +550,11 @@ public class Main {
     public static void main(String[] args) throws Throwable {
         List<String> argv = List.of(args);
         TRACE = argv.contains("--trace");
-        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring").stream()
+        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal").stream()
             .filter(k -> argv.contains("--" + k)).findFirst().orElse("greeter");
         List<String> script = switch (kind) {
             case "fanout" -> List.of("bob", "carol");
-            case "ticker", "ping-pong", "ring" -> List.of();
+            case "ticker", "ping-pong", "ring", "journal" -> List.of();
             case "front-desk" -> List.of("alice", "bob", "carol");
             default -> List.of("alice", "bob");
         };

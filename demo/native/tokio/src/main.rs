@@ -17,6 +17,7 @@
 //! cargo run -p greeter_tokio -- --ping-pong # a parent and the child it spawns
 //! printf 'alice\nbob\n' | cargo run -p greeter_tokio -- --front-desk
 //! cargo run -p greeter_tokio -- --ring      # 16 tasks passing a counter
+//! cargo run -p greeter_tokio -- --journal   # env, files, clock, randomness
 //! ```
 //!
 //! The tests at the bottom run the same routines under tokio's paused clock,
@@ -27,7 +28,8 @@ mod ctx;
 
 use ctx::DemoCtx;
 use routines::{
-    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, ping_pong::PingPong, ring::Ring,
+    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal, ping_pong::PingPong,
+    ring::Ring,
 };
 use sans_effort::step::Step;
 use sans_effort::tokio::ctx::TokioCtx;
@@ -57,6 +59,8 @@ async fn main() -> Result<(), tokio::task::JoinError> {
         ran
     } else if mode("--front-desk") {
         tokio::spawn(FrontDesk::new(ctx).run()).await
+    } else if mode("--journal") {
+        tokio::spawn(Journal::new(ctx, 3).run()).await
     } else {
         tokio::spawn(Greeter::new(ctx).run()).await
     }

@@ -12,6 +12,7 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/driven/python/main.py --ping-pong    # a parent and the child it spawns (tag 6)
     python3 demo/driven/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
     python3 demo/driven/python/main.py --ring         # 16 machines passing a counter: woke frames only
+    python3 demo/driven/python/main.py --journal      # env, files, clock, randomness (tags 8–12)
 
 With spawning, the loop is a small scheduler: it keeps every machine by
 handle, resumes each child it is told about to begin it, and each machine a `woke`
@@ -70,6 +71,9 @@ class Reader:
     def u8(self) -> int:
         return self._take("<B")
 
+    def u32(self) -> int:
+        return self._take("<I")
+
     def u64(self) -> int:
         return self._take("<Q")
 
@@ -110,6 +114,7 @@ class Library:
         self.lib.greeter_new_ping_pong.restype = ctypes.c_uint64
         self.lib.greeter_new_front_desk.restype = ctypes.c_uint64
         self.lib.greeter_new_ring.restype = ctypes.c_uint64
+        self.lib.greeter_new_journal.restype = ctypes.c_uint64
         self.lib.greeter_resume.restype = ctypes.c_int32
         self.lib.greeter_resume.argtypes = [
             ctypes.c_uint64,
@@ -137,6 +142,7 @@ class Library:
             "ping-pong": self.lib.greeter_new_ping_pong,
             "front-desk": self.lib.greeter_new_front_desk,
             "ring": self.lib.greeter_new_ring,
+            "journal": self.lib.greeter_new_journal,
         }[kind]()
 
     def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
@@ -175,7 +181,8 @@ class Library:
 
 # ---- the greeter's tag table (the program's, not the ABI's) ---------------
 
-TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line", 6: "spawned", 7: "spawned_pinned"}
+TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line", 6: "spawned", 7: "spawned_pinned",
+        8: "now", 9: "random", 10: "var", 11: "read_file", 12: "write_file"}
 
 
 def read_line_reply(id_: int, line: str | None) -> bytes:
@@ -186,6 +193,21 @@ def read_line_reply(id_: int, line: str | None) -> bytes:
         return reply_bytes(id_, b"\x01\x00")
     b = line.encode()
     return reply_bytes(id_, b"\x00" + struct.pack("<I", len(b)) + b)
+
+
+def some_str(s: str | None) -> bytes:
+    """An encoded `Option<String>`: `00` for none, `01 · str` for some."""
+    if s is None:
+        return b"\x00"
+    b = s.encode()
+    return b"\x01" + struct.pack("<I", len(b)) + b
+
+
+def ok_bytes(b: bytes | None) -> bytes:
+    """An encoded `Result<Vec<u8>, FsError>`: `00 · bytes`, or `01 · 00` (not found)."""
+    if b is None:
+        return b"\x01\x00"
+    return b"\x00" + struct.pack("<I", len(b)) + b
 
 
 def decode(data: bytes) -> list[dict]:
@@ -219,6 +241,16 @@ def decode(data: bytes) -> list[dict]:
             effects.append({"kind": kind, "text": r.str()})
         elif kind in ("spawned", "spawned_pinned"):
             effects.append({"kind": kind, "handle": r.u64()})
+        elif kind == "now":
+            effects.append({"kind": kind, "id": r.u64()})
+        elif kind == "random":
+            effects.append({"kind": kind, "len": r.u32(), "id": r.u64()})
+        elif kind == "var":
+            effects.append({"kind": kind, "name": r.str(), "id": r.u64()})
+        elif kind == "read_file":
+            effects.append({"kind": kind, "path": r.str(), "id": r.u64()})
+        elif kind == "write_file":
+            effects.append({"kind": kind, "path": r.str(), "bytes": r.bytes(), "id": r.u64()})
         if not r.done():
             raise ValueError(f"frame {n} ({kind}) has {len(payload) - r.at} bytes this host did not expect: its tag table disagrees with the routine's")
     return effects
@@ -228,6 +260,12 @@ def decode(data: bytes) -> list[dict]:
 
 GREETINGS = {"alice": "Hello", "bob": "Hi", "carol": "Hey"}
 
+# The journal's world, the same in every host so transcripts agree: one
+# variable, files in memory, a clock that starts at 1 700 000 000 000 ms and
+# moves a second per reading, and random bytes that count up from 00.
+ENVIRONMENT = {"JOURNAL": "notes.txt"}
+EPOCH_MILLIS = 1_700_000_000_000
+
 
 def drive(lib: Library, root: int, script: list[str]) -> list[str]:
     """Perform each effect and reply by id; resume every child a machine
@@ -235,6 +273,8 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
     completes. Every call comes from this one thread, so a pinned child stays
     on the thread that first resumed it."""
     lines, written, greeted = iter(script), [], 0
+    files: dict[str, bytes] = {}
+    readings, next_byte = 0, 0
     machines: dict[int, int] = {}  # handle → status of its last call
     queue: deque[tuple[int, dict]] = deque()
 
@@ -273,6 +313,19 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
             elif e["kind"] == "count":
                 greeted += 1
                 record = reply_u64(e["id"], greeted)
+            elif e["kind"] == "now":
+                record = reply_u64(e["id"], (EPOCH_MILLIS + 1_000 * readings) * 1_000_000)
+                readings += 1
+            elif e["kind"] == "random":
+                record = reply_bytes(e["id"], bytes((next_byte + i) % 256 for i in range(e["len"])))
+                next_byte = (next_byte + e["len"]) % 256
+            elif e["kind"] == "var":
+                record = reply_bytes(e["id"], some_str(ENVIRONMENT.get(e["name"])))
+            elif e["kind"] == "read_file":
+                record = reply_bytes(e["id"], ok_bytes(files.get(e["path"])))
+            elif e["kind"] == "write_file":
+                files[e["path"]] = e["bytes"]
+                record = reply_bytes(e["id"], b"\x00")
             ran(handle, lib.reply(handle, record))
 
         # Nothing queued: anything woken outside a call? If not, nothing can
@@ -298,9 +351,9 @@ def find_library() -> Path:
 
 
 if __name__ == "__main__":
-    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring")
+    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal")
     kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
-    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": []}[kind]
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": []}[kind]
     lib = Library(find_library())
     began = time.perf_counter()
     drive(lib, lib.new(kind), script)

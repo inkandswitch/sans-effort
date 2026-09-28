@@ -3,21 +3,27 @@
 use crate::{
     clock::TokioClock,
     console::{TokioInput, TokioOutput},
+    env::TokioEnv,
+    fs::TokioFs,
+    random::TokioRandom,
     spawn::TokioSpawner,
 };
 use core::{future::Future, time::Duration};
 use sans_effort_effects::{
     console::{ReadLine, ReadLineError, WriteLine},
-    spawn::Spawn,
-    time::Sleep,
+    env::Var,
+    fs::{FsError, ReadFile, WriteFile},
+    random::Random,
+    spawn::{Spawn, SpawnPinned},
+    time::{Now, Sleep, UnixTime},
 };
 use std::{io, sync::Arc};
 use tokio::io::{AsyncBufRead, BufReader, Stdin};
 use tokio_util::task::LocalPoolHandle;
 
 /// Every effect trait in `sans-effort-effects` as a tokio future: a
-/// [`TokioClock`], a [`TokioInput`], a [`TokioOutput`], and a
-/// [`TokioSpawner`] in one value.
+/// [`TokioClock`], a [`TokioInput`], a [`TokioOutput`], a [`TokioFs`], a
+/// [`TokioEnv`], a [`TokioRandom`], and a [`TokioSpawner`] in one value.
 ///
 /// A routine that names only stdlib effect traits runs on it directly:
 /// `tokio::spawn(Ticker::new(TokioCtx::stdio(pool), 3).run())`. Cloning shares
@@ -28,6 +34,9 @@ pub struct TokioCtx<R, W> {
     clock: TokioClock,
     input: Arc<TokioInput<R>>,
     output: Arc<TokioOutput<W>>,
+    fs: TokioFs,
+    env: TokioEnv,
+    random: TokioRandom,
     spawner: TokioSpawner,
 }
 
@@ -40,6 +49,9 @@ impl<R, W> TokioCtx<R, W> {
             clock: TokioClock,
             input: Arc::new(TokioInput::new(reader)),
             output: Arc::new(TokioOutput::new(writer)),
+            fs: TokioFs,
+            env: TokioEnv,
+            random: TokioRandom,
             spawner: TokioSpawner::new(pool),
         }
     }
@@ -60,6 +72,24 @@ impl<R, W> TokioCtx<R, W> {
     #[must_use]
     pub fn output(&self) -> &TokioOutput<W> {
         &self.output
+    }
+
+    /// The file system.
+    #[must_use]
+    pub const fn fs(&self) -> &TokioFs {
+        &self.fs
+    }
+
+    /// The environment.
+    #[must_use]
+    pub const fn env(&self) -> &TokioEnv {
+        &self.env
+    }
+
+    /// The randomness.
+    #[must_use]
+    pub const fn random(&self) -> &TokioRandom {
+        &self.random
     }
 
     /// The spawner.
@@ -102,6 +132,9 @@ impl<R, W> Clone for TokioCtx<R, W> {
             clock: self.clock,
             input: Arc::clone(&self.input),
             output: Arc::clone(&self.output),
+            fs: self.fs,
+            env: self.env,
+            random: self.random,
             spawner: self.spawner.clone(),
         }
     }
@@ -110,6 +143,40 @@ impl<R, W> Clone for TokioCtx<R, W> {
 impl<R, W> Sleep for TokioCtx<R, W> {
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send {
         self.clock.sleep(duration)
+    }
+}
+
+impl<R, W> Now for TokioCtx<R, W> {
+    fn now(&self) -> impl Future<Output = UnixTime> + Send {
+        self.clock.now()
+    }
+}
+
+impl<R: Sync, W: Sync> ReadFile for TokioCtx<R, W> {
+    fn read_file(&self, path: String) -> impl Future<Output = Result<Vec<u8>, FsError>> + Send {
+        self.fs.read_file(path)
+    }
+}
+
+impl<R: Sync, W: Sync> WriteFile for TokioCtx<R, W> {
+    fn write_file(
+        &self,
+        path: String,
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<(), FsError>> + Send {
+        self.fs.write_file(path, bytes)
+    }
+}
+
+impl<R, W> Var for TokioCtx<R, W> {
+    fn var(&self, name: String) -> impl Future<Output = Option<String>> + Send {
+        self.env.var(name)
+    }
+}
+
+impl<R, W> Random for TokioCtx<R, W> {
+    fn random_bytes(&self, len: u32) -> impl Future<Output = Vec<u8>> + Send {
+        self.random.random_bytes(len)
     }
 }
 
@@ -135,6 +202,11 @@ impl<R: Send + 'static, W: Send + 'static> Spawn for TokioCtx<R, W> {
     ) {
         self.spawner.spawn(f(self.clone()));
     }
+}
+
+/// As for [`Spawn`]: a clone, run on the pool's thread.
+impl<R: Send + 'static, W: Send + 'static> SpawnPinned for TokioCtx<R, W> {
+    type Child = Self;
 
     fn spawn_pinned<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + 'static>(
         &self,

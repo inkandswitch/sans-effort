@@ -85,5 +85,6 @@ pub mod fanout;
 pub mod front_desk;
 pub mod greeter;
 pub mod host;
+pub mod journal;
 pub mod ping_pong;
 pub mod ring;

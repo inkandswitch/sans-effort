@@ -1,4 +1,4 @@
-//! The five effect traits, served by a JS object behind a dispatcher.
+//! The routines' effect traits, served by a JS object behind a dispatcher.
 //!
 //! Compare `greeter_tokio`'s `TokioCtx`: there each trait method is a tokio
 //! future. Here each one is a call into JS and, if JS returned a `Promise`, a
@@ -20,12 +20,15 @@
 use crate::host::JsHost;
 use async_channel::{Receiver, Sender};
 use core::time::Duration;
-use js_sys::Promise;
+use js_sys::{Promise, Uint8Array};
 use routines::effects::{count::Count, lookup::Lookup};
 use sans_effort_effects::{
     console::{ReadLine, ReadLineError, WriteLine},
-    spawn::Spawn,
-    time::Sleep,
+    env::Var,
+    fs::{FsError, ReadFile, WriteFile},
+    random::Random,
+    spawn::{Spawn, SpawnPinned},
+    time::{Now, Sleep, UnixTime},
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
@@ -98,8 +101,48 @@ impl WriteLine for JsCtx {
     }
 }
 
-/// A child's context shares the dispatcher. Both methods run the child as a
-/// local task: JS has one thread, so there is nowhere else to go.
+impl Now for JsCtx {
+    /// The epoch itself unless the host answered a non-negative integer of
+    /// milliseconds.
+    async fn now(&self) -> UnixTime {
+        let millis = self.ask(Request::Now).await.unwrap_or(0);
+        UnixTime::from_since_epoch(Duration::from_millis(millis))
+    }
+}
+
+impl Random for JsCtx {
+    /// No bytes unless the host answered a `Uint8Array`.
+    async fn random_bytes(&self, len: u32) -> Vec<u8> {
+        self.ask(|reply| Request::Random(len, reply))
+            .await
+            .unwrap_or_default()
+    }
+}
+
+impl Var for JsCtx {
+    async fn var(&self, name: String) -> Option<String> {
+        self.ask(|reply| Request::Var(name, reply)).await.flatten()
+    }
+}
+
+impl ReadFile for JsCtx {
+    async fn read_file(&self, path: String) -> Result<Vec<u8>, FsError> {
+        self.ask(|reply| Request::ReadFile(path, reply))
+            .await
+            .unwrap_or(Err(FsError::Other))
+    }
+}
+
+impl WriteFile for JsCtx {
+    async fn write_file(&self, path: String, bytes: Vec<u8>) -> Result<(), FsError> {
+        self.ask(|reply| Request::WriteFile(path, bytes, reply))
+            .await
+            .unwrap_or(Err(FsError::Other))
+    }
+}
+
+/// A child's context shares the dispatcher. Both kinds of spawn run the child
+/// as a local task: JS has one thread, so there is nowhere else to go.
 impl Spawn for JsCtx {
     type Child = Self;
 
@@ -109,6 +152,11 @@ impl Spawn for JsCtx {
     ) {
         spawn_local(f(self.clone()));
     }
+}
+
+/// As for [`Spawn`]: a local task.
+impl SpawnPinned for JsCtx {
+    type Child = Self;
 
     fn spawn_pinned<F: FnOnce(Self) -> Fut + Send + 'static, Fut: Future<Output = ()> + 'static>(
         &self,
@@ -138,6 +186,11 @@ enum Request {
     ReadLine(Sender<Result<String, ReadLineError>>),
     Sleep(Duration, Sender<()>),
     WriteLine(String),
+    Now(Sender<u64>),
+    Random(u32, Sender<Vec<u8>>),
+    Var(String, Sender<Option<String>>),
+    ReadFile(String, Sender<Result<Vec<u8>, FsError>>),
+    WriteFile(String, Vec<u8>, Sender<Result<(), FsError>>),
 }
 
 /// Serve requests until every context is gone. Host methods are called here,
@@ -168,6 +221,49 @@ async fn dispatch(host: JsHost, requests: Receiver<Request>, _done: Sender<()>) 
                     value.as_string().ok_or(ReadLineError::Closed)
                 });
             }
+            Request::Now(reply) => {
+                answer(host.now(), reply, |value| {
+                    value.as_f64().and_then(safe_integer).unwrap_or(0)
+                });
+            }
+            Request::Random(len, reply) => {
+                answer(host.random_bytes(len), reply, |value| {
+                    value
+                        .dyn_into::<Uint8Array>()
+                        .map(|bytes| bytes.to_vec())
+                        .unwrap_or_default()
+                });
+            }
+            Request::Var(name, reply) => {
+                answer(host.env(&name), reply, |value| value.as_string());
+            }
+            Request::ReadFile(path, reply) => {
+                let value = host.read_file(&path);
+                spawn_local(async move {
+                    let read = match settle_result(value).await {
+                        Ok(value) if value.is_null() || value.is_undefined() => {
+                            Err(FsError::NotFound)
+                        }
+                        Ok(value) => value
+                            .dyn_into::<Uint8Array>()
+                            .map(|bytes| bytes.to_vec())
+                            .map_err(|_| FsError::Other),
+                        Err(_) => Err(FsError::Other),
+                    };
+                    drop(reply.send(read).await);
+                });
+            }
+            Request::WriteFile(path, bytes, reply) => {
+                let value = host.write_file(&path, &Uint8Array::from(bytes.as_slice()));
+                spawn_local(async move {
+                    let written = settle_result(value)
+                        .await
+                        .map(drop)
+                        .map_err(|_| FsError::Other);
+                    // The context may be gone; then nobody is waiting.
+                    let _unheard = reply.send(written).await;
+                });
+            }
         }
     }
 }
@@ -196,6 +292,15 @@ fn safe_integer(f: f64) -> Option<u64> {
         let n = f as u64;
         n
     })
+}
+
+/// A value JS returned, awaited if it was a `Promise`, keeping a rejection
+/// apart from a value: for the file methods, where a rejection means failure.
+async fn settle_result(value: JsValue) -> Result<JsValue, JsValue> {
+    match value.dyn_into::<Promise>() {
+        Ok(promise) => JsFuture::from(promise).await,
+        Err(value) => Ok(value),
+    }
 }
 
 /// A value JS returned, awaited if it was a `Promise`. A rejected promise

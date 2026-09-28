@@ -532,6 +532,7 @@ dependencies = [
 name = "sans-effort-tokio"
 version = "0.1.0"
 dependencies = [
+ "getrandom",
  "sans-effort-core",
  "sans-effort-effects",
  "tokio",

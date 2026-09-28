@@ -14,8 +14,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+getrandom = { workspace = true, features = ["std"] }
 sans-effort-effects = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["io-std", "io-util", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 

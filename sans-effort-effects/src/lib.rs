@@ -8,9 +8,12 @@
 //!
 //! | Module      | Traits                    |
 //! |-------------|---------------------------|
-//! | [`time`]    | [`Sleep`](time::Sleep)    |
+//! | [`time`]    | [`Sleep`](time::Sleep), [`Now`](time::Now) |
 //! | [`console`] | [`ReadLine`](console::ReadLine), [`WriteLine`](console::WriteLine) |
-//! | [`spawn`]   | [`Spawn`](spawn::Spawn)   |
+//! | [`fs`]      | [`ReadFile`](fs::ReadFile), [`WriteFile`](fs::WriteFile) |
+//! | [`env`](mod@env) | [`Var`](env::Var)       |
+//! | [`random`]  | [`Random`](random::Random) |
+//! | [`spawn`]   | [`Spawn`](spawn::Spawn), [`SpawnPinned`](spawn::SpawnPinned) |
 //!
 //! Underneath them is [`ask`]: [`Ask`](ask::Ask) and
 //! [`Asked`](ask::Asked), the pattern that lets one context serve any
@@ -132,5 +135,8 @@ extern crate alloc;
 pub mod ask;
 pub mod console;
 pub mod ctx;
+pub mod env;
+pub mod fs;
+pub mod random;
 pub mod spawn;
 pub mod time;

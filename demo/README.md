@@ -1,6 +1,6 @@
 # demo
 
-The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five effect traits, then run four ways that must agree byte for byte; and two routines that spawn children and talk to them over plain channels. Four of the traits (`Sleep`, `ReadLine`, `WriteLine`, `Spawn`) and the reifying context `Ctx<E>` come from `sans-effort-effects`; two (`Count`, `Lookup`) are the demo's own.
+The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five effect traits, then run four ways that must agree byte for byte; and two routines that spawn children and talk to them over plain channels. Three of the greeter's traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`, as do the spawning routines' `Spawn` and `SpawnPinned`; two (`Count`, `Lookup`) are the demo's own. A journal routine uses the rest of the standard library — `Var`, `ReadFile`, `WriteFile`, `Now`, `Random` — and every host answers it from the same small world (one variable, files in memory, a clock that moves a second per reading, counting random bytes), so its transcripts agree too.
 
 ```text
   routines/        shared by both paths. The routines, one per module: greeter (the
@@ -8,7 +8,9 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    + WriteLine), ping_pong (spawns a child and plays over two
                    async-channels), front_desk (spawns a pinned clerk per name; each
                    replies on a one-shot channel), ring (16 routines pass a counter
-                   4000 hops; the cost of a hop). no_std.
+                   4000 hops; the cost of a hop), journal (appends entries stamped
+                   with the time and a random id to a file the environment names).
+                   no_std.
                    effects/: the demo's own effect traits, one module each — count
                    (Count, CountEffect) and lookup (Lookup, LookupEffect) — each
                    with its reifying Ctx impl beside it (the orphan rule puts it
@@ -27,8 +29,8 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    generated.
 
   driven/          the routine runs behind a Driver; a foreign host replies by id.
-    boundary/      the host vocabularies. Full carries the effects of all five effect
-                   traits and, with the default `table` feature, spawning (tags 6 and 7:
+    boundary/      the host vocabularies. Full carries every effect the routines use
+                   (tags 1–5 and 8–12) and, with the default `table` feature, spawning (tags 6 and 7:
                    split registers the child in sans-effort-host's table); Quiet only
                    Sleep + WriteLine. View/HostEffect/Encode: the tag table.
                    Tests: through a Driver, as data; Greeter under Quiet is a

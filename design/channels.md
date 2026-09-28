@@ -54,7 +54,7 @@ The driver's waker records the wake instead. The host crate turns it into a fram
 
 ## Spawning
 
-`Spawn` is an effect trait with two methods:
+Spawning is two effect traits, one method each:
 
 ```rust
 pub trait Spawn {
@@ -63,6 +63,10 @@ pub trait Spawn {
     fn spawn<F, Fut>(&self, f: F)
     where F: FnOnce(Self::Child) -> Fut + Send + 'static,
           Fut: Future<Output = ()> + Send + 'static;
+}
+
+pub trait SpawnPinned {
+    type Child;
 
     fn spawn_pinned<F, Fut>(&self, f: F)
     where F: FnOnce(Self::Child) -> Fut + Send + 'static,
@@ -73,7 +77,7 @@ pub trait Spawn {
 - `spawn` starts a child that may move between threads after it starts. Its future must be `Send`. Every effect trait declares its futures `Send`, so a routine generic over its context can prove it: `C::Child: Send + Sync`. The price is that every context is `Sync`; one over a value tied to its thread — a `JsValue` — keeps it behind a dispatcher task and talks to it over a channel.
 - `spawn_pinned` starts a child that stays on the thread that first resumes it. Only the closure must be `Send` — its future need not be — so the child may hold an `Rc` or a foreign handle across an `.await`.
 
-Two methods, because even a multithreaded application sometimes holds data that is not `Send` — an `Rc`, a foreign handle. `spawn_pinned` gives those children a home while the rest move freely, in one build.
+Two kinds, because even a multithreaded application sometimes holds data that is not `Send` — an `Rc`, a foreign handle. `spawn_pinned` gives those children a home while the rest move freely, in one build. Two traits, so a routine names only the kind it uses and a host grants each separately: a vocabulary that carries `SpawnEffect` but not `SpawnPinnedEffect` lets its routines start migrating children and no pinned ones. A routine that uses both names its child context through one: `<C as Spawn>::Child`.
 
 Both are fire-and-forget: they record the unstarted child and return. The closure's argument is the child's context, `child_ctx`, which does not exist until the child's machine does. Channel ends reach the child by moving into the closure.
 

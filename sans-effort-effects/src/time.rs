@@ -1,11 +1,17 @@
-//! Time: waiting.
+//! Time: waiting, and telling the time.
+//!
+//! Both are asks, so a host decides what time it is: the real clock, or —
+//! for a test or a replay — a virtual one that makes a run repeatable.
 
 use crate::{
     ask::{Ask, Asked},
     ctx::AsCtx,
 };
 use core::{future::Future, time::Duration};
-use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
+use sans_effort_core::{
+    boundary::codec::{Decode, DecodeError, Encode, Reader, Writer},
+    reply::Answer,
+};
 
 /// Wait for a duration.
 ///
@@ -22,6 +28,25 @@ where
 {
     async fn sleep(&self, duration: Duration) {
         self.ctx().ask(SleepEffect(duration)).await;
+    }
+}
+
+/// Tell the wall-clock time.
+///
+/// Infallible, like [`Sleep`]. Wall-clock time can jump — a host's clock may
+/// be adjusted — so measure a pause with [`Sleep`], not by subtracting two
+/// readings.
+pub trait Now {
+    /// The current time.
+    fn now(&self) -> impl Future<Output = UnixTime> + Send;
+}
+
+impl<C: AsCtx + Sync> Now for C
+where
+    C::Vocabulary: From<Asked<NowEffect>> + Send,
+{
+    async fn now(&self) -> UnixTime {
+        self.ctx().ask(NowEffect).await
     }
 }
 
@@ -55,9 +80,80 @@ impl Decode for SleepEffect {
     }
 }
 
+/// The current time. Awaits a [`UnixTime`], which crosses as a `u64`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NowEffect;
+
+impl Ask for NowEffect {
+    type Reply = UnixTime;
+}
+
+/// No fields.
+impl Encode for NowEffect {
+    fn encode(&self, _: &mut Writer) {}
+}
+
+impl Decode for NowEffect {
+    fn decode(_: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        Ok(NowEffect)
+    }
+}
+
+/// A wall-clock time: how long after the Unix epoch (1970-01-01 UTC).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct UnixTime(Duration);
+
+impl UnixTime {
+    /// The time `since_epoch` after the Unix epoch.
+    #[must_use]
+    pub const fn from_since_epoch(since_epoch: Duration) -> Self {
+        Self(since_epoch)
+    }
+
+    /// How long after the Unix epoch.
+    #[must_use]
+    pub const fn since_epoch(self) -> Duration {
+        self.0
+    }
+}
+
+/// Whole nanoseconds since the epoch, `u64`: enough until the year 2554, and
+/// saturating after.
+impl Answer for UnixTime {
+    type Wire = u64;
+
+    fn into_wire(self) -> u64 {
+        u64::try_from(self.0.as_nanos()).unwrap_or(u64::MAX)
+    }
+
+    fn from_wire(nanos: u64) -> Result<Self, DecodeError> {
+        Ok(Self(Duration::from_nanos(nanos)))
+    }
+
+    fn check(_: &u64) -> Result<(), DecodeError> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unix_times_round_trip_in_whole_nanoseconds() {
+        bolero::check!().with_type::<u64>().for_each(|nanos| {
+            let time = UnixTime::from_since_epoch(Duration::from_nanos(*nanos));
+            assert_eq!(UnixTime::from_wire(time.into_wire()), Ok(time));
+        });
+    }
+
+    #[test]
+    fn unix_times_past_u64_nanos_saturate() {
+        assert_eq!(
+            UnixTime::from_since_epoch(Duration::MAX).into_wire(),
+            u64::MAX
+        );
+    }
 
     #[test]
     fn whole_milliseconds_round_trip() {
