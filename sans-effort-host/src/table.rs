@@ -25,10 +25,11 @@
 //! rather than a fault.
 
 use crate::{
-    contract::FRAME_WOKE,
+    contract::{FRAME_WOKE, OK},
     encoded::Encoded,
     error::Error,
     machine::{Drive, Machine},
+    record::{Event, Log, Outcome, outcome},
     status::Status,
 };
 use sans_effort_core::{
@@ -40,7 +41,7 @@ use sans_effort_core::{
 };
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     future::Future,
     marker::PhantomData,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -129,6 +130,21 @@ struct Table {
     parked: HashMap<u64, Box<dyn Park + Send>>,
     pinned: HashMap<u64, ThreadId>,
     next: u64,
+
+    /// Machines being recorded, each with its session and its number there.
+    recorded: HashMap<u64, Tap>,
+
+    /// Recording sessions, by number: the log each is building.
+    sessions: HashMap<u32, Log>,
+    next_session: u32,
+}
+
+/// Where a recorded machine's calls go: its session, and its number in it
+/// (creation order, the root first).
+#[derive(Clone, Copy)]
+struct Tap {
+    session: u32,
+    machine: u32,
 }
 
 impl Table {
@@ -138,14 +154,58 @@ impl Table {
             parked: HashMap::new(),
             pinned: HashMap::new(),
             next: 1,
+            recorded: HashMap::new(),
+            sessions: HashMap::new(),
+            next_session: 1,
         }
     }
 
-    /// A fresh handle, never `0`, never reused.
-    const fn issue(&mut self) -> u64 {
+    /// A fresh handle, never `0`, never reused — unless this thread is
+    /// replaying, when it is the next handle the recording issued, if that
+    /// is free again.
+    fn issue(&mut self) -> u64 {
+        if let Some(handle) = REISSUE.with(|reissue| reissue.borrow_mut().pop_front())
+            && !self.in_use(handle)
+        {
+            self.next = self.next.max(handle + 1);
+            return handle;
+        }
+        while self.in_use(self.next) {
+            self.next += 1;
+        }
         let handle = self.next;
         self.next += 1;
         handle
+    }
+
+    fn in_use(&self, handle: u64) -> bool {
+        self.machines.contains_key(&handle)
+            || self.parked.contains_key(&handle)
+            || self.pinned.contains_key(&handle)
+    }
+
+    /// If the call this thread is making is on a recorded machine, record
+    /// `child` — just created by it — in the same session.
+    fn adopt(&mut self, child: u64) {
+        let Some(parent) = CALL.with(|call| call.borrow().as_ref().map(|call| call.handle)) else {
+            return;
+        };
+        let Some(Tap { session, .. }) = self.recorded.get(&parent).copied() else {
+            return;
+        };
+        if let Some(log) = self.sessions.get_mut(&session) {
+            let machine = log.adopt(child);
+            self.recorded.insert(child, Tap { session, machine });
+        }
+    }
+
+    /// Log `event` for `handle`, if it is being recorded.
+    fn note(&mut self, handle: u64, event: impl FnOnce(u32) -> Event) {
+        if let Some(Tap { session, machine }) = self.recorded.get(&handle).copied()
+            && let Some(log) = self.sessions.get_mut(&session)
+        {
+            log.push(event(machine));
+        }
     }
 }
 
@@ -155,9 +215,19 @@ thread_local! {
     /// This thread's started pinned machines.
     static LOCAL: RefCell<HashMap<u64, LocalEntry>> = RefCell::new(HashMap::new());
 
-    /// The machines woken during the call this thread is making, if it is
-    /// making one: they are reported in that call's output.
-    static CALL: RefCell<Option<Vec<u64>>> = const { RefCell::new(None) };
+    /// The call this thread is making, if it is making one: which machine,
+    /// and the machines woken during it, which are reported in its output.
+    static CALL: RefCell<Option<Call>> = const { RefCell::new(None) };
+
+    /// While this thread replays a recording: the handles it issued, in
+    /// order, for the table to issue again.
+    static REISSUE: RefCell<VecDeque<u64>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// A call in progress on this thread.
+struct Call {
+    handle: u64,
+    woken: Vec<u64>,
 }
 
 /// Machines woken outside any call, until [`wakes`] reports them.
@@ -169,7 +239,7 @@ fn woke(handle: u64) {
     let noted = CALL.with(|call| {
         call.borrow_mut()
             .as_mut()
-            .map(|woken| woken.push(handle))
+            .map(|call| call.woken.push(handle))
             .is_some()
     });
     if !noted {
@@ -184,11 +254,19 @@ fn woke(handle: u64) {
 /// as [`FRAME_WOKE`] frames, or — if it fails, and so has no output — queued
 /// for [`wakes`].
 fn reporting_wakes(
+    handle: u64,
     call: impl FnOnce() -> Result<(Vec<u8>, Status), Error>,
 ) -> Result<(Vec<u8>, Status), Error> {
-    let outer = CALL.with(|woken| woken.replace(Some(Vec::new())));
+    let this = Call {
+        handle,
+        woken: Vec::new(),
+    };
+    let outer = CALL.with(|current| current.replace(Some(this)));
     let result = call();
-    let woken = CALL.with(|woken| woken.replace(outer)).unwrap_or_default();
+    let woken = CALL
+        .with(|current| current.replace(outer))
+        .map(|call| call.woken)
+        .unwrap_or_default();
 
     match result {
         Ok((mut bytes, status)) => {
@@ -279,6 +357,7 @@ where
             _effect: PhantomData,
         }),
     );
+    table.adopt(handle);
     handle
 }
 
@@ -287,6 +366,7 @@ fn insert(machine: Box<dyn Stepped + Send>) -> u64 {
     let handle = table.issue();
     machine.on_wake(Box::new(move || woke(handle)));
     table.machines.insert(handle, Entry::new(machine));
+    table.adopt(handle);
     handle
 }
 
@@ -299,7 +379,13 @@ fn insert(machine: Box<dyn Stepped + Send>) -> u64 {
 /// [`Error::WrongThread`], [`Error::BadInput`] for a parked routine not yet
 /// resumed (it has issued no ids), or whatever [`Encoded::reply`] returns.
 pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
-    reporting_wakes(|| guarded(handle, |m| m.reply(record)))
+    let result = reporting_wakes(handle, || guarded(handle, |m| m.reply(record)));
+    table().note(handle, |machine| Event::Reply {
+        machine,
+        record: record.to_vec(),
+        outcome: outcome(&result),
+    });
+    result
 }
 
 /// Run the routine to its next wait without delivering anything: the effects
@@ -339,7 +425,12 @@ pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
         });
     }
 
-    reporting_wakes(|| guarded(handle, |m| m.resume()))
+    let result = reporting_wakes(handle, || guarded(handle, |m| m.resume()));
+    table().note(handle, |machine| Event::Resume {
+        machine,
+        outcome: outcome(&result),
+    });
+    result
 }
 
 /// Drop a routine, including any request it had outstanding. A parked pinned
@@ -350,6 +441,19 @@ pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
 /// [`Error::BadHandle`] if there is no such routine; [`Error::WrongThread`]
 /// for a pinned routine started on another thread.
 pub fn free(handle: u64) -> Result<(), Error> {
+    let result = free_unrecorded(handle);
+    let code = result.map_or_else(Error::code, |()| OK);
+    table().note(handle, |machine| Event::Free {
+        machine,
+        outcome: Outcome {
+            code,
+            bytes: Vec::new(),
+        },
+    });
+    result
+}
+
+fn free_unrecorded(handle: u64) -> Result<(), Error> {
     let mut table = table();
 
     if table.machines.remove(&handle).is_some() || table.parked.remove(&handle).is_some() {
@@ -365,6 +469,50 @@ pub fn free(handle: u64) -> Result<(), Error> {
         }
         Some(_) => Err(Error::WrongThread),
         None => Err(Error::BadHandle),
+    }
+}
+
+/// Begin recording `root` and every machine it creates: the session's
+/// number.
+pub(crate) fn start_recording(root: u64) -> u32 {
+    let mut table = table();
+    let session = table.next_session;
+    table.next_session += 1;
+    let mut log = Log::default();
+    let machine = log.adopt(root);
+    table.sessions.insert(session, log);
+    table.recorded.insert(root, Tap { session, machine });
+    session
+}
+
+/// Stop recording a session: its log.
+pub(crate) fn finish_recording(session: u32) -> Log {
+    let mut table = table();
+    table.recorded.retain(|_, tap| tap.session != session);
+    table.sessions.remove(&session).unwrap_or_default()
+}
+
+/// The handle a session gave its `machine`th machine, if it has one yet.
+pub(crate) fn recorded_handle(session: u32, machine: u32) -> Option<u64> {
+    table()
+        .sessions
+        .get(&session)
+        .and_then(|log| log.handle(machine))
+}
+
+/// Have this thread issue `handles` again, in order, until the returned
+/// guard is dropped.
+pub(crate) fn reissue(handles: &[u64]) -> Reissue {
+    REISSUE.with(|reissue| *reissue.borrow_mut() = handles.iter().copied().collect());
+    Reissue(PhantomData)
+}
+
+/// Stops re-issuing handles when dropped. Not `Send`: it is this thread's.
+pub(crate) struct Reissue(PhantomData<*const ()>);
+
+impl Drop for Reissue {
+    fn drop(&mut self) {
+        REISSUE.with(|reissue| reissue.borrow_mut().clear());
     }
 }
 

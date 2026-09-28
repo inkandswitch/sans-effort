@@ -961,4 +961,106 @@ mod tests {
             assert!(done, "every clerk replied and finished");
         }
     }
+
+    /// Record → replay through the host crate's table, with a sequential
+    /// host like the Python one. The routines spawn, so their outputs name
+    /// machines — in `woke` frames and in tags 6 and 7 — and the replay only
+    /// agrees byte for byte if the table issues the recorded handles again.
+    #[cfg(feature = "table")]
+    mod recorded {
+        use super::*;
+        use routines::{front_desk::FrontDesk, ping_pong::PingPong};
+        use sans_effort_core::boundary::codec::{Reader, Writer};
+        use sans_effort_host::{
+            contract::{FRAME_ASK, FRAME_TELL, FRAME_WOKE},
+            record::{record, replay},
+            status::Status as Code,
+            table,
+        };
+        use std::collections::HashSet;
+
+        /// Perform each effect and reply; resume each child to begin it and
+        /// each machine a `woke` frame names; free each as it completes.
+        fn host(root: u64, script: &[&str]) {
+            let mut lines = script.iter().copied();
+            let mut done = HashSet::new();
+            let mut queue = VecDeque::from([(root, table::resume(root).expect("begins"))]);
+
+            while let Some((handle, (bytes, status))) = queue.pop_front() {
+                if status == Code::Complete {
+                    table::free(handle).expect("freed once");
+                    done.insert(handle);
+                }
+                let mut frames = Reader::new(&bytes);
+                while let (Ok(kind), Ok(payload)) = (frames.u8(), frames.bytes()) {
+                    let mut r = Reader::new(payload);
+                    if kind == FRAME_WOKE {
+                        let woken = r.u64().expect("a handle");
+                        if !done.contains(&woken) {
+                            queue.push_back((woken, table::resume(woken).expect("resumed")));
+                        }
+                    } else if kind == FRAME_TELL && matches!(r.u8(), Ok(6 | 7)) {
+                        let child = r.u64().expect("a handle");
+                        queue.push_back((child, table::resume(child).expect("begun")));
+                    } else if kind == FRAME_ASK {
+                        let record = match r.u8().expect("a tag") {
+                            2 => {
+                                let name = r.str().expect("a name");
+                                let greeting = if name == "alice" { "Hello" } else { "Hi" };
+                                reply(r.u64().expect("an id"), 1, &String::from(greeting))
+                            }
+                            3 => {
+                                let line =
+                                    lines.next().map(String::from).ok_or(ReadLineError::Closed);
+                                reply(r.u64().expect("an id"), 4, &line.to_bytes())
+                            }
+                            tag => panic!("no answer for tag {tag}"),
+                        };
+                        queue.push_back((handle, table::reply(handle, &record).expect("replied")));
+                    }
+                }
+            }
+        }
+
+        /// A reply record: `kind · id · payload`, the payload already encoded.
+        fn reply<P: Encode + ?Sized>(id: u64, kind: u8, payload: &P) -> Vec<u8> {
+            let mut w = Writer::new();
+            w.u8(kind);
+            w.u64(id);
+            payload.encode(&mut w);
+            w.finish()
+        }
+
+        fn ping_pong() -> u64 {
+            table::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run())
+        }
+
+        fn front_desk() -> u64 {
+            table::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
+        }
+
+        #[test]
+        fn a_ping_pong_run_replays_byte_for_byte() {
+            let root = ping_pong();
+            let recorder = record(root);
+            host(root, &[]);
+            let log = recorder.finish();
+            assert_eq!(log.handles().len(), 2, "the parent and its child");
+            replay(&log, ping_pong).expect("the same calls, the same outcomes");
+        }
+
+        #[test]
+        fn a_front_desk_run_replays_byte_for_byte() {
+            let root = front_desk();
+            let recorder = record(root);
+            host(root, &["alice", "bob", "carol"]);
+            let log = recorder.finish();
+            assert_eq!(
+                log.handles().len(),
+                4,
+                "the desk and a pinned clerk per name"
+            );
+            replay(&log, front_desk).expect("the same calls, the same outcomes");
+        }
+    }
 }

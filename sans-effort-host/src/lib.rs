@@ -25,6 +25,10 @@
 //!   future is not `Send`, runs over a
 //!   [`LocalDriver`](sans_effort_core::driver::LocalDriver) and stays on the
 //!   thread that first resumed it.
+//! - [`record`] taps the table: [`record::record`] logs every call on a root
+//!   machine and the machines it creates, whichever host makes them, and
+//!   [`record::replay`] makes the same calls again and reports the first
+//!   outcome that differs. A failing run becomes a log you can replay.
 //!
 //! The application adds the _binding_: the thin `unsafe` wrapper a foreign host
 //! actually calls — one `#[no_mangle]` wrapper per function in [`table`], each
@@ -73,6 +77,8 @@ pub mod error;
 pub mod machine;
 pub mod status;
 
+#[cfg(feature = "std")]
+pub mod record;
 #[cfg(feature = "std")]
 pub mod table;
 
