@@ -84,8 +84,8 @@ use core::{future::Future, pin::Pin};
 /// `BoxFuture<'static, ()>`, so the two interchange freely.
 pub type BoxedRoutine = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// A routine's future, boxed, not necessarily `Send`: what a [`LocalDriver`]
-/// steps.
+/// A routine's future, boxed, not necessarily `Send`: what a local driver
+/// ([`Driver::local`]) steps.
 ///
 /// Any `Future<Output = ()> + 'static` fits. The same type as
 /// `futures-core`'s `LocalBoxFuture<'static, ()>`.
@@ -100,17 +100,14 @@ pub type LocalBoxedRoutine = Pin<Box<dyn Future<Output = ()>>>;
 ///
 /// `F` is the routine's future, boxed and unsized. By default it is `Send`,
 /// so a `Driver` may be polled from any thread, one at a time. For a routine
-/// whose future is not `Send`, [`Driver::local`] builds a [`LocalDriver`]:
-/// the same type over a future that need not be `Send`, which the compiler
-/// keeps on the thread that built it.
+/// whose future is not `Send` — one holding an `Rc`, or a foreign value tied
+/// to its thread, across an `.await` — [`Driver::local`] builds a _local_
+/// driver, `Driver<E, dyn Future<Output = ()>>`: the same type over a future
+/// that need not be `Send`, which the compiler keeps on the thread that built
+/// it.
 pub struct Driver<E, F: ?Sized = dyn Future<Output = ()> + Send> {
     stepper: Stepper<E, F>,
 }
-
-/// A [`Driver`] for a routine whose future is not `Send` — the right home
-/// for a routine that holds an `Rc`, or a foreign value tied to its thread,
-/// across an `.await`. Build one with [`Driver::local`].
-pub type LocalDriver<E> = Driver<E, dyn Future<Output = ()>>;
 
 impl<E> Driver<E> {
     /// Build the routine around a fresh outbox. `make` receives the outbox
@@ -144,10 +141,10 @@ impl<E> Driver<E> {
     }
 
     /// As [`new`](Self::new), without requiring the future to be `Send`: a
-    /// [`LocalDriver`], which stays on this thread.
+    /// local driver, which is not `Send` either and so stays on this thread.
     pub fn local<Fut: Future<Output = ()> + 'static, M: FnOnce(Outbox<E>) -> Fut>(
         make: M,
-    ) -> LocalDriver<E> {
+    ) -> Driver<E, dyn Future<Output = ()>> {
         let outbox = Outbox::new();
         let future = make(outbox.clone());
 
@@ -158,7 +155,9 @@ impl<E> Driver<E> {
 
     /// As [`local`](Self::local), for a routine that is already boxed — a
     /// pinned child, say.
-    pub fn local_boxed<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(make: M) -> LocalDriver<E> {
+    pub fn local_boxed<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(
+        make: M,
+    ) -> Driver<E, dyn Future<Output = ()>> {
         let outbox = Outbox::new();
         let future = make(outbox.clone());
 
@@ -718,7 +717,7 @@ mod tests {
     }
 
     /// Holds an `Rc` across an `.await`, so its future is not `Send`: only a
-    /// `LocalDriver` can step it.
+    /// local driver can step it.
     struct Counted {
         outbox: Outbox<Effect>,
         seen: alloc::rc::Rc<core::cell::Cell<u32>>,

@@ -1,7 +1,6 @@
-//! The stepping shared by [`Driver`](super::Driver) and
-//! [`LocalDriver`](super::LocalDriver): a routine's boxed future plus its
-//! outbox, polled once per call. The two differ only in whether the future
-//! is `Send`, so this is generic over the (unsized) future type.
+//! The stepping inside a [`Driver`](super::Driver): a routine's boxed future
+//! plus its outbox, polled once per call. Generic over the (unsized) future
+//! type, `Send` or not, as the driver is.
 
 use super::{
     Refused, Yield,

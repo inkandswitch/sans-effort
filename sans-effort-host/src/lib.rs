@@ -22,9 +22,9 @@
 //!   calls: decode one reply record, call the typed method, encode the views.
 //!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` binding
 //!   calls it. Most machines migrate between threads; a pinned one, whose
-//!   future is not `Send`, runs over a
-//!   [`LocalDriver`](sans_effort_core::driver::LocalDriver) and stays on the
-//!   thread that first resumed it.
+//!   future is not `Send`, runs over a local driver
+//!   ([`Driver::local`](sans_effort_core::driver::Driver::local)) and stays on
+//!   the thread that first resumed it.
 //! - [`record`] taps the table: [`record::record`] logs every call on a root
 //!   machine and the machines it creates, whichever host makes them, and
 //!   [`record::replay`] makes the same calls again and reports the first

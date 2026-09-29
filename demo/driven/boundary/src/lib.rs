@@ -797,7 +797,7 @@ mod tests {
         use super::*;
         use routines::{front_desk::FrontDesk, ping_pong::PingPong};
         use sans_effort_core::{
-            driver::{LocalDriver, Yield},
+            driver::Yield,
             reply::{Answer, handle::ReplyHandle},
         };
 
@@ -805,7 +805,7 @@ mod tests {
         /// test's one thread.
         enum Machine {
             Migrating(Driver<Full>),
-            Pinned(LocalDriver<Full>),
+            Pinned(Driver<Full, dyn Future<Output = ()>>),
         }
 
         impl Machine {

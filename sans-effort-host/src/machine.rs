@@ -10,11 +10,6 @@ use sans_effort_core::{
     reply::{Reply, handle::ReplyHandle},
 };
 
-/// A [`Machine`] over a [`LocalDriver`](sans_effort_core::driver::LocalDriver):
-/// for a routine whose future is not `Send`, polled only on the thread that
-/// built it.
-pub type LocalMachine<E> = Machine<E, dyn Future<Output = ()>>;
-
 /// A driver plus the requests it has outstanding, keyed by id: the typed
 /// layer.
 ///
