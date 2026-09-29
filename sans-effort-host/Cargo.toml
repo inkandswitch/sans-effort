@@ -31,6 +31,11 @@ spin = ["sans-effort-core/spin"]
 [dev-dependencies]
 async-channel = { workspace = true }
 bolero = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "table"
+harness = false
 
 [lints]
 workspace = true

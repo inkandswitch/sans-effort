@@ -318,7 +318,9 @@ public class Main {
         final Map<String, byte[]> files = new ConcurrentHashMap<>();
         final AtomicLong readings = new AtomicLong();
         int nextByte;
-        final ExecutorService[] workers;
+        final ThreadPoolExecutor[] workers;
+        /** The worker this thread is, if it is one. */
+        static final ThreadLocal<Integer> HERE = new ThreadLocal<>();
         final AtomicInteger nextWorker = new AtomicInteger();
         final ExecutorService effects = Executors.newVirtualThreadPerTaskExecutor();
         final Map<Long, Machine> machines = new ConcurrentHashMap<>();
@@ -347,8 +349,11 @@ public class Main {
         Scheduler(Library lib, List<String> script, int threads) {
             this.lib = lib;
             lines = script.iterator();
-            workers = new ExecutorService[threads];
-            for (int i = 0; i < threads; i++) workers[i] = Executors.newSingleThreadExecutor(Thread.ofPlatform().name("driver-" + i).factory());
+            workers = new ThreadPoolExecutor[threads];
+            for (int i = 0; i < threads; i++) {
+                workers[i] = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+                    Thread.ofPlatform().name("driver-" + i).factory());
+            }
         }
 
         void busy() { synchronized (this) { pending++; } }
@@ -376,16 +381,32 @@ public class Main {
                 schedule = !m.running;
                 m.running = true;
             }
-            if (schedule) worker(m).execute(() -> drain(m));
+            if (schedule) {
+                int w = worker(m);
+                workers[w].execute(() -> {
+                    HERE.set(w);
+                    drain(m);
+                });
+            }
         }
 
-        /** A pinned machine's own worker (chosen at its first resume); any worker for a migrating one. */
-        ExecutorService worker(Machine m) {
+        /**
+         * A pinned machine's own worker (chosen at its first resume). A migrating
+         * machine stays on the worker that woke it when that worker has nothing
+         * else queued — it runs there next, with no hand-off between threads —
+         * and goes to the next worker in turn otherwise, so work fanned out from
+         * one worker still spreads.
+         */
+        int worker(Machine m) {
             synchronized (m) {
-                if (!m.pinned) return workers[Math.floorMod(nextWorker.getAndIncrement(), workers.length)];
-                if (m.worker < 0) m.worker = Math.floorMod(nextWorker.getAndIncrement(), workers.length);
-                return workers[m.worker];
+                if (m.pinned) {
+                    if (m.worker < 0) m.worker = Math.floorMod(nextWorker.getAndIncrement(), workers.length);
+                    return m.worker;
+                }
             }
+            Integer here = HERE.get();
+            if (here != null && workers[here].getQueue().isEmpty()) return here;
+            return Math.floorMod(nextWorker.getAndIncrement(), workers.length);
         }
 
         /**

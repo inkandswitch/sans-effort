@@ -3,6 +3,7 @@ name = "sans-effort-core"
 version = "0.1.0"
 description = "The mechanism under sans-effort: the routine trait, the driver, and the boundary — small and slow to change, for runtime and binding authors"
 readme = "README.md"
+autobenches = false
 
 categories = ["asynchronous", "no-std"]
 keywords = ["async", "coroutine", "effects", "no_std", "sans-io"]
@@ -20,7 +21,19 @@ spin = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+async-channel = { workspace = true, features = ["std"] }
 bolero = { workspace = true }
+criterion = { workspace = true }
+gungraun = { workspace = true }
+
+# `benches/workloads.rs` is a module both harnesses share, not a target.
+[[bench]]
+name = "time"
+harness = false
+
+[[bench]]
+name = "instructions"
+harness = false
 
 [features]
 default = ["std"]

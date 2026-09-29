@@ -4,13 +4,27 @@
   system,
   cmd,
   wasm-bindgen-cli,
+  bench-pkgs,
 }: let
   cargo = "${pkgs.cargo}/bin/cargo";
   java = "${pkgs.jdk25}/bin/java";
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
   wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
+  bench-path = pkgs.lib.makeBinPath bench-pkgs;
 in {
+  "bench:instructions" = cmd "Count instructions and allocations for the core workloads (Gungraun, under Valgrind; Linux)" ''
+    set -e
+    export PATH="${bench-path}:$PATH"
+    ${cargo} bench -p sans-effort-core --bench instructions "$@"
+  '';
+
+  "bench:time" = cmd "Time the core workloads and the host table (criterion); pass --save-baseline NAME or --baseline NAME" ''
+    set -e
+    ${cargo} bench -p sans-effort-core --bench time -- "$@"
+    ${cargo} bench -p sans-effort-host --bench table -- "$@"
+  '';
+
   "test:host" = cmd "Run tests and doc tests" ''
     set -e
 

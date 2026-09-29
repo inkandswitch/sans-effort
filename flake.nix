@@ -79,6 +79,32 @@
           typos
         ];
 
+        # The runner Gungraun's harness execs under Valgrind. Not in nixpkgs;
+        # built from crates.io. Its version must equal the `gungraun` crate's
+        # exactly (the `=` pin in Cargo.toml): bump both, and both hashes.
+        gungraun-runner = pkgs.rustPlatform.buildRustPackage rec {
+          pname = "gungraun-runner";
+          version = "0.20.0";
+          src = pkgs.fetchCrate {
+            inherit pname version;
+            hash = "sha256-XZHnq0t5XI/lSAdtP0UYxcaaV/YVZOmT/E7YQWX7jOU=";
+          };
+          cargoHash = "sha256-nYOFsVAuLw13XObUO4mS4edlv5N/BSHRYPPS1N7y0Os=";
+          doCheck = false;
+          meta = {
+            description = "The runner for Gungraun benchmarks";
+            homepage = "https://github.com/gungraun/gungraun";
+            license = with pkgs.lib.licenses; [asl20 mit];
+            mainProgram = "gungraun-runner";
+          };
+        };
+
+        # Instruction and allocation counts (`bench:instructions`): Linux only.
+        bench-pkgs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+          pkgs.valgrind
+          gungraun-runner
+        ];
+
         # The demo's foreign hosts. `wasm-bindgen-cli` must match the `=` pin on
         # the `wasm-bindgen` crate in Cargo.toml; bump both together.
         demo-pkgs = [
@@ -101,7 +127,7 @@
 
         # Project-specific commands
         projectCommands = import ./nix/commands.nix {
-          inherit pkgs system cmd;
+          inherit pkgs system cmd bench-pkgs;
           wasm-bindgen-cli = unstable.wasm-bindgen-cli;
         };
 
@@ -181,6 +207,7 @@
             ++ format-pkgs
             ++ cargo-installs
             ++ demo-pkgs
+            ++ bench-pkgs
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.clang
               pkgs.llvmPackages.libclang

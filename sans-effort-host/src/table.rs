@@ -46,7 +46,11 @@ use std::{
     marker::PhantomData,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
-    sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError, TryLockError},
+    sync::{
+        Arc, LazyLock, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        TryLockError,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread::{self, ThreadId},
 };
 
@@ -125,7 +129,9 @@ type LocalEntry = Rc<RefCell<Box<dyn Stepped>>>;
 /// One lock covers them all, so a handle is never issued twice.
 struct Table {
     machines: HashMap<u64, Entry>,
-    parked: HashMap<u64, Box<dyn Park + Send>>,
+    /// Each behind its own `Mutex` only so the table is `Sync` (a parked
+    /// closure is `Send`, not `Sync`); it is moved in and out, never shared.
+    parked: HashMap<u64, Mutex<Box<dyn Park + Send>>>,
     pinned: HashMap<u64, ThreadId>,
     next: u64,
 
@@ -207,7 +213,7 @@ impl Table {
     }
 }
 
-static TABLE: LazyLock<Mutex<Table>> = LazyLock::new(|| Mutex::new(Table::new()));
+static TABLE: LazyLock<RwLock<Table>> = LazyLock::new(|| RwLock::new(Table::new()));
 
 thread_local! {
     /// This thread's started pinned machines.
@@ -226,6 +232,18 @@ thread_local! {
 struct Call {
     handle: u64,
     woken: Vec<u64>,
+}
+
+/// How many recording sessions are open. Every call checks it before taking
+/// the table's lock to log itself, so a process that records nothing pays one
+/// atomic load per call, not a second lock.
+static SESSIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Log `event` for `handle`, if any session is recording it.
+fn note(handle: u64, event: impl FnOnce(u32) -> Event) {
+    if SESSIONS.load(Ordering::Acquire) > 0 {
+        table().note(handle, event);
+    }
 }
 
 /// Machines woken outside any call, until [`wakes`] reports them.
@@ -303,8 +321,14 @@ pub fn wakes() -> Vec<u8> {
 /// The table, with a poisoned lock recovered: a panic while holding it can
 /// only have been in `HashMap` itself, and the routines behind it are
 /// untouched.
-fn table() -> MutexGuard<'static, Table> {
-    TABLE.lock().unwrap_or_else(PoisonError::into_inner)
+fn table() -> RwLockWriteGuard<'static, Table> {
+    TABLE.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The table for reading, shared with other readers: how every call finds its
+/// machine, so calls on different machines do not wait for each other here.
+fn table_read() -> RwLockReadGuard<'static, Table> {
+    TABLE.read().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Register a migrating routine. `make` receives the outbox the routine's
@@ -350,10 +374,10 @@ where
     let handle = table.issue();
     table.parked.insert(
         handle,
-        Box::new(Parked {
+        Mutex::new(Box::new(Parked {
             make,
             _effect: PhantomData,
-        }),
+        })),
     );
     table.adopt(handle);
     handle
@@ -378,7 +402,7 @@ fn insert(machine: Box<dyn Stepped + Send>) -> u64 {
 /// resumed (it has issued no ids), or whatever [`Encoded::reply`] returns.
 pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
     let result = reporting_wakes(handle, || guarded(handle, |m| m.reply(record)));
-    table().note(handle, |machine| Event::Reply {
+    note(handle, |machine| Event::Reply {
         machine,
         record: record.to_vec(),
         outcome: outcome(&result),
@@ -403,7 +427,7 @@ pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
         match table.parked.remove(&handle) {
             Some(parked) => {
                 table.pinned.insert(handle, thread::current().id());
-                Some(parked)
+                Some(parked.into_inner().unwrap_or_else(PoisonError::into_inner))
             }
             None => None,
         }
@@ -424,7 +448,7 @@ pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
     }
 
     let result = reporting_wakes(handle, || guarded(handle, |m| m.resume()));
-    table().note(handle, |machine| Event::Resume {
+    note(handle, |machine| Event::Resume {
         machine,
         outcome: outcome(&result),
     });
@@ -441,7 +465,7 @@ pub fn resume(handle: u64) -> Result<(Vec<u8>, Status), Error> {
 pub fn free(handle: u64) -> Result<(), Error> {
     let result = free_unrecorded(handle);
     let code = result.map_or_else(Error::code, |()| OK);
-    table().note(handle, |machine| Event::Free {
+    note(handle, |machine| Event::Free {
         machine,
         outcome: Outcome {
             code,
@@ -480,6 +504,7 @@ pub(crate) fn start_recording(root: u64) -> u32 {
     let machine = log.adopt(root);
     table.sessions.insert(session, log);
     table.recorded.insert(root, Tap { session, machine });
+    SESSIONS.fetch_add(1, Ordering::AcqRel);
     session
 }
 
@@ -487,7 +512,11 @@ pub(crate) fn start_recording(root: u64) -> u32 {
 pub(crate) fn finish_recording(session: u32) -> Log {
     let mut table = table();
     table.recorded.retain(|_, tap| tap.session != session);
-    table.sessions.remove(&session).unwrap_or_default()
+    let log = table.sessions.remove(&session);
+    if log.is_some() {
+        SESSIONS.fetch_sub(1, Ordering::AcqRel);
+    }
+    log.unwrap_or_default()
 }
 
 /// The handle a session gave its `machine`th machine, if it has one yet.
@@ -521,7 +550,7 @@ enum Found {
 }
 
 fn find(handle: u64) -> Result<Found, Error> {
-    let table = table();
+    let table = table_read();
 
     if let Some(entry) = table.machines.get(&handle) {
         return Ok(Found::Migrating(entry.clone()));

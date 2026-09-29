@@ -1,0 +1,41 @@
+name: Benchmarks (Instruction Counts)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Must equal the `=` pin on `gungraun` in Cargo.toml (and the flake's runner).
+  GUNGRAUN_RUNNER_VERSION: 0.20.0
+
+jobs:
+  instructions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Install gungraun-runner
+        run: |
+          if ! gungraun-runner --version 2>/dev/null | grep -q "$GUNGRAUN_RUNNER_VERSION"; then
+            cargo install gungraun-runner --version "$GUNGRAUN_RUNNER_VERSION" --locked
+          fi
+
+      # Deterministic counts: the hard limits on heap blocks fail the job if an
+      # allocation is added to the ask path.
+      - name: Instruction and allocation counts
+        run: cargo bench -p sans-effort-core --bench instructions
