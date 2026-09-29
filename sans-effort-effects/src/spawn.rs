@@ -223,7 +223,7 @@ impl<E> PinnedChild<E> {
     }
 
     /// Build the child's future around `outbox`, on the thread that will run
-    /// it — `LocalDriver::from_boxed(|outbox| child.start(outbox))`.
+    /// it — `Driver::local_boxed(|outbox| child.start(outbox))`.
     #[must_use]
     pub fn start(self, outbox: Outbox<E>) -> LocalBoxedRoutine {
         (self.make)(outbox)
@@ -248,7 +248,7 @@ mod tests {
     use alloc::{rc::Rc, string::String, vec::Vec};
     use core::ops::ControlFlow;
     use sans_effort_core::{
-        driver::{Driver, LocalDriver, Yield, status::Status},
+        driver::{Driver, Yield, status::Status},
         step::Step,
     };
 
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(written(child.resume()), ["migrating"]);
         assert!(child.is_finished());
 
-        let mut pinned = LocalDriver::from_boxed(|outbox| pinned.start(outbox));
+        let mut pinned = Driver::local_boxed(|outbox| pinned.start(outbox));
         assert_eq!(written(pinned.resume()), ["pinned"]);
         assert!(pinned.is_finished());
     }

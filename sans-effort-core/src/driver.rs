@@ -98,11 +98,19 @@ pub type LocalBoxedRoutine = Pin<Box<dyn Future<Output = ()>>>;
 /// [`resume`](Self::resume) again when the routine is [`Idle`](Status::Idle)
 /// and may have something new — until [`is_finished`](Self::is_finished).
 ///
-/// Its future is `Send`, so a `Driver` may be polled from any thread, one at a
-/// time. For a routine whose future is not `Send`, use [`LocalDriver`].
-pub struct Driver<E> {
-    stepper: Stepper<E, dyn Future<Output = ()> + Send>,
+/// `F` is the routine's future, boxed and unsized. By default it is `Send`,
+/// so a `Driver` may be polled from any thread, one at a time. For a routine
+/// whose future is not `Send`, [`Driver::local`] builds a [`LocalDriver`]:
+/// the same type over a future that need not be `Send`, which the compiler
+/// keeps on the thread that built it.
+pub struct Driver<E, F: ?Sized = dyn Future<Output = ()> + Send> {
+    stepper: Stepper<E, F>,
 }
+
+/// A [`Driver`] for a routine whose future is not `Send` — the right home
+/// for a routine that holds an `Rc`, or a foreign value tied to its thread,
+/// across an `.await`. Build one with [`Driver::local`].
+pub type LocalDriver<E> = Driver<E, dyn Future<Output = ()>>;
 
 impl<E> Driver<E> {
     /// Build the routine around a fresh outbox. `make` receives the outbox
@@ -113,7 +121,7 @@ impl<E> Driver<E> {
     /// context holding an `Rc` across an `.await` is rejected. This is also
     /// the one `Box::pin` in the design: an `async fn`'s state machine holds
     /// borrows across awaits and must not move between polls.
-    pub fn new<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
+    pub fn new<Fut: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> Fut>(
         make: M,
     ) -> Self {
         let outbox = Outbox::new();
@@ -135,6 +143,32 @@ impl<E> Driver<E> {
         }
     }
 
+    /// As [`new`](Self::new), without requiring the future to be `Send`: a
+    /// [`LocalDriver`], which stays on this thread.
+    pub fn local<Fut: Future<Output = ()> + 'static, M: FnOnce(Outbox<E>) -> Fut>(
+        make: M,
+    ) -> LocalDriver<E> {
+        let outbox = Outbox::new();
+        let future = make(outbox.clone());
+
+        Driver {
+            stepper: Stepper::new(Box::pin(future), outbox),
+        }
+    }
+
+    /// As [`local`](Self::local), for a routine that is already boxed — a
+    /// pinned child, say.
+    pub fn local_boxed<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(make: M) -> LocalDriver<E> {
+        let outbox = Outbox::new();
+        let future = make(outbox.clone());
+
+        Driver {
+            stepper: Stepper::new(future, outbox),
+        }
+    }
+}
+
+impl<E, F: Future<Output = ()> + ?Sized> Driver<E, F> {
     /// Deliver the answer a handle asked for and advance: the effects
     /// recorded before the next wait.
     ///
@@ -209,99 +243,9 @@ impl<E> Driver<E> {
     }
 }
 
-impl<E> core::fmt::Debug for Driver<E> {
+impl<E, F: Future<Output = ()> + ?Sized> core::fmt::Debug for Driver<E, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Driver")
-            .field("status", &self.status())
-            .field("finished", &self.is_finished())
-            .finish_non_exhaustive()
-    }
-}
-
-/// A [`Driver`] for a routine whose future is not `Send`.
-///
-/// Identical to a `Driver` except that it is not `Send` itself, so the
-/// compiler keeps it on the thread that built it — the right home for a
-/// routine that holds an `Rc`, or a foreign value tied to its thread, across
-/// an `.await`.
-pub struct LocalDriver<E> {
-    stepper: Stepper<E, dyn Future<Output = ()>>,
-}
-
-impl<E> LocalDriver<E> {
-    /// Build the routine around a fresh outbox, as [`Driver::new`] does,
-    /// without requiring its future to be `Send`.
-    pub fn new<F: Future<Output = ()> + 'static, M: FnOnce(Outbox<E>) -> F>(make: M) -> Self {
-        let outbox = Outbox::new();
-        let future = make(outbox.clone());
-
-        Self {
-            stepper: Stepper::new(Box::pin(future), outbox),
-        }
-    }
-
-    /// As [`new`](Self::new), for a routine that is already boxed.
-    pub fn from_boxed<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(make: M) -> Self {
-        let outbox = Outbox::new();
-        let future = make(outbox.clone());
-
-        Self {
-            stepper: Stepper::new(future, outbox),
-        }
-    }
-
-    /// As [`Driver::reply`].
-    ///
-    /// # Panics
-    ///
-    /// As [`Driver::reply`].
-    pub fn reply<A: Answer>(&mut self, reply: ReplyHandle<A>, value: A) -> Yield<E> {
-        self.stepper.reply(reply, value)
-    }
-
-    /// As [`Driver::try_reply`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Driver::try_reply`].
-    ///
-    /// # Panics
-    ///
-    /// If the handle was minted by another driver.
-    pub fn try_reply<A: Answer>(
-        &mut self,
-        reply: ReplyHandle<A>,
-        value: A,
-    ) -> Result<Yield<E>, Refused<A>> {
-        self.stepper.try_reply(reply, value)
-    }
-
-    /// As [`Driver::resume`].
-    pub fn resume(&mut self) -> Yield<E> {
-        self.stepper.poll()
-    }
-
-    /// As [`Driver::on_wake`].
-    pub fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
-        self.stepper.on_wake(alloc::boxed::Box::new(hook));
-    }
-
-    /// What the last poll reported.
-    #[must_use]
-    pub const fn status(&self) -> Status {
-        self.stepper.status()
-    }
-
-    /// `true` once the routine has returned.
-    #[must_use]
-    pub const fn is_finished(&self) -> bool {
-        self.stepper.is_finished()
-    }
-}
-
-impl<E> core::fmt::Debug for LocalDriver<E> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("LocalDriver")
             .field("status", &self.status())
             .field("finished", &self.is_finished())
             .finish_non_exhaustive()
@@ -794,7 +738,7 @@ mod tests {
     #[test]
     fn a_local_driver_steps_a_future_that_is_not_send() {
         let seen = alloc::rc::Rc::new(core::cell::Cell::new(0));
-        let mut driver = LocalDriver::new({
+        let mut driver = Driver::local({
             let seen = alloc::rc::Rc::clone(&seen);
             move |outbox| Counted { outbox, seen }.run()
         });

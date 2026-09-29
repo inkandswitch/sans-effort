@@ -6,95 +6,14 @@ use alloc::{string::String, vec::Vec};
 use core::{future::Future, marker::PhantomData};
 use sans_effort_core::{
     boundary::{host_effect::HostEffect, pending::Pending},
-    driver::{BoxedRoutine, Driver, LocalDriver, Refused, Yield, outbox::Outbox, status::Status},
+    driver::{BoxedRoutine, Driver, Yield, outbox::Outbox, status::Status},
     reply::{Reply, handle::ReplyHandle},
 };
 
-/// What a [`Machine`] steps: a [`Driver`], or a [`LocalDriver`] for a routine
-/// whose future is not `Send`. Sealed: the two are the only drivers.
-pub trait Drive<E>: sealed::Sealed {
-    /// Deliver a reply and poll.
-    ///
-    /// # Errors
-    ///
-    /// [`Refused`], with the handle back, if the value does not decode as
-    /// the answer the routine awaits.
-    fn try_reply<T: Reply>(
-        &mut self,
-        reply: ReplyHandle<T>,
-        value: T,
-    ) -> Result<Yield<E>, Refused<T>>;
-    /// Poll without delivering anything.
-    fn resume(&mut self) -> Yield<E>;
-    /// What the last poll reported.
-    fn status(&self) -> Status;
-    /// `true` once the routine has returned.
-    fn is_finished(&self) -> bool;
-    /// Call `hook` when the routine may be able to progress without a reply.
-    fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H);
-}
-
-mod sealed {
-    pub trait Sealed {}
-    impl<E> Sealed for super::Driver<E> {}
-    impl<E> Sealed for super::LocalDriver<E> {}
-}
-
-impl<E> Drive<E> for Driver<E> {
-    fn try_reply<T: Reply>(
-        &mut self,
-        reply: ReplyHandle<T>,
-        value: T,
-    ) -> Result<Yield<E>, Refused<T>> {
-        Driver::try_reply(self, reply, value)
-    }
-
-    fn resume(&mut self) -> Yield<E> {
-        Driver::resume(self)
-    }
-
-    fn status(&self) -> Status {
-        Driver::status(self)
-    }
-
-    fn is_finished(&self) -> bool {
-        Driver::is_finished(self)
-    }
-
-    fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
-        Driver::on_wake(self, hook);
-    }
-}
-
-impl<E> Drive<E> for LocalDriver<E> {
-    fn try_reply<T: Reply>(
-        &mut self,
-        reply: ReplyHandle<T>,
-        value: T,
-    ) -> Result<Yield<E>, Refused<T>> {
-        LocalDriver::try_reply(self, reply, value)
-    }
-
-    fn resume(&mut self) -> Yield<E> {
-        LocalDriver::resume(self)
-    }
-
-    fn status(&self) -> Status {
-        LocalDriver::status(self)
-    }
-
-    fn is_finished(&self) -> bool {
-        LocalDriver::is_finished(self)
-    }
-
-    fn on_wake<H: Fn() + Send + Sync + 'static>(&self, hook: H) {
-        LocalDriver::on_wake(self, hook);
-    }
-}
-
-/// A [`Machine`] over a [`LocalDriver`]: for a routine whose future is not
-/// `Send`, polled only on the thread that built it.
-pub type LocalMachine<E> = Machine<E, LocalDriver<E>>;
+/// A [`Machine`] over a [`LocalDriver`](sans_effort_core::driver::LocalDriver):
+/// for a routine whose future is not `Send`, polled only on the thread that
+/// built it.
+pub type LocalMachine<E> = Machine<E, dyn Future<Output = ()>>;
 
 /// A driver plus the requests it has outstanding, keyed by id: the typed
 /// layer.
@@ -105,8 +24,8 @@ pub type LocalMachine<E> = Machine<E, LocalDriver<E>>;
 /// handles the effects carried out, so that an `(id, value)` from across the
 /// boundary can be turned back into the typed, infallible
 /// [`Driver::reply`].
-pub struct Machine<E, D = Driver<E>> {
-    driver: D,
+pub struct Machine<E, F: ?Sized = dyn Future<Output = ()> + Send> {
+    driver: Driver<E, F>,
     /// Outstanding requests by id. A `Vec` scanned linearly, not a map: a
     /// routine has one or two requests in flight, and hashing a `u64` costs
     /// more than looking at two entries. Wide fan-out would want a sorted
@@ -141,10 +60,10 @@ impl<E: HostEffect> Machine<E> {
     }
 }
 
-impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
+impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
     /// Wrap a driver. Nothing has been polled yet.
     #[must_use]
-    pub const fn new(driver: D) -> Self {
+    pub const fn new(driver: Driver<E, F>) -> Self {
         Self {
             driver,
             pending: Vec::new(),
@@ -262,13 +181,13 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
 
     /// What the last poll reported.
     #[must_use]
-    pub fn status(&self) -> Status {
+    pub const fn status(&self) -> Status {
         self.driver.status()
     }
 
     /// `true` once the routine has returned.
     #[must_use]
-    pub fn is_finished(&self) -> bool {
+    pub const fn is_finished(&self) -> bool {
         self.driver.is_finished()
     }
 
@@ -330,7 +249,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     }
 }
 
-impl<E, D> core::fmt::Debug for Machine<E, D> {
+impl<E, F: ?Sized> core::fmt::Debug for Machine<E, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Machine")
             .field("pending", &self.pending)

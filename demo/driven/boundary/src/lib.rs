@@ -868,7 +868,7 @@ mod tests {
                         ),
                         Full::SpawnPinned(SpawnPinnedEffect(child)) => adopt(
                             &mut machines,
-                            Machine::Pinned(LocalDriver::from_boxed(|outbox| child.start(outbox))),
+                            Machine::Pinned(Driver::local_boxed(|outbox| child.start(outbox))),
                             &woken,
                         ),
                         Full::Sleep(Asked { reply, .. }) => {

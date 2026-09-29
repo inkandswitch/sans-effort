@@ -16,31 +16,32 @@ use self::input::Input;
 use crate::{
     contract::{FRAME_ASK, FRAME_CLOSED, FRAME_TELL},
     error::Error,
-    machine::{Drive, Machine, Shown},
+    machine::{Machine, Shown},
 };
 use alloc::vec::Vec;
+use core::future::Future;
 use sans_effort_core::{
     boundary::{codec::Encode, codec::Writer, host_effect::HostEffect},
+    driver::Yield,
     driver::status::Status,
-    driver::{Driver, Yield},
 };
 
 /// A machine seen through bytes.
-pub struct Encoded<E, D = Driver<E>>(Machine<E, D>);
+pub struct Encoded<E, F: ?Sized = dyn Future<Output = ()> + Send>(Machine<E, F>);
 
-impl<E: HostEffect, D: Drive<E>> Encoded<E, D>
+impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Encoded<E, F>
 where
     E::View: Encode,
 {
     /// The byte layer over `machine`.
     #[must_use]
-    pub const fn new(machine: Machine<E, D>) -> Self {
+    pub const fn new(machine: Machine<E, F>) -> Self {
         Self(machine)
     }
 
     /// The typed machine underneath.
     #[must_use]
-    pub const fn machine(&self) -> &Machine<E, D> {
+    pub const fn machine(&self) -> &Machine<E, F> {
         &self.0
     }
 
@@ -80,7 +81,7 @@ where
     }
 }
 
-impl<E, D> core::fmt::Debug for Encoded<E, D> {
+impl<E, F: ?Sized> core::fmt::Debug for Encoded<E, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("Encoded").field(&self.0).finish()
     }

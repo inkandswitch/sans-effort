@@ -28,7 +28,7 @@ use crate::{
     contract::{FRAME_WOKE, OK},
     encoded::Encoded,
     error::Error,
-    machine::{Drive, Machine},
+    machine::Machine,
     record::{Event, Log, Outcome, outcome},
 };
 use sans_effort_core::{
@@ -37,7 +37,7 @@ use sans_effort_core::{
         host_effect::HostEffect,
     },
     driver::status::Status,
-    driver::{BoxedRoutine, LocalBoxedRoutine, LocalDriver, outbox::Outbox},
+    driver::{BoxedRoutine, Driver, LocalBoxedRoutine, outbox::Outbox},
 };
 use std::{
     cell::RefCell,
@@ -59,7 +59,7 @@ trait Stepped {
     fn on_wake(&self, hook: Box<dyn Fn() + Send + Sync>);
 }
 
-impl<E: HostEffect, D: Drive<E>> Stepped for Encoded<E, D>
+impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Stepped for Encoded<E, F>
 where
     E::View: Encode,
 {
@@ -92,9 +92,7 @@ where
     E::View: Encode,
 {
     fn build(self: Box<Self>) -> Box<dyn Stepped> {
-        Box::new(Encoded::new(Machine::new(LocalDriver::from_boxed(
-            self.make,
-        ))))
+        Box::new(Encoded::new(Machine::new(Driver::local_boxed(self.make))))
     }
 }
 
