@@ -788,177 +788,121 @@ mod tests {
             .unwrap_or_else(|| panic!("expected a batch of {N}, got {len}"))
     }
 
-    /// A deterministic Rust host for machines that spawn and message each
-    /// other: every request answered at once, spawned children started in
-    /// the order they appear, and machines resumed in the order their drivers
-    /// report them woken — the same hooks the host table installs.
+    /// Machines that spawn and message each other, run by the core's test
+    /// runner: each request answered, each child begun, each woken machine
+    /// resumed. Under `Fifo` that happens in the order effects appear; under
+    /// `Choices` fed by bolero, replies are delayed, machines interleave, and
+    /// machines are resumed spuriously — and the transcript must not change,
+    /// nor any machine stall. One writer per routine, so the transcript is
+    /// schedule-independent exactly when the routine is.
     #[cfg(feature = "table")]
-    mod router {
+    mod scheduled {
         use super::*;
-        use routines::{front_desk::FrontDesk, ping_pong::PingPong};
-        use sans_effort_core::{
-            driver::Yield,
-            reply::{Answer, handle::ReplyHandle},
+        use routines::{front_desk::FrontDesk, ping_pong::PingPong, ring::Ring};
+        use sans_effort_core::testing::{
+            self, Stalled,
+            schedule::{Choices, Fifo, Schedule},
         };
 
-        /// A machine the router drives: migrating or pinned. All run on the
-        /// test's one thread.
-        enum Machine {
-            Migrating(Driver<Full>),
-            Pinned(Driver<Full, dyn Future<Output = ()>>),
-        }
-
-        impl Machine {
-            fn resume(&mut self) -> Yield<Full> {
-                match self {
-                    Machine::Migrating(d) => d.resume(),
-                    Machine::Pinned(d) => d.resume(),
-                }
-            }
-
-            fn reply<A: Answer>(&mut self, handle: ReplyHandle<A>, value: A) -> Yield<Full> {
-                match self {
-                    Machine::Migrating(d) => d.reply(handle, value),
-                    Machine::Pinned(d) => d.reply(handle, value),
-                }
-            }
-
-            fn status(&self) -> Status {
-                match self {
-                    Machine::Migrating(d) => d.status(),
-                    Machine::Pinned(d) => d.status(),
-                }
-            }
-
-            /// Report wakes as this machine's index in `woken`.
-            fn report_wakes(&self, at: usize, woken: &Woken) {
-                let woken = Woken::clone(woken);
-                let hook = move || woken.lock().expect("woken").push_back(at);
-                match self {
-                    Machine::Migrating(d) => d.on_wake(hook),
-                    Machine::Pinned(d) => d.on_wake(hook),
-                }
-            }
-        }
-
-        /// Which machines woke, in order, by index.
-        type Woken = std::sync::Arc<std::sync::Mutex<VecDeque<usize>>>;
-
-        /// Run `root` and everything it spawns until nothing can progress:
-        /// what each wrote, in order, and whether every machine completed.
-        fn route(root: Driver<Full>, script: &[&str]) -> (Vec<String>, bool) {
+        /// What the routine and its children wrote, in order, if every
+        /// machine completed.
+        fn run<S: Schedule>(
+            root: Driver<Full>,
+            script: &[&str],
+            schedule: S,
+        ) -> Result<Vec<String>, Stalled> {
             let mut lines = script.iter().copied();
-            let woken = Woken::default();
-            let mut machines = Vec::new();
-            let (at, first) = adopt(&mut machines, Machine::Migrating(root), &woken);
-            let mut queue: VecDeque<(usize, Full)> = first.into_iter().map(|e| (at, e)).collect();
             let mut written = Vec::new();
-
-            loop {
-                while let Some((at, effect)) = queue.pop_front() {
-                    let (from, more) = match effect {
-                        Full::WriteLine(WriteLineEffect(text)) => {
-                            written.push(text);
-                            continue;
-                        }
-                        Full::Spawn(SpawnEffect(child)) => adopt(
-                            &mut machines,
-                            Machine::Migrating(Driver::from_boxed(|outbox| child.start(outbox))),
-                            &woken,
-                        ),
-                        Full::SpawnPinned(SpawnPinnedEffect(child)) => adopt(
-                            &mut machines,
-                            Machine::Pinned(Driver::local_boxed(|outbox| child.start(outbox))),
-                            &woken,
-                        ),
-                        Full::Sleep(Asked { reply, .. }) => {
-                            (at, nth(&mut machines, at).reply(reply, ()))
-                        }
-                        Full::ReadLine(Asked { reply, .. }) => {
-                            let line = lines.next().ok_or(ReadLineError::Closed);
-                            (
-                                at,
-                                nth(&mut machines, at).reply(reply, line.map(String::from)),
-                            )
-                        }
-                        Full::Lookup(Asked {
-                            request: LookupEffect(name),
-                            reply,
-                        }) => {
-                            let greeting = match name.as_str() {
-                                "alice" => "Hello",
-                                "bob" => "Hi",
-                                _ => "Greetings",
-                            };
-                            (
-                                at,
-                                nth(&mut machines, at).reply(reply, String::from(greeting)),
-                            )
-                        }
-                        Full::Count(Asked { reply, .. }) => {
-                            (at, nth(&mut machines, at).reply(reply, 0))
-                        }
-                        Full::Now(_)
-                        | Full::Random(_)
-                        | Full::Var(_)
-                        | Full::ReadFile(_)
-                        | Full::WriteFile(_) => {
-                            panic!("no routine the router runs keeps a journal")
-                        }
-                    };
-                    queue.extend(more.into_iter().map(|e| (from, e)));
+            testing::drive_with(root, schedule, |effect, host| match effect {
+                Full::WriteLine(WriteLineEffect(text)) => written.push(text),
+                Full::Spawn(SpawnEffect(child)) => host.spawn(|outbox| child.start(outbox)),
+                Full::SpawnPinned(SpawnPinnedEffect(child)) => {
+                    host.spawn_pinned(|outbox| child.start(outbox));
                 }
-
-                // Nothing queued: resume the next machine that woke. None
-                // woke, and nothing is queued: nothing can happen again.
-                let next = woken.lock().expect("woken").pop_front();
-                let Some(at) = next else {
-                    let done = machines.iter().all(|m| m.status() == Status::Complete);
-                    return (written, done);
-                };
-                let step = nth(&mut machines, at).resume();
-                queue.extend(step.into_iter().map(|e| (at, e)));
-            }
+                Full::Sleep(Asked { reply, .. }) => host.reply(reply, ()),
+                Full::ReadLine(Asked { reply, .. }) => {
+                    let line = lines.next().map(String::from);
+                    host.reply(reply, line.ok_or(ReadLineError::Closed));
+                }
+                Full::Lookup(Asked {
+                    request: LookupEffect(name),
+                    reply,
+                }) => {
+                    let greeting = match name.as_str() {
+                        "alice" => "Hello",
+                        "bob" => "Hi",
+                        _ => "Greetings",
+                    };
+                    host.reply(reply, String::from(greeting));
+                }
+                Full::Count(Asked { reply, .. }) => host.reply(reply, 0),
+                Full::Now(_)
+                | Full::Random(_)
+                | Full::Var(_)
+                | Full::ReadFile(_)
+                | Full::WriteFile(_) => panic!("no routine run here keeps a journal"),
+            })?;
+            Ok(written)
         }
 
-        /// Begin a spawned machine and keep it: its index, and what its first
-        /// resume yielded.
-        fn adopt(
-            machines: &mut Vec<Machine>,
-            mut machine: Machine,
-            woken: &Woken,
-        ) -> (usize, Yield<Full>) {
-            let at = machines.len();
-            machine.report_wakes(at, woken);
-            let step = machine.resume();
-            machines.push(machine);
-            (at, step)
+        fn ping_pong() -> Driver<Full> {
+            Driver::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run())
         }
 
-        fn nth(machines: &mut [Machine], at: usize) -> &mut Machine {
-            machines.get_mut(at).expect("an index the router issued")
+        fn front_desk() -> Driver<Full> {
+            Driver::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
         }
+
+        fn ring() -> Driver<Full> {
+            Driver::new(|outbox| Ring::new(Ctx::<Full>::new(outbox), 4, 3).run())
+        }
+
+        const PING_PONG: [&str; 3] = ["ping 1, pong 1", "ping 2, pong 2", "ping 3, pong 3"];
+        const NAMES: [&str; 3] = ["alice", "bob", "zed"];
+        const FRONT_DESK: [&str; 4] = ["Hello, alice!", "Hi, bob!", "Greetings, zed!", "Closed."];
+        const RING: [&str; 1] = ["ring of 4, 3 laps: 12 hops"];
 
         #[test]
         fn ping_pong_across_two_machines() {
-            let root = Driver::new(|outbox| PingPong::new(Ctx::<Full>::new(outbox), 3).run());
-            let (written, done) = route(root, &[]);
             assert_eq!(
-                written,
-                ["ping 1, pong 1", "ping 2, pong 2", "ping 3, pong 3"]
+                run(ping_pong(), &[], Fifo),
+                Ok(PING_PONG.map(String::from).to_vec())
             );
-            assert!(done, "the parent returned, so the child's pings ended too");
         }
 
         #[test]
         fn front_desk_greets_in_arrival_order() {
-            let root = Driver::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run());
-            let (written, done) = route(root, &["alice", "bob", "zed"]);
             assert_eq!(
-                written,
-                ["Hello, alice!", "Hi, bob!", "Greetings, zed!", "Closed."]
+                run(front_desk(), &NAMES, Fifo),
+                Ok(FRONT_DESK.map(String::from).to_vec())
             );
-            assert!(done, "every clerk replied and finished");
+        }
+
+        #[test]
+        fn a_ring_counts_every_hop() {
+            assert_eq!(run(ring(), &[], Fifo), Ok(RING.map(String::from).to_vec()));
+        }
+
+        /// Schedule independence and stutter insensitivity: whatever order
+        /// the bytes pick, and whatever spurious resumes they insert, the
+        /// same lines come out and every machine completes.
+        #[test]
+        fn every_schedule_writes_the_same_and_completes() {
+            bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
+                let choices = || Choices::new(bytes.iter().copied());
+                assert_eq!(
+                    run(ping_pong(), &[], choices()),
+                    Ok(PING_PONG.map(String::from).to_vec())
+                );
+                assert_eq!(
+                    run(front_desk(), &NAMES, choices()),
+                    Ok(FRONT_DESK.map(String::from).to_vec())
+                );
+                assert_eq!(
+                    run(ring(), &[], choices()),
+                    Ok(RING.map(String::from).to_vec())
+                );
+            });
         }
     }
 

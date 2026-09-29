@@ -894,6 +894,7 @@ dependencies = [
  "gungraun",
  "portable-atomic",
  "portable-atomic-util",
+ "sans-effort-core",
  "spin",
  "thiserror",
 ]

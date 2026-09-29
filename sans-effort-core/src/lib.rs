@@ -98,8 +98,10 @@
 //!   that cannot hold a Rust value: [`HostEffect`](boundary::host_effect::HostEffect)
 //!   (handles → ids), [`Encode`](boundary::codec::Encode) (the codec), and
 //!   [`Pending`](boundary::pending::Pending).
-//! - [`testing::run_now`] runs a routine against a mock context whose every
-//!   future is ready, in one poll, with no driver.
+//! - `testing::run_now` (feature `testing`) runs a routine against a mock
+//!   context whose every future is ready, in one poll, with no driver;
+//!   `testing::drive` runs one and everything it spawns through drivers, in
+//!   an order a schedule picks.
 //!
 //! # Writing One
 //!
@@ -245,4 +247,6 @@ pub mod join;
 pub mod reply;
 pub mod select;
 pub mod step;
+
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;

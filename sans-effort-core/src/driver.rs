@@ -66,7 +66,7 @@ pub mod status;
 
 mod mail;
 mod stepper;
-mod sync;
+pub(crate) mod sync;
 mod wake;
 
 use self::{outbox::Outbox, status::Status, stepper::Stepper};

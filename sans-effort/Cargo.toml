@@ -46,6 +46,8 @@ critical-section = ["portable-atomic", "sans-effort-core/critical-section"]
 ## `host`: what a foreign-function binding needs — typed and byte-level
 ## machines, and with `std` the process-wide handle table.
 host = ["dep:sans-effort-host"]
+## `testing`: `sans_effort::testing`, the helpers for testing routines.
+testing = ["sans-effort-core/testing"]
 ## `tokio`: every standard effect trait as a real tokio future, no driver.
 tokio = ["std", "dep:sans-effort-tokio"]
 

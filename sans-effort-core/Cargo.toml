@@ -21,6 +21,8 @@ spin = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# This crate, with `testing` on: its own doctests use the module.
+sans-effort-core = { path = ".", features = ["testing"] }
 async-channel = { workspace = true, features = ["std"] }
 bolero = { workspace = true }
 criterion = { workspace = true }
@@ -54,6 +56,9 @@ portable-atomic = [
 ## `portable-atomic` backed by a `critical-section` implementation the
 ## application provides.
 critical-section = ["portable-atomic", "portable-atomic/critical-section"]
+## The `testing` module: `run_now`, `poll_once`, and the `drive` runner with
+## its schedules. For tests; enable it in `[dev-dependencies]`.
+testing = []
 
 [package.metadata.docs.rs]
 all-features = true

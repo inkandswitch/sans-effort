@@ -13,7 +13,8 @@ This crate is the one dependency a routine author needs. It re-exports the crate
 
 | Path | From | What |
 |---|---|---|
-| `sans_effort::{step, join, select, testing}` | `sans-effort-core` | The routine trait `Step`; two waits at once; the first of two; a one-poll test runner |
+| `sans_effort::{step, join, select}` | `sans-effort-core` | The routine trait `Step`; two waits at once; the first of two |
+| `sans_effort::testing` | `sans-effort-core` | Feature `testing`: a one-poll test runner, and `drive` — a routine and its children through drivers, under a schedule |
 | `sans_effort::{driver, reply, boundary}` | `sans-effort-core` | The mechanism: `Driver`, `resume`/`reply`, `Yield`, reply handles, the boundary traits |
 | `sans_effort::{ask, console, ctx, env, fs, random, spawn, time}` | `sans-effort-effects` | The standard effect traits (`Sleep`, `Now`, `ReadLine`, `WriteLine`, `ReadFile`, `WriteFile`, `Var`, `Random`, `Spawn`, `SpawnPinned`) and `Ctx<E>`, the context that turns each into an effect |
 | `sans_effort::tokio` | `sans-effort-tokio` | Feature `tokio`: every standard effect trait as a real tokio future |
@@ -58,6 +59,7 @@ On tokio, `tokio::spawn(Countdown { ctx: TokioCtx::new(…), left: 3 }.run())`. 
 | `portable-atomic` | | Atomics for targets without native CAS or 64-bit atomics; implies `spin` |
 | `critical-section` | | `portable-atomic` backed by an application-provided `critical-section` |
 | `host` | | `sans_effort::host` |
+| `testing` | | `sans_effort::testing`; enable it in `[dev-dependencies]` |
 | `tokio` | | `sans_effort::tokio`; implies `std` |
 
 At least one of `std` and `spin` must be enabled somewhere in the build. A library of routines should depend with `default-features = false` and leave the choice to the binary.

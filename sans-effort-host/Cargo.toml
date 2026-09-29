@@ -30,6 +30,7 @@ spin = ["sans-effort-core/spin"]
 
 [dev-dependencies]
 async-channel = { workspace = true }
+sans-effort-core = { workspace = true, features = ["testing"] }
 bolero = { workspace = true }
 criterion = { workspace = true }
 

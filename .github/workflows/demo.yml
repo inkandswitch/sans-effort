@@ -92,3 +92,22 @@ jobs:
           diff rust-journal.txt js-journal.txt
           diff rust-journal.txt java-journal.txt
           cat rust.txt rust-fanout.txt rust-journal.txt
+
+      # Spawning and channels: children, pinned children, and woke frames. Each
+      # host's stdout is deterministic (the ring prints its timing to stderr).
+      - name: Spawning modes agree
+        run: |
+          for mode in --ping-pong --front-desk --ring; do
+            case "$mode" in
+              --front-desk) script='alice\nbob\ncarol\n' ;;
+              *) script='' ;;
+            esac
+            printf "$script" | cargo run -q -p greeter_tokio -- $mode > rust-spawn.txt
+            python3 demo/driven/python/main.py $mode > python-spawn.txt
+            node demo/native/js/main.mjs $mode > js-spawn.txt
+            java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java $mode > java-spawn.txt
+            diff rust-spawn.txt python-spawn.txt
+            diff rust-spawn.txt js-spawn.txt
+            diff rust-spawn.txt java-spawn.txt
+            echo "Transcripts agree $mode"
+          done

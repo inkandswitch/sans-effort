@@ -23,6 +23,11 @@ confidence-threshold = 0.8
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# A path dependency with no version is still a wildcard to crates.io, so it
+# stays denied for published dependencies; this allows only unpublished ones,
+# such as `sans-effort-core`'s dev-dependency on itself (to turn on `testing`
+# for its own doctests).
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
