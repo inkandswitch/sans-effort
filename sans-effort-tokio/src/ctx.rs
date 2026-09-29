@@ -223,6 +223,12 @@ mod tests {
 
     use super::*;
 
+    use std::time::SystemTime;
+    use tokio::sync::oneshot;
+
+    /// Each trait forwards to its component, and each kind of child gets a
+    /// clone of the context: its lines land in the parent's output, and once
+    /// every child has let go, the parts come back.
     #[tokio::test(start_paused = true)]
     async fn every_effect_trait_through_one_value() {
         let ctx = TokioCtx::new(&b"hi\n"[..], Vec::new(), LocalPoolHandle::new(1));
@@ -231,17 +237,64 @@ mod tests {
         let line = ctx.read_line().await;
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.write_line(format!("{line:?}"));
-
         assert_eq!(start.elapsed(), Duration::from_millis(10));
-        assert_eq!(ctx.into_parts().expect("no child").1, b"Ok(\"hi\")\n");
+
+        let wall = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("a clock set after 1970");
+        assert!(ctx.now().await.since_epoch() >= wall);
+
+        assert_eq!(
+            ctx.var("CARGO_PKG_NAME".into()).await.as_deref(),
+            Some(env!("CARGO_PKG_NAME"))
+        );
+        assert_eq!(ctx.random_bytes(8).await.len(), 8);
+
+        let dir = std::env::temp_dir().join(format!("sans-effort-ctx-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("file").to_string_lossy().into_owned();
+        ctx.write_file(path.clone(), b"kept".to_vec())
+            .await
+            .expect("written");
+        assert_eq!(ctx.read_file(path).await, Ok(b"kept".to_vec()));
+        std::fs::remove_dir_all(dir).expect("cleaned up");
+
+        let (done, finished) = oneshot::channel();
+        ctx.spawn(|child| async move {
+            child.write_line("from a child".into());
+            drop(child);
+            done.send(()).expect("the parent waits");
+        });
+        finished.await.expect("the child ran");
+
+        let (done, finished) = oneshot::channel();
+        ctx.spawn_pinned(|child| async move {
+            child.write_line("from a pinned child".into());
+            drop(child);
+            done.send(()).expect("the parent waits");
+        });
+        finished.await.expect("the pinned child ran");
+
+        let (unread, written) = ctx.into_parts().expect("every child let go");
+        assert!(unread.is_empty());
+        assert_eq!(
+            String::from_utf8(written).expect("lines"),
+            "Ok(\"hi\")\nfrom a child\nfrom a pinned child\n"
+        );
     }
 
     #[tokio::test]
     async fn a_context_shared_with_a_child_gives_its_parts_back_only_after() {
-        let ctx = TokioCtx::new(&b""[..], Vec::<u8>::new(), LocalPoolHandle::new(1));
+        let ctx = TokioCtx::new(&b"unread\n"[..], Vec::<u8>::new(), LocalPoolHandle::new(1));
         let child = ctx.clone();
         let ctx = ctx.into_parts().expect_err("the child still shares them");
+        child.write_line("from the child".into());
         drop(child);
-        assert!(ctx.into_parts().is_ok());
+
+        let (unread, written) = ctx.into_parts().expect("the child let go");
+        assert_eq!(
+            (unread, written.as_slice()),
+            (&b"unread\n"[..], &b"from the child\n"[..])
+        );
     }
 }

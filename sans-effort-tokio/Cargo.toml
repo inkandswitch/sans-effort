@@ -21,7 +21,8 @@ tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-sans-effort-core = { workspace = true, features = ["std"] }
+bolero = { workspace = true }
+sans-effort-core = { workspace = true, features = ["std", "testing"] }
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [lints]

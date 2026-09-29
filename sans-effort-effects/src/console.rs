@@ -184,53 +184,91 @@ mod tests {
         out
     }
 
-    #[test]
-    fn a_line_a_closed_input_and_a_failure_arrive_as_themselves() {
-        assert_eq!(written(Ok("hi".into())), "hi");
-        assert_eq!(written(Err(ReadLineError::Closed)), "input closed");
-        assert_eq!(written(Err(ReadLineError::Failed)), "input failed");
+    /// What `ReadOnce` writes for an answer: the line, or the error.
+    fn shown(answer: &Result<String, ReadLineError>) -> String {
+        match answer {
+            Ok(line) => line.clone(),
+            Err(e) => alloc::format!("{e}"),
+        }
     }
 
-    /// A host replying over an ABI holds the wire kind, `bytes`. Bytes that
-    /// are not an encoded `Result<String, ReadLineError>` never reach the
-    /// routine: the reply is refused, the handle comes back, and the request
-    /// stays open for a good reply.
+    /// A line, a closed input, or a failed one, from a generated choice.
+    fn answer(kind: u8, line: &str) -> Result<String, ReadLineError> {
+        match kind % 3 {
+            0 => Ok(line.into()),
+            1 => Err(ReadLineError::Closed),
+            _ => Err(ReadLineError::Failed),
+        }
+    }
+
     #[test]
-    fn bytes_that_do_not_decode_are_refused_and_the_request_stays_open() {
-        let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
-        let Some(Effect::ReadLine(Asked { reply, .. })) = driver.resume().into_iter().next() else {
-            unreachable!("the routine reads first");
-        };
-        let Ok(wire) = Vec::<u8>::from_pending(Answer::pending(reply)) else {
-            unreachable!("a fallible read crosses as bytes");
-        };
+    fn any_answer_arrives_as_itself() {
+        bolero::check!()
+            .with_type::<(u8, String)>()
+            .for_each(|(kind, line)| {
+                let reply = answer(*kind, line);
+                assert_eq!(written(reply.clone()), shown(&reply));
+            });
+    }
 
-        let Err(refused) = driver.try_reply(wire, alloc::vec![7]) else {
-            panic!("7 is not an encoded result");
-        };
-        let (wire, _) = refused.into_parts();
-        assert_eq!(driver.status(), Status::Awaiting, "still waiting");
+    /// A host replying over an ABI holds the wire kind, `bytes`. Whatever
+    /// bytes it sends, they reach the routine only if they are an encoded
+    /// `Result<String, ReadLineError>`; otherwise the reply is refused, the
+    /// handle comes back, and the request stays open for a good reply.
+    #[test]
+    fn any_bytes_are_delivered_if_they_decode_and_refused_otherwise() {
+        bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
+            let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
+            let Some(Effect::ReadLine(Asked { reply, .. })) = driver.resume().into_iter().next()
+            else {
+                unreachable!("the routine reads first");
+            };
+            let Ok(wire) = Vec::<u8>::from_pending(Answer::pending(reply)) else {
+                unreachable!("a fallible read crosses as bytes");
+            };
 
-        let Ok(written) =
-            driver.try_reply(wire, Ok::<String, ReadLineError>("hi".into()).to_bytes())
-        else {
-            panic!("a good reply is accepted");
-        };
-        let lines: Vec<String> = written
-            .into_iter()
-            .filter_map(|e| match e {
-                Effect::WriteLine(WriteLineEffect(line)) => Some(line),
-                Effect::ReadLine(_) => None,
-            })
-            .collect();
-        assert_eq!(lines, ["hi"]);
-        assert_eq!(driver.status(), Status::Complete);
+            let decoded = Result::<String, ReadLineError>::from_bytes(bytes);
+            let (outcome, expected) = if let Ok(decoded) = decoded {
+                (driver.try_reply(wire, bytes.clone()), shown(&decoded))
+            } else {
+                let Err(refused) = driver.try_reply(wire, bytes.clone()) else {
+                    panic!("undecodable bytes were delivered");
+                };
+                assert_eq!(driver.status(), Status::Awaiting, "still waiting");
+                let (wire, _) = refused.into_parts();
+                let good = Ok::<String, ReadLineError>("hi".into()).to_bytes();
+                (driver.try_reply(wire, good), String::from("hi"))
+            };
+
+            let Ok(written) = outcome else {
+                panic!("an encoded result is accepted");
+            };
+            let lines: Vec<String> = written
+                .into_iter()
+                .filter_map(|e| match e {
+                    Effect::WriteLine(WriteLineEffect(line)) => Some(line),
+                    Effect::ReadLine(_) => None,
+                })
+                .collect();
+            assert_eq!(lines, [expected]);
+            assert_eq!(driver.status(), Status::Complete);
+        });
     }
 
     #[test]
     fn errors_round_trip() {
         for e in [ReadLineError::Closed, ReadLineError::Failed] {
             assert_eq!(ReadLineError::from_bytes(&e.to_bytes()), Ok(e));
+        }
+    }
+
+    #[test]
+    fn unknown_error_tags_are_refused() {
+        for tag in 2..=u8::MAX {
+            assert_eq!(
+                ReadLineError::from_bytes(&[tag]),
+                Err(DecodeError::UnknownTag { tag })
+            );
         }
     }
 }

@@ -570,23 +570,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fan_out_replies_in_any_order() {
-        let mut driver = Driver::new(|outbox| FanOut(outbox).run());
-
-        let (_, handles) = split(driver.resume());
-        let [first, second]: [ReplyHandle<String>; 2] =
-            handles.try_into().expect("two requests in one batch");
-
-        let (said, _) = split(driver.reply(second, String::from("b")));
-        assert!(said.is_empty(), "one of two replied: nothing to say yet");
-        assert_eq!(driver.status(), Status::Awaiting);
-
-        let (said, _) = split(driver.reply(first, String::from("a")));
-        assert_eq!(said, ["a+b"]);
-        assert_eq!(driver.status(), Status::Complete);
-    }
-
     /// Whatever order the host replies in, the routine's output is the same.
     #[test]
     fn fan_out_is_order_independent() {
@@ -603,11 +586,13 @@ mod tests {
                 } else {
                     [(b, "b"), (a, "a")]
                 };
-                let mut said = Vec::new();
-                for (handle, value) in replies {
-                    said.extend(split(driver.reply(handle, String::from(value))).0);
-                }
+                let [(one, one_value), (other, other_value)] = replies;
 
+                let (said, _) = split(driver.reply(one, String::from(one_value)));
+                assert!(said.is_empty(), "one of two replied: nothing to say yet");
+                assert_eq!(driver.status(), Status::Awaiting);
+
+                let (said, _) = split(driver.reply(other, String::from(other_value)));
                 assert_eq!(said, ["a+b"]);
                 assert_eq!(driver.status(), Status::Complete);
             });

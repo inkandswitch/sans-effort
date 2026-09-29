@@ -358,7 +358,6 @@ mod tests {
 
     use super::*;
     use crate::fixtures::{Both, Echo};
-    use alloc::string::String;
     use sans_effort_core::step::Step;
 
     fn echo() -> u64 {
@@ -429,9 +428,38 @@ mod tests {
         assert_eq!(log.handles(), [root]);
     }
 
+    /// Any log survives the trip through bytes: handles, and every kind of
+    /// event with any machine, record, code, and frames.
     #[test]
     fn logs_round_trip_as_bytes() {
-        let log = recorded_echo(&String::from("round trip"));
-        assert_eq!(Log::from_bytes(&log.to_bytes()), Ok(log));
+        bolero::check!()
+            .with_type::<(Vec<u64>, Vec<(u8, u32, Vec<u8>, i32, Vec<u8>)>)>()
+            .for_each(|(handles, events)| {
+                let log = Log {
+                    handles: handles.clone(),
+                    events: events
+                        .iter()
+                        .map(|(kind, machine, record, code, bytes)| {
+                            let (machine, outcome) = (
+                                *machine,
+                                Outcome {
+                                    code: *code,
+                                    bytes: bytes.clone(),
+                                },
+                            );
+                            match kind % 3 {
+                                0 => Event::Resume { machine, outcome },
+                                1 => Event::Reply {
+                                    machine,
+                                    record: record.clone(),
+                                    outcome,
+                                },
+                                _ => Event::Free { machine, outcome },
+                            }
+                        })
+                        .collect(),
+                };
+                assert_eq!(Log::from_bytes(&log.to_bytes()), Ok(log));
+            });
     }
 }

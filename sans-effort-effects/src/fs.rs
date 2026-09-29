@@ -170,4 +170,14 @@ mod tests {
             assert_eq!(FsError::from_bytes(&e.to_bytes()), Ok(e));
         }
     }
+
+    #[test]
+    fn unknown_error_tags_are_refused() {
+        for tag in 3..=u8::MAX {
+            assert_eq!(
+                FsError::from_bytes(&[tag]),
+                Err(DecodeError::UnknownTag { tag })
+            );
+        }
+    }
 }

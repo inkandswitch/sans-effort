@@ -175,44 +175,42 @@ mod tests {
         }
     }
 
+    /// For any number of entries and any variable, set or not: the named
+    /// file (or the default) ends with one line per entry, each stamped a
+    /// second after the last with the next four random bytes, and each entry
+    /// is announced with its number.
     #[test]
     fn appends_stamped_entries_to_the_named_file() {
-        let desk = Desk(Arc::new(State {
-            var: Some("notes.txt".into()),
-            ..State::default()
-        }));
-        run_now(Journal::new(desk.clone(), 3).run());
+        bolero::check!()
+            .with_type::<(u8, Option<String>)>()
+            .for_each(|(n, var)| {
+                let desk = Desk(Arc::new(State {
+                    var: var.clone(),
+                    ..State::default()
+                }));
+                run_now(Journal::new(desk.clone(), (*n).into()).run());
 
-        assert_eq!(
-            *desk.0.written.lock().expect("unpoisoned"),
-            vec![
-                "notes.txt: entry 1, 1700000000000 00010203",
-                "notes.txt: entry 2, 1700000001000 04050607",
-                "notes.txt: entry 3, 1700000002000 08090a0b",
-            ]
-        );
-        assert_eq!(
-            desk.0
-                .files
-                .lock()
-                .expect("unpoisoned")
-                .get("notes.txt")
-                .map(Vec::as_slice),
-            Some(&b"1700000000000 00010203\n1700000001000 04050607\n1700000002000 08090a0b\n"[..])
-        );
-    }
+                let path = var.as_deref().unwrap_or(DEFAULT_PATH);
+                let entries: Vec<String> = (0..u64::from(*n))
+                    .map(|k| {
+                        let byte = |b: u64| u8::try_from((4 * k + b) % 256).expect("a byte");
+                        let id = u32::from_be_bytes([byte(0), byte(1), byte(2), byte(3)]);
+                        format!("{} {id:08x}", 1_700_000_000_000 + 1_000 * k)
+                    })
+                    .collect();
+                let announced: Vec<String> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(k, entry)| format!("{path}: entry {}, {entry}", k + 1))
+                    .collect();
+                let file = format!("{}\n", entries.join("\n"));
 
-    #[test]
-    fn an_unset_variable_means_the_default_file() {
-        let desk = Desk::default();
-        run_now(Journal::new(desk.clone(), 1).run());
-        assert!(
-            desk.0
-                .files
-                .lock()
-                .expect("unpoisoned")
-                .contains_key(DEFAULT_PATH)
-        );
+                assert_eq!(*desk.0.written.lock().expect("unpoisoned"), announced);
+                assert_eq!(
+                    desk.0.files.lock().expect("unpoisoned").get(path).cloned(),
+                    (*n > 0).then(|| file.into_bytes())
+                );
+            });
     }
 
     #[test]

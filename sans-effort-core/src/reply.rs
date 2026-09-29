@@ -316,20 +316,66 @@ pub(crate) fn check<A: Answer>(value: &Value) -> Result<(), DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
 
+    /// A wire value comes back as itself from its own kind, and as nothing
+    /// from any other.
     #[test]
     fn menu_round_trips_through_value() {
-        assert_eq!(
-            <Vec<u8>>::from_value(vec![1u8, 2].into_value()),
-            Some(vec![1, 2])
-        );
-        assert_eq!(
-            String::from_value(String::from("x").into_value()),
-            Some(String::from("x"))
-        );
-        assert_eq!(u64::from_value(7u64.into_value()), Some(7));
-        assert_eq!(<()>::from_value(().into_value()), Some(()));
-        assert_eq!(u64::from_value(Value::Unit), None);
+        bolero::check!()
+            .with_type::<(Vec<u8>, String, u64)>()
+            .for_each(|(bytes, text, n)| {
+                let values = [
+                    bytes.clone().into_value(),
+                    text.clone().into_value(),
+                    n.into_value(),
+                    ().into_value(),
+                ];
+                for (at, value) in values.into_iter().enumerate() {
+                    assert_eq!(
+                        <Vec<u8>>::from_value(value.clone()),
+                        (at == 0).then(|| bytes.clone())
+                    );
+                    assert_eq!(
+                        String::from_value(value.clone()),
+                        (at == 1).then(|| text.clone())
+                    );
+                    assert_eq!(u64::from_value(value.clone()), (at == 2).then_some(*n));
+                    assert_eq!(<()>::from_value(value), (at == 3).then_some(()));
+                }
+            });
+    }
+
+    /// `Result` and `Option` answers survive the trip through their wire form.
+    #[test]
+    fn compound_answers_round_trip() {
+        bolero::check!()
+            .with_type::<(bool, String, u64, Option<String>)>()
+            .for_each(|(ok, text, n, maybe)| {
+                let result: Result<String, u64> = if *ok { Ok(text.clone()) } else { Err(*n) };
+                assert_eq!(
+                    <Result<String, u64>>::from_wire(result.clone().into_wire()),
+                    Ok(result)
+                );
+                assert_eq!(
+                    <Option<String>>::from_wire(maybe.clone().into_wire()),
+                    Ok(maybe.clone())
+                );
+            });
+    }
+
+    /// The check a mailbox slot runs agrees with decoding, on any bytes: the
+    /// invariant that makes an undecodable reply unreachable for a routine.
+    #[test]
+    fn check_agrees_with_decoding() {
+        bolero::check!().with_type::<Vec<u8>>().for_each(|wire| {
+            assert_eq!(
+                <Result<String, u64>>::check(wire).is_ok(),
+                <Result<String, u64>>::from_wire(wire.clone()).is_ok()
+            );
+            assert_eq!(
+                <Option<String>>::check(wire).is_ok(),
+                <Option<String>>::from_wire(wire.clone()).is_ok()
+            );
+        });
     }
 }

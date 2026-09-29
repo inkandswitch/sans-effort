@@ -272,7 +272,7 @@ mod tests {
     use sans_effort_core::{reply::kind::Kind, step::Step};
 
     #[test]
-    fn typed_layer() {
+    fn a_reply_is_checked_for_kind_and_refused_after_completion() {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
         assert_eq!(m.resume().expect("resume").effects(), [View::Ask(1)]);
         assert!(

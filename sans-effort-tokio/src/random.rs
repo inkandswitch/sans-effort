@@ -22,10 +22,18 @@ impl Random for TokioRandom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sans_effort_core::testing::run_now;
 
-    #[tokio::test]
-    async fn exactly_the_bytes_asked_for() {
-        assert_eq!(TokioRandom.random_bytes(0).await.len(), 0);
-        assert_eq!(TokioRandom.random_bytes(33).await.len(), 33);
+    /// Exactly the bytes asked for, and filled: 16 zero bytes from a real
+    /// entropy source would happen once in 2^128 draws.
+    #[test]
+    fn exactly_the_bytes_asked_for_and_filled() {
+        bolero::check!().with_type::<u16>().for_each(|len| {
+            let bytes = run_now(TokioRandom.random_bytes((*len).into()));
+            assert_eq!(bytes.len(), usize::from(*len));
+            if *len >= 16 {
+                assert!(bytes.iter().any(|b| *b != 0), "the buffer was filled");
+            }
+        });
     }
 }

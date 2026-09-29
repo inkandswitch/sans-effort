@@ -436,11 +436,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ready_futures_complete() {
-        assert_eq!(run_now(async { 1 + 1 }), 2);
-    }
-
-    #[test]
     #[should_panic(expected = "returned Pending")]
     fn pending_futures_are_reported() {
         run_now(core::future::pending::<()>());

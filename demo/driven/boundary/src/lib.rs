@@ -514,7 +514,7 @@ mod tests {
     use super::*;
     use alloc::{collections::VecDeque, format, vec, vec::Vec};
     use core::future::Future;
-    use routines::{PAUSE, fanout::Fanout, greeter::Greeter, ticker::Ticker};
+    use routines::{PAUSE, greeter::Greeter, ticker::Ticker};
     use sans_effort_core::{
         driver::{Driver, outbox::Outbox, status::Status},
         step::Step,
@@ -523,10 +523,6 @@ mod tests {
 
     fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
         Greeter::new(Ctx::new(outbox)).run()
-    }
-
-    fn fanout(outbox: Outbox<Full>) -> impl Future<Output = ()> {
-        Fanout::new(Ctx::new(outbox)).run()
     }
 
     fn ticker(outbox: Outbox<Quiet>) -> impl Future<Output = ()> {
@@ -610,108 +606,35 @@ mod tests {
         out
     }
 
+    /// For any script, the routine writes what the greeter should, and the
+    /// requests the host sees carry ids minted in order from 1.
     #[test]
     fn greeter_through_the_wire_on_any_script() {
         bolero::check!()
             .with_type::<Vec<String>>()
             .for_each(|names| {
                 let script: Vec<&str> = names.iter().map(String::as_str).collect();
-                let (_, written) = transcript(Driver::new(greeter), &script);
+                let (seen, written) = transcript(Driver::new(greeter), &script);
                 assert_eq!(written, expected(&script));
-            });
-    }
 
-    /// Request ids are minted in order from 1, and every awaiting effect the
-    /// host sees carries one.
-    #[test]
-    fn ids_count_up_from_one() {
-        let (seen, _) = transcript(Driver::new(greeter), &["alice"]);
-        let ids: Vec<u64> = seen
-            .iter()
-            .filter_map(|v| match v {
-                View::Count { id }
-                | View::Lookup { id, .. }
-                | View::ReadLine { id }
-                | View::Sleep { id, .. }
-                | View::Now { id }
-                | View::Random { id, .. }
-                | View::Var { id, .. }
-                | View::ReadFile { id, .. }
-                | View::WriteFile { id, .. } => Some(*id),
-                View::WriteLine { .. } | View::Spawned { .. } | View::SpawnedPinned { .. } => None,
-            })
-            .collect();
-        assert_eq!(ids, [1, 2, 3, 4, 5]);
-    }
-
-    /// Fan-out puts two requests in one batch, and the transcript is the
-    /// same whichever the host replies to first.
-    #[test]
-    fn fanout_is_order_independent() {
-        bolero::check!()
-            .with_type::<(bool, bool)>()
-            .for_each(|(lookup_first, sleep_first)| {
-                let mut driver = Driver::new(fanout);
-                let mut written = Vec::new();
-
-                let [
-                    Full::WriteLine(WriteLineEffect(prompt)),
-                    Full::ReadLine(Asked { reply: read, .. }),
-                ] = exactly(driver.resume())
-                else {
-                    panic!("first batch: prompt + read");
-                };
-                written.push(prompt);
-
-                let [
-                    Full::Lookup(Asked {
-                        request: LookupEffect(name),
-                        reply: lookup,
-                    }),
-                    Full::Count(Asked { reply: count, .. }),
-                ] = exactly(driver.reply(read, Ok("bob".into())))
-                else {
-                    panic!("second batch: lookup + count");
-                };
-                assert_eq!(name, "bob");
-
-                let mut third = Vec::new();
-                if *lookup_first {
-                    third.extend(driver.reply(lookup, String::from("Hi")));
-                    assert!(third.is_empty(), "one of two replied: nothing yet");
-                    third.extend(driver.reply(count, 1));
-                } else {
-                    third.extend(driver.reply(count, 1));
-                    assert!(third.is_empty(), "one of two replied: nothing yet");
-                    third.extend(driver.reply(lookup, String::from("Hi")));
-                }
-                let [
-                    Full::WriteLine(WriteLineEffect(greeting)),
-                    Full::Sleep(Asked { reply: sleep, .. }),
-                    Full::ReadLine(Asked { reply: read, .. }),
-                ] = exactly(third)
-                else {
-                    panic!("third batch: greeting + sleep + read");
-                };
-                written.push(greeting);
-
-                let mut fourth = Vec::new();
-                if *sleep_first {
-                    fourth.extend(driver.reply(sleep, ()));
-                    assert!(fourth.is_empty());
-                    fourth.extend(driver.reply(read, Ok("carol".into())));
-                } else {
-                    fourth.extend(driver.reply(read, Ok("carol".into())));
-                    assert!(fourth.is_empty());
-                    fourth.extend(driver.reply(sleep, ()));
-                }
-                let [Full::WriteLine(WriteLineEffect(bye))] = exactly(fourth) else {
-                    panic!("last batch: bye");
-                };
-                written.push(bye);
-
-                assert_eq!(written, ["Who are you?", "Hi, bob! (#1)", "Bye, carol."]);
-                assert_eq!(driver.status(), Status::Complete);
+                let ids: Vec<u64> = seen
+                    .iter()
+                    .filter_map(|v| match v {
+                        View::Count { id }
+                        | View::Lookup { id, .. }
+                        | View::ReadLine { id }
+                        | View::Sleep { id, .. }
+                        | View::Now { id }
+                        | View::Random { id, .. }
+                        | View::Var { id, .. }
+                        | View::ReadFile { id, .. }
+                        | View::WriteFile { id, .. } => Some(*id),
+                        View::WriteLine { .. }
+                        | View::Spawned { .. }
+                        | View::SpawnedPinned { .. } => None,
+                    })
+                    .collect();
+                assert_eq!(ids, (1..=ids.len() as u64).collect::<Vec<_>>());
             });
     }
 
@@ -778,16 +701,6 @@ mod tests {
         assert_eq!(driver.status(), Status::Complete);
     }
 
-    /// A batch of exactly `N` effects, or a test failure.
-    fn exactly<const N: usize, S: Into<Vec<Full>>>(effects: S) -> [Full; N] {
-        let effects = effects.into();
-        let len = effects.len();
-        effects
-            .try_into()
-            .ok()
-            .unwrap_or_else(|| panic!("expected a batch of {N}, got {len}"))
-    }
-
     /// Machines that spawn and message each other, run by the core's test
     /// runner: each request answered, each child begun, each woken machine
     /// resumed. Under `Fifo` that happens in the order effects appear; under
@@ -798,7 +711,7 @@ mod tests {
     #[cfg(feature = "table")]
     mod scheduled {
         use super::*;
-        use routines::{front_desk::FrontDesk, ping_pong::PingPong, ring::Ring};
+        use routines::{fanout::Fanout, front_desk::FrontDesk, ping_pong::PingPong, ring::Ring};
         use sans_effort_core::testing::{
             self, Stalled,
             schedule::{Choices, Fifo, Schedule},
@@ -827,14 +740,7 @@ mod tests {
                 Full::Lookup(Asked {
                     request: LookupEffect(name),
                     reply,
-                }) => {
-                    let greeting = match name.as_str() {
-                        "alice" => "Hello",
-                        "bob" => "Hi",
-                        _ => "Greetings",
-                    };
-                    host.reply(reply, String::from(greeting));
-                }
+                }) => host.reply(reply, String::from(greeting(&name))),
                 Full::Count(Asked { reply, .. }) => host.reply(reply, 0),
                 Full::Now(_)
                 | Full::Random(_)
@@ -843,6 +749,34 @@ mod tests {
                 | Full::WriteFile(_) => panic!("no routine run here keeps a journal"),
             })?;
             Ok(written)
+        }
+
+        fn greeting(name: &str) -> &'static str {
+            match name {
+                "alice" => "Hello",
+                "bob" => "Hi",
+                _ => "Greetings",
+            }
+        }
+
+        fn fanout() -> Driver<Full> {
+            Driver::new(|outbox| Fanout::new(Ctx::<Full>::new(outbox)).run())
+        }
+
+        /// What fan-out writes for `script`, the count always answered 0.
+        fn fanned_out(script: &[&str]) -> Vec<String> {
+            let mut out = vec![String::from("Who are you?")];
+            match script {
+                [] => out.push(String::from("Bye.")),
+                [name, rest @ ..] => {
+                    out.push(format!("{}, {name}! (#0)", greeting(name)));
+                    out.push(rest.first().map_or_else(
+                        || String::from("Bye."),
+                        |farewell| format!("Bye, {farewell}."),
+                    ));
+                }
+            }
+            out
         }
 
         fn ping_pong() -> Driver<Full> {
@@ -881,6 +815,22 @@ mod tests {
         #[test]
         fn a_ring_counts_every_hop() {
             assert_eq!(run(ring(), &[], Fifo), Ok(RING.map(String::from).to_vec()));
+        }
+
+        /// Fan-out puts two asks in one batch, twice. Whatever order the
+        /// schedule delivers their replies in, for any script, the lines are
+        /// the same.
+        #[test]
+        fn fanout_is_order_independent() {
+            bolero::check!()
+                .with_type::<(Vec<String>, Vec<u8>)>()
+                .for_each(|(names, bytes)| {
+                    let script: Vec<&str> = names.iter().map(String::as_str).collect();
+                    assert_eq!(
+                        run(fanout(), &script, Choices::new(bytes.iter().copied())),
+                        Ok(fanned_out(&script))
+                    );
+                });
         }
 
         /// Schedule independence and stutter insensitivity: whatever order

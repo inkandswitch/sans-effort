@@ -30,6 +30,8 @@ impl Now for TokioClock {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
+
     use super::*;
 
     #[tokio::test(start_paused = true)]
@@ -40,8 +42,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn now_is_after_this_code_was_written() {
-        let written = Duration::from_secs(1_790_000_000);
-        assert!(TokioClock.now().await.since_epoch() > written);
+    async fn now_is_the_system_time() {
+        let since_epoch = || {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("a clock set after 1970")
+        };
+        let before = since_epoch();
+        let now = TokioClock.now().await.since_epoch();
+        let after = since_epoch();
+        assert!(
+            before <= now && now <= after,
+            "{before:?} <= {now:?} <= {after:?}"
+        );
     }
 }

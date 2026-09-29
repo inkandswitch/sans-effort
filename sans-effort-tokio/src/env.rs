@@ -12,20 +12,3 @@ impl Var for TokioEnv {
         core::future::ready(std::env::var(name).ok())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn a_set_variable_and_an_unset_one() {
-        assert_eq!(
-            TokioEnv.var("CARGO_PKG_NAME".into()).await.as_deref(),
-            Some(env!("CARGO_PKG_NAME"))
-        );
-        assert_eq!(
-            TokioEnv.var("SANS_EFFORT_NEVER_SET_THIS".into()).await,
-            None
-        );
-    }
-}
