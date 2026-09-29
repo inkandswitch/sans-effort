@@ -19,7 +19,7 @@ This crate is the one dependency a routine author needs. It re-exports the crate
 | `sans_effort::tokio` | `sans-effort-tokio` | Feature `tokio`: every standard effect trait as a real tokio future |
 | `sans_effort::host` | `sans-effort-host` | Feature `host`: typed and byte-level machines and the handle table, for a foreign-function binding |
 
-The authors of runtimes and bindings can depend on the underlying crates directly; `sans-effort-core` in particular is kept small and slow to change.
+The core and the standard effect traits share one flat namespace: together they are the vocabulary a routine is written in. A runtime or a binding kit is opted into, and keeps its own module. The authors of runtimes and bindings can depend on the underlying crates directly; `sans-effort-core` in particular is kept small and slow to change.
 
 ## A Routine
 

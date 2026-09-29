@@ -1,15 +1,12 @@
 //! The typed layer over a driver. The byte layer over that is
 //! [`Encoded`](crate::encoded::Encoded).
 
-use crate::{error::Error, status::Status};
+use crate::error::Error;
 use alloc::{string::String, vec::Vec};
 use core::{future::Future, marker::PhantomData};
 use sans_effort_core::{
     boundary::{host_effect::HostEffect, pending::Pending},
-    driver::{
-        BoxedRoutine, Driver, LocalDriver, Refused, Yield, outbox::Outbox,
-        status::Status as DriveStatus,
-    },
+    driver::{BoxedRoutine, Driver, LocalDriver, Refused, Yield, outbox::Outbox, status::Status},
     reply::{Reply, handle::ReplyHandle},
 };
 
@@ -30,7 +27,7 @@ pub trait Drive<E>: sealed::Sealed {
     /// Poll without delivering anything.
     fn resume(&mut self) -> Yield<E>;
     /// What the last poll reported.
-    fn status(&self) -> DriveStatus;
+    fn status(&self) -> Status;
     /// `true` once the routine has returned.
     fn is_finished(&self) -> bool;
     /// Call `hook` when the routine may be able to progress without a reply.
@@ -56,7 +53,7 @@ impl<E> Drive<E> for Driver<E> {
         Driver::resume(self)
     }
 
-    fn status(&self) -> DriveStatus {
+    fn status(&self) -> Status {
         Driver::status(self)
     }
 
@@ -82,7 +79,7 @@ impl<E> Drive<E> for LocalDriver<E> {
         LocalDriver::resume(self)
     }
 
-    fn status(&self) -> DriveStatus {
+    fn status(&self) -> Status {
         LocalDriver::status(self)
     }
 
@@ -266,7 +263,7 @@ impl<E: HostEffect, D: Drive<E>> Machine<E, D> {
     /// What the last poll reported.
     #[must_use]
     pub fn status(&self) -> Status {
-        self.driver.status().into()
+        self.driver.status()
     }
 
     /// `true` once the routine has returned.

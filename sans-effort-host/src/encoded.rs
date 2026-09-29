@@ -17,11 +17,11 @@ use crate::{
     contract::{FRAME_ASK, FRAME_CLOSED, FRAME_TELL},
     error::Error,
     machine::{Drive, Machine, Shown},
-    status::Status,
 };
 use alloc::vec::Vec;
 use sans_effort_core::{
     boundary::{codec::Encode, codec::Writer, host_effect::HostEffect},
+    driver::status::Status,
     driver::{Driver, Yield},
 };
 

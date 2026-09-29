@@ -7,6 +7,7 @@
 //! constants so a host can copy them; `ABI.md` is the table in prose.
 
 use crate::error::Error;
+use sans_effort_core::driver::status::Status;
 
 /// The revision of `ABI.md` this crate implements. A binding returns it from
 /// `<prefix>_abi_version()`; a host checks it once, before `new`. One number,
@@ -65,8 +66,17 @@ pub const STALE: i32 = -8;
 /// for it must come from that thread. Nothing changed: route the call there.
 pub const WRONG_THREAD: i32 = -9;
 
-/// The wire code of a call that has no [`Status`](crate::status::Status): [`OK`] or the
-/// error's code.
+/// The wire code of a status: [`AWAITING`], [`COMPLETE`], or [`IDLE`].
+#[must_use]
+pub const fn status_code(status: Status) -> i32 {
+    match status {
+        Status::Awaiting => AWAITING,
+        Status::Complete => COMPLETE,
+        Status::Idle => IDLE,
+    }
+}
+
+/// The wire code of a call that has no [`Status`]: [`OK`] or the error's code.
 #[must_use]
 pub fn code_of(result: Result<(), Error>) -> i32 {
     result.map_or_else(Error::code, |()| OK)

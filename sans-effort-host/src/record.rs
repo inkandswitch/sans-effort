@@ -27,9 +27,14 @@
 //! a [`Divergence`] rather than passing quietly. Wakes outside any call
 //! ([`wakes`](crate::table::wakes)) are not recorded: they change no machine.
 
-use crate::{contract::code_of, error::Error, status::Status, table};
+use crate::{
+    contract::{code_of, status_code},
+    error::Error,
+    table,
+};
 use alloc::vec::Vec;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
+use sans_effort_core::driver::status::Status;
 
 /// Begin recording `root` and every machine it creates. Call it before the
 /// root's first `resume`, and [`finish`](Recorder::finish) it to get the
@@ -337,7 +342,7 @@ pub enum Divergence {
 pub(crate) fn outcome(result: &Result<(Vec<u8>, Status), Error>) -> Outcome {
     match result {
         Ok((bytes, status)) => Outcome {
-            code: status.code(),
+            code: status_code(*status),
             bytes: bytes.clone(),
         },
         Err(e) => Outcome {

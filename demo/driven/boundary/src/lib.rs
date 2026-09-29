@@ -974,7 +974,6 @@ mod tests {
         use sans_effort_host::{
             contract::{FRAME_ASK, FRAME_TELL, FRAME_WOKE},
             record::{record, replay},
-            status::Status as Code,
             table,
         };
         use std::collections::HashSet;
@@ -987,7 +986,7 @@ mod tests {
             let mut queue = VecDeque::from([(root, table::resume(root).expect("begins"))]);
 
             while let Some((handle, (bytes, status))) = queue.pop_front() {
-                if status == Code::Complete {
+                if status == Status::Complete {
                     table::free(handle).expect("freed once");
                     done.insert(handle);
                 }

@@ -30,13 +30,13 @@ use crate::{
     error::Error,
     machine::{Drive, Machine},
     record::{Event, Log, Outcome, outcome},
-    status::Status,
 };
 use sans_effort_core::{
     boundary::{
         codec::{Encode, Writer},
         host_effect::HostEffect,
     },
+    driver::status::Status,
     driver::{BoxedRoutine, LocalBoxedRoutine, LocalDriver, outbox::Outbox},
 };
 use std::{

@@ -16,12 +16,11 @@ use routines::{
     fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal, ping_pong::PingPong,
     ring::Ring, ticker::Ticker,
 };
-use sans_effort_core::step::Step;
+use sans_effort_core::{driver::status::Status, step::Step};
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
-    contract::{OK, REVISION, code_of},
+    contract::{OK, REVISION, code_of, status_code},
     error::Error,
-    status::Status,
     table,
 };
 
@@ -188,7 +187,7 @@ unsafe fn deliver(
         Ok((bytes, status)) => {
             // SAFETY: caller guarantees both out-pointers are writable.
             unsafe { write_out(bytes, out_ptr, out_len) };
-            status.code()
+            status_code(status)
         }
         Err(e) => e.code(),
     }

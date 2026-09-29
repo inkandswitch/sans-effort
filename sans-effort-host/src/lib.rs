@@ -75,7 +75,6 @@ pub mod contract;
 pub mod encoded;
 pub mod error;
 pub mod machine;
-pub mod status;
 
 #[cfg(feature = "std")]
 pub mod record;
