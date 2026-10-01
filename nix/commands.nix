@@ -4,13 +4,27 @@
   system,
   cmd,
   wasm-bindgen-cli,
+  bench-pkgs,
 }: let
   cargo = "${pkgs.cargo}/bin/cargo";
   java = "${pkgs.jdk25}/bin/java";
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
   wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
+  bench-path = pkgs.lib.makeBinPath bench-pkgs;
 in {
+  "bench:instructions" = cmd "Count instructions and allocations for the core workloads (Gungraun, under Valgrind; Linux)" ''
+    set -e
+    export PATH="${bench-path}:$PATH"
+    ${cargo} bench -p sans-effort-core --bench instructions "$@"
+  '';
+
+  "bench:time" = cmd "Time the core workloads and the host table (criterion); pass --save-baseline NAME or --baseline NAME" ''
+    set -e
+    ${cargo} bench -p sans-effort-core --bench time -- "$@"
+    ${cargo} bench -p sans-effort-host --bench table -- "$@"
+  '';
+
   "test:host" = cmd "Run tests and doc tests" ''
     set -e
 
@@ -28,27 +42,30 @@ in {
   "test:no_std" = cmd "Check the core crate (wasm32, thumbv6m) and the demo routine (wasm32) build without std" ''
     set -e
 
-    echo "===> Checking sans-effort (no_std: spin lock)..."
-    ${cargo} check -p sans-effort --no-default-features --features spin
+    echo "===> Checking sans-effort-core and the sans-effort facade (no_std: spin lock)..."
+    ${cargo} check -p sans-effort-core -p sans-effort --no-default-features --features spin
 
     echo ""
     echo "===> Checking every feature combination builds (or is refused on purpose)..."
+    ${cargo} hack check -p sans-effort-core --feature-powerset --at-least-one-of std,spin
     ${cargo} hack check -p sans-effort --feature-powerset --at-least-one-of std,spin
+    ${cargo} hack check -p sans-effort-effects --feature-powerset --at-least-one-of std,spin
     ${cargo} hack check -p sans-effort-host --feature-powerset --at-least-one-of std,spin
 
     echo ""
-    echo "===> Checking sans-effort and sans-effort-host without std (wasm32-unknown-unknown)..."
-    ${cargo} check -p sans-effort -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
+    echo "===> Checking the library crates without std (wasm32-unknown-unknown)..."
+    ${cargo} check -p sans-effort -p sans-effort-core -p sans-effort-effects -p sans-effort-host --no-default-features --features spin --target wasm32-unknown-unknown
 
     echo ""
-    echo "===> Checking sans-effort (thumbv6m-none-eabi, critical-section)..."
-    ${cargo} check -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
+    echo "===> Checking sans-effort-core and the facade (thumbv6m-none-eabi, critical-section)..."
+    ${cargo} check -p sans-effort-core -p sans-effort --no-default-features --features critical-section --target thumbv6m-none-eabi
 
     echo ""
-    echo "===> Checking the demo routine and its wire crate are no_std too (wasm32)..."
+    echo "===> Checking the demo routines and their vocabulary crate are no_std too (wasm32)..."
     # Neither crate picks a lock — that is the binary's decision — so checking
-    # them as leaves means standing in for the binary here.
-    ${cargo} check -p routines -p greeter_boundary --features sans-effort/spin --target wasm32-unknown-unknown
+    # them as leaves means standing in for the binary here. No default
+    # features: the vocabulary's `table` feature (spawning) needs std.
+    ${cargo} check -p routines -p greeter_boundary --no-default-features --features sans-effort/spin --target wasm32-unknown-unknown
 
     echo ""
     echo "Done"
@@ -60,28 +77,63 @@ in {
     ${cargo} test --workspace --all-features -- --nocapture
   '';
 
-  "demo:wasm" = cmd "Build the wasm-bindgen module and generate the JS glue into demo/js/pkg" ''
+  # Mutation testing: does some test fail when the code is changed? Slow, so
+  # not on every push (CI: weekly, and the changed lines of a pull request).
+  # A fixed seed keeps bolero's properties drawing the same inputs, so a
+  # mutant is caught or missed the same way every run. Survivors are listed
+  # in target/mutants/mutants.out/missed.txt; accepted ones are excluded, with
+  # reasons, in .cargo/mutants.toml. Exit code 3 means some mutants only timed
+  # out: the tests hung rather than passed — a mutant that makes the test
+  # runner loop forever — so those count as caught.
+  "test:mutants" = cmd "Mutation-test the four library crates (~8 min); survivors in target/mutants" ''
     set -e
-    ${cargo} build -q -p greeter_wasm --release --target wasm32-unknown-unknown
-    mkdir -p demo/js/pkg
-    ${wasm-bindgen} --target nodejs --out-dir demo/js/pkg \
-      target/wasm32-unknown-unknown/release/greeter_wasm.wasm
-    echo "demo/js/pkg ready"
+    export BOLERO_RANDOM_SEED=1
+    ${cargo} mutants -p sans-effort-core -p sans-effort-effects -p sans-effort-host -p sans-effort-tokio \
+      -j 4 --output target/mutants "$@" || test $? -eq 3
   '';
 
-  "demo" = cmd "Run the greeter natively on tokio and on Node, and drive it from Python and Java over the C ABI; transcripts must agree" ''
+  "test:mutants:diff" = cmd "Mutation-test only the lines changed since a base (default origin/main)" ''
     set -e
+    export BOLERO_RANDOM_SEED=1
+    mkdir -p target
+    git diff "''${1:-origin/main}" > target/mutants.diff
+    ${cargo} mutants -p sans-effort-core -p sans-effort-effects -p sans-effort-host -p sans-effort-tokio \
+      --in-diff target/mutants.diff -j 4 --output target/mutants || test $? -eq 3
+  '';
+
+  "demo:wasm" = cmd "Build the wasm-bindgen module and generate the JS glue into demo/native/js/pkg" ''
+    set -e
+    ${cargo} build -q -p greeter_wasm --release --target wasm32-unknown-unknown
+    mkdir -p demo/native/js/pkg
+    ${wasm-bindgen} --target nodejs --out-dir demo/native/js/pkg \
+      target/wasm32-unknown-unknown/release/greeter_wasm.wasm
+    echo "demo/native/js/pkg ready"
+  '';
+
+  "demo" = cmd "Run the demo routines natively on tokio and on Node, and drive them from Python and Java over the C ABI; transcripts must agree" ''
+    # pipefail: each host's output goes through `tee`, and a host that fails —
+    # or overruns its time limit — must fail the demo, not just stop early.
+    set -eo pipefail
 
     echo "===> Building the cdylib and the wasm module..."
     ${cargo} build -q -p greeter_cdylib
     demo:wasm
 
-    for variant in "" "--fanout"; do
-      if [ -z "$variant" ]; then
-        script='alice\nbob\nquit\n'
-      else
-        script='bob\ncarol\n'
-      fi
+    for variant in "" "--fanout" "--ping-pong" "--front-desk" "--ring" "--journal" "--deadline"; do
+      case "$variant" in
+        "") script='alice\nbob\nquit\n' ;;
+        --fanout) script='bob\ncarol\n' ;;
+        --ping-pong) script="" ;;
+        --front-desk) script='alice\nbob\ncarol\n' ;;
+        --ring) script="" ;;
+        --journal) script="" ;;
+        --deadline) script="" ;;
+      esac
+
+      # A deadline's quick worker beats a 30 s sleep; a host that fails to
+      # cancel the abandoned timer waits it out, which the limit catches.
+      limit=""
+      if [ "$variant" = "--deadline" ]; then limit="timeout 20"; fi
 
       echo ""
       echo "===> tokio, natively (no driver) $variant"
@@ -89,15 +141,15 @@ in {
 
       echo ""
       echo "===> Python host $variant"
-      ${python} demo/python/main.py $variant | tee /tmp/sans-effort-python.txt
+      $limit ${python} demo/driven/python/main.py $variant | tee /tmp/sans-effort-python.txt
 
       echo ""
       echo "===> Node, natively (no driver) $variant"
-      ${node} demo/js/main.mjs $variant | tee /tmp/sans-effort-js.txt
+      $limit ${node} demo/native/js/main.mjs $variant | tee /tmp/sans-effort-js.txt
 
       echo ""
       echo "===> Java host (Panama, C ABI) $variant"
-      ${java} --enable-native-access=ALL-UNNAMED demo/java/Main.java $variant | tee /tmp/sans-effort-java.txt
+      $limit ${java} --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java $variant | tee /tmp/sans-effort-java.txt
 
       echo ""
       diff /tmp/sans-effort-rust.txt /tmp/sans-effort-python.txt
@@ -108,7 +160,41 @@ in {
 
     echo ""
     echo "===> Python host, a Quiet machine (ticker): only tags 4 and 5 can appear"
-    ${python} demo/python/main.py --ticker
+    ${python} demo/driven/python/main.py --ticker
+  '';
+
+  # Host checks: routines that misbehave on purpose (`routines::faults`), and
+  # what every host must do about them. Not part of `demo`, which shows how
+  # routines are written; these check the hosts.
+  "demo:faults" = cmd "Check that every host reports a misbehaving routine (a deadlock) the same way, rather than hanging" ''
+    set -eo pipefail
+    ${cargo} build -q -p greeter_cdylib
+    demo:wasm
+
+    # A deadlock: two machines each waiting for the other. The driven hosts
+    # report the stall on stderr and exit 1; Node's event loop runs dry and it
+    # exits 13 (an unsettled top-level await). tokio has no detector: it would
+    # hang, so it is not run. A host that hangs instead hits the time limit.
+    echo "===> A deadlock (--deadlock): reported, not hung on"
+    set +e
+    timeout 20 ${python} demo/driven/python/main.py --deadlock \
+      > /tmp/sans-effort-python.txt 2> /tmp/sans-effort-python-err.txt
+    python_exit=$?
+    timeout 20 ${java} --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --deadlock \
+      > /tmp/sans-effort-java.txt 2> /tmp/sans-effort-java-err.txt
+    java_exit=$?
+    timeout 20 ${node} demo/native/js/main.mjs --deadlock > /tmp/sans-effort-js.txt 2> /dev/null
+    js_exit=$?
+    set -e
+    cat /tmp/sans-effort-python.txt /tmp/sans-effort-python-err.txt
+    if [ "$python_exit $java_exit $js_exit" != "1 1 13" ]; then
+      echo "exit codes: Python $python_exit, Java $java_exit, Node $js_exit; expected 1, 1, 13"
+      exit 1
+    fi
+    diff /tmp/sans-effort-python.txt /tmp/sans-effort-java.txt
+    diff /tmp/sans-effort-python.txt /tmp/sans-effort-js.txt
+    diff /tmp/sans-effort-python-err.txt /tmp/sans-effort-java-err.txt
+    echo "Deadlock reported --deadlock"
   '';
 
   "ci:quick" = cmd "Run quick CI checks (fmt, clippy, test)" ''
@@ -127,7 +213,7 @@ in {
     echo "Done"
   '';
 
-  "ci:full" = cmd "Run full CI (fmt, clippy, all-features, no_std, typos, deny, demo)" ''
+  "ci:full" = cmd "Run full CI (fmt, clippy, all-features, no_std, typos, deny, demo, host checks)" ''
     set -e
 
     echo "===> [1/7] Checking formatting..."
@@ -151,6 +237,7 @@ in {
 
     echo "===> [7/7] Running the demo (Rust, Python, JS)..."
     demo
+    demo:faults
 
     echo ""
     echo "All CI suites passed"
