@@ -354,10 +354,18 @@ pub(crate) fn outcome(result: &Result<(Vec<u8>, Status), Error>) -> Outcome {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
+    #![expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests assert their preconditions"
+    )]
 
     use super::*;
-    use crate::fixtures::{Both, Echo};
+    use crate::{
+        contract::{BAD_HANDLE, PANICKED},
+        fixtures::{Both, Echo, Effect, quietly},
+    };
+    use sans_effort_core::driver::outbox::Outbox;
     use sans_effort_core::step::Step;
 
     fn echo() -> u64 {
@@ -412,6 +420,43 @@ mod tests {
             replay(&log, both),
             Err(Divergence::Outcome { at: 0, .. })
         ));
+    }
+
+    /// Asks once, then panics on the answer.
+    fn panics_when_answered() -> u64 {
+        table::new(|outbox: Outbox<Effect>| async move {
+            drop(outbox.ask(Effect::Ask).await);
+            panic!("routine bug");
+        })
+    }
+
+    /// A run that fails is the one worth replaying: the panic is recorded as
+    /// the reply's outcome, the calls after it as what the table said once the
+    /// machine was gone, and replaying panics at the same call.
+    #[test]
+    fn a_panicking_run_replays_exactly() {
+        let root = panics_when_answered();
+        let recorder = record(root);
+        table::resume(root).expect("begins, asking id 1");
+        assert_eq!(
+            quietly(|| table::reply(root, &str_reply(1, "now"))),
+            Err(Error::Panicked)
+        );
+        assert_eq!(table::free(root), Err(Error::BadHandle));
+        let log = recorder.finish();
+
+        let codes: Vec<i32> = log
+            .events()
+            .iter()
+            .map(|event| match event {
+                Event::Resume { outcome, .. }
+                | Event::Reply { outcome, .. }
+                | Event::Free { outcome, .. } => outcome.code,
+            })
+            .collect();
+        assert_eq!(codes, [status_code(Status::Awaiting), PANICKED, BAD_HANDLE]);
+
+        quietly(|| replay(&log, panics_when_answered)).expect("the same calls, the same outcomes");
     }
 
     #[test]

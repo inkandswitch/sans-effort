@@ -127,3 +127,14 @@ pub(crate) fn reply_str_record(id: u64, s: &str) -> Vec<u8> {
     w.str(s);
     w.finish()
 }
+
+/// Run `f` with the panic hook silenced, so a routine's deliberate panic
+/// prints nothing.
+#[cfg(feature = "std")]
+pub(crate) fn quietly<T>(f: impl FnOnce() -> T) -> T {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(alloc::boxed::Box::new(|_| {}));
+    let result = f();
+    std::panic::set_hook(hook);
+    result
+}

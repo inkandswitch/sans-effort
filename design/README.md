@@ -13,6 +13,7 @@ Some documents describe what exists and some describe what is planned. Each one 
 | [`channels`](channels.md)         | planned           | Plain channels between machines, spawning, and the host as the scheduler       |
 | [`capabilities`](capabilities.md) | planned           | Object-capability discipline within a process, given an honest host            |
 | [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
+| [`related-work`](related-work.md) | current           | Where `sans-effort` sits among Rust effect libraries, and what it draws on     |
 
 ## Layers
 

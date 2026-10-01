@@ -621,8 +621,9 @@ mod tests {
     )]
 
     use super::*;
-    use crate::fixtures::{Echo, Effect, View, framed, reply_str_record};
+    use crate::fixtures::{Echo, Effect, View, framed, quietly, reply_str_record};
     use sans_effort_core::step::Step;
+    use std::sync::OnceLock;
 
     #[test]
     fn round_trip_across_threads() {
@@ -653,13 +654,7 @@ mod tests {
             panic!("routine bug");
         });
 
-        // Silence the panic message the default hook would print.
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = resume(h);
-        std::panic::set_hook(hook);
-
-        assert_eq!(result, Err(Error::Panicked));
+        assert_eq!(quietly(|| resume(h)), Err(Error::Panicked));
         assert_eq!(resume(h), Err(Error::BadHandle), "removed from the table");
     }
 
@@ -783,12 +778,7 @@ mod tests {
             })
         });
 
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-        let result = resume(h);
-        std::panic::set_hook(hook);
-
-        assert_eq!(result, Err(Error::Panicked));
+        assert_eq!(quietly(|| resume(h)), Err(Error::Panicked));
         assert_eq!(resume(h), Err(Error::BadHandle), "removed from both tables");
     }
 
@@ -841,13 +831,24 @@ mod tests {
         free(relay).expect("free");
     }
 
-    #[test]
-    fn a_wake_outside_any_call_is_reported_by_wakes() {
-        let (tx, rx) = async_channel::unbounded::<String>();
-        let listener = new(move |outbox: Outbox<Effect>| async move {
+    /// `wakes` drains one process-wide list, and tests run in parallel: a
+    /// test that asserts on what it returns holds this, so no other test
+    /// drains its wake first.
+    static DRAINS_WAKES: Mutex<()> = Mutex::new(());
+
+    /// A listener that says whether its channel closed.
+    fn listener(rx: async_channel::Receiver<String>) -> u64 {
+        new(move |outbox: Outbox<Effect>| async move {
             let closed = rx.recv().await.is_err();
             outbox.tell(Effect::Say(format!("closed: {closed}")));
-        });
+        })
+    }
+
+    #[test]
+    fn a_wake_outside_any_call_is_reported_by_wakes() {
+        let _drains = DRAINS_WAKES.lock().expect("unpoisoned");
+        let (tx, rx) = async_channel::unbounded::<String>();
+        let listener = listener(rx);
         // Holds the sender while it waits for a reply that never comes.
         let holder = new(move |outbox: Outbox<Effect>| async move {
             let _tx = tx;
@@ -870,6 +871,96 @@ mod tests {
             ))
         );
         free(listener).expect("free");
+    }
+
+    /// A machine that panics while holding a sender: the call reports
+    /// `PANICKED`, dropping its future drops the sender, and — the call having
+    /// no output to carry a `woke` frame — `wakes` names the receiver, which
+    /// sees the channel closed and completes. Migrating and pinned alike.
+    #[test]
+    fn a_machine_that_panics_holding_a_sender_wakes_the_receiver() {
+        let _drains = DRAINS_WAKES.lock().expect("unpoisoned");
+
+        let migrating = |tx: async_channel::Sender<String>| {
+            new(move |outbox: Outbox<Effect>| async move {
+                let _tx = tx;
+                drop(outbox.ask(Effect::Ask).await);
+                panic!("routine bug, holding the sender");
+            })
+        };
+        let pinned = |tx: async_channel::Sender<String>| {
+            park_pinned(move |outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+                Box::pin(async move {
+                    let _tx = tx;
+                    drop(outbox.ask(Effect::Ask).await);
+                    panic!("routine bug, holding the sender");
+                })
+            })
+        };
+        let holders: [&dyn Fn(async_channel::Sender<String>) -> u64; 2] = [&migrating, &pinned];
+
+        for holder in holders {
+            let (tx, rx) = async_channel::unbounded::<String>();
+            let listener = listener(rx);
+            let holder = holder(tx);
+
+            assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
+            assert_eq!(resume(holder).expect("resume").1, Status::Awaiting);
+            assert_eq!(
+                quietly(|| reply(holder, &reply_str_record(1, "now panic"))),
+                Err(Error::Panicked)
+            );
+            assert_eq!(resume(holder), Err(Error::BadHandle), "removed");
+            assert!(
+                woken_in(&wakes()).contains(&listener),
+                "the failed call had no output, so the wake waited for `wakes`"
+            );
+
+            assert_eq!(
+                resume(listener),
+                Ok((
+                    framed(&[View::Say(String::from("closed: true"))]),
+                    Status::Complete
+                ))
+            );
+            free(listener).expect("free");
+        }
+    }
+
+    /// A routine that calls into the table for its own handle while it is
+    /// being polled: the machine is taken, so `resume` and `reply` are `BUSY`
+    /// — no deadlock, no second borrow — and the outer call finishes
+    /// normally. The handle reaches the routine through `own`, set once the
+    /// table has issued it. Migrating (its lock is held) and pinned (its
+    /// `RefCell` is borrowed) alike.
+    #[test]
+    fn a_call_into_a_machine_it_is_already_running_is_busy() {
+        fn says(own: Arc<OnceLock<u64>>) -> impl FnOnce(Outbox<Effect>) -> BoxedRoutine {
+            move |outbox| {
+                Box::pin(async move {
+                    let handle = *own.get().expect("set before the first resume");
+                    let again = resume(handle);
+                    let answered = reply(handle, &reply_str_record(1, "x"));
+                    outbox.tell(Effect::Say(format!("{again:?} {answered:?}")));
+                })
+            }
+        }
+        let busy = framed(&[View::Say(String::from("Err(Busy) Err(Busy)"))]);
+
+        let own = Arc::new(OnceLock::new());
+        let migrating = new(says(Arc::clone(&own)));
+        own.set(migrating).expect("set once");
+        assert_eq!(resume(migrating), Ok((busy.clone(), Status::Complete)));
+        free(migrating).expect("free");
+
+        let own = Arc::new(OnceLock::new());
+        let pinned = park_pinned({
+            let own = Arc::clone(&own);
+            move |outbox: Outbox<Effect>| -> LocalBoxedRoutine { says(own)(outbox) }
+        });
+        own.set(pinned).expect("set once");
+        assert_eq!(resume(pinned), Ok((busy, Status::Complete)));
+        free(pinned).expect("free");
     }
 
     #[test]
