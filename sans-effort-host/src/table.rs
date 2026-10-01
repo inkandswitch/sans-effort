@@ -167,15 +167,16 @@ impl Table {
     /// A fresh handle, never `0`, never reused — unless this thread is
     /// replaying, when it is the next handle the recording issued, if that
     /// is free again.
+    ///
+    /// `next` is above every handle ever issued: fresh ones come from it, and
+    /// a re-issued one moves it past itself — the recording may come from
+    /// another process, whose handles ran ahead of this one's.
     fn issue(&mut self) -> u64 {
         if let Some(handle) = REISSUE.with(|reissue| reissue.borrow_mut().pop_front())
             && !self.in_use(handle)
         {
             self.next = self.next.max(handle + 1);
             return handle;
-        }
-        while self.in_use(self.next) {
-            self.next += 1;
         }
         let handle = self.next;
         self.next += 1;
@@ -961,6 +962,45 @@ mod tests {
         own.set(pinned).expect("set once");
         assert_eq!(resume(pinned), Ok((busy, Status::Complete)));
         free(pinned).expect("free");
+    }
+
+    /// Re-issuing a handle from ahead — a log from another process — moves
+    /// the counter past it. On a table of its own, so no other test's
+    /// handles can move the counter instead.
+    #[test]
+    fn a_handle_reissued_from_ahead_moves_the_counter_past_it() {
+        bolero::check!().with_type::<u32>().for_each(|gap| {
+            let mut table = Table::new();
+            let ahead = table.next + u64::from(*gap);
+            let reissuing = reissue(&[ahead]);
+            assert_eq!(table.issue(), ahead);
+            drop(reissuing);
+            assert_eq!(table.issue(), ahead + 1, "the next fresh handle");
+        });
+    }
+
+    /// Whatever is created and freed, in any order: no handle is `0`, and
+    /// none is issued twice — not even after its machine is freed. (Other
+    /// tests create machines meanwhile; that only skips handles.)
+    #[test]
+    fn handles_are_never_zero_and_never_reused() {
+        bolero::check!().with_type::<Vec<bool>>().for_each(|ops| {
+            let mut issued = std::collections::HashSet::new();
+            let mut live = std::collections::VecDeque::new();
+            for create in ops {
+                if *create || live.is_empty() {
+                    let h = new(|outbox| Echo(outbox).run());
+                    assert_ne!(h, 0);
+                    assert!(issued.insert(h), "handle {h} issued twice");
+                    live.push_back(h);
+                } else if let Some(h) = live.pop_front() {
+                    free(h).expect("live");
+                }
+            }
+            for h in live {
+                free(h).expect("live");
+            }
+        });
     }
 
     #[test]

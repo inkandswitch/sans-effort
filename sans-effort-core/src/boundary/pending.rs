@@ -41,3 +41,25 @@ impl Pending {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pending_reply_keeps_its_request_id_and_kind() {
+        bolero::check!().with_type::<u64>().for_each(|id| {
+            let pending = [
+                Pending::Bytes(ReplyHandle::mint(1, *id)),
+                Pending::Str(ReplyHandle::mint(1, *id)),
+                Pending::U64(ReplyHandle::mint(1, *id)),
+                Pending::Unit(ReplyHandle::mint(1, *id)),
+            ];
+            assert_eq!(pending.each_ref().map(Pending::id), [*id; 4]);
+            assert_eq!(
+                pending.each_ref().map(Pending::kind),
+                [Kind::Bytes, Kind::Str, Kind::U64, Kind::Unit]
+            );
+        });
+    }
+}

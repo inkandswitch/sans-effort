@@ -272,8 +272,13 @@ pub fn drive_with<E: 'static, S: Schedule, H: FnMut(E, &mut Answers<'_, E>)>(
         }
 
         let offered = eligible(&world.ready);
-        let choice = schedule.next(offered.len()).min(offered.len() - 1);
-        let pick = offered.get(choice).copied().unwrap_or_default();
+        // A choice past the end means the newest, as `Schedule::next` says.
+        let choice = schedule.next(offered.len());
+        let pick = offered
+            .get(choice)
+            .or(offered.last())
+            .copied()
+            .unwrap_or_default();
         match world.ready.remove(pick) {
             Action::Effect(at, effect) => {
                 let mut answers = Answers {
@@ -574,6 +579,7 @@ mod tests {
             /// Sleep this many milliseconds.
             Sleep(u64, ReplyHandle<()>),
             Spawn(Box<dyn FnOnce(Outbox<Effect>) -> BoxedRoutine + Send>),
+            SpawnPinned(Box<dyn FnOnce(Outbox<Effect>) -> LocalBoxedRoutine + Send>),
         }
 
         /// Asks twice at once, then says the answers in the order it asked.
@@ -629,6 +635,7 @@ mod tests {
                     host.reply_after(Duration::from_millis(millis), reply, ());
                 }
                 Effect::Spawn(make) => host.spawn(make),
+                Effect::SpawnPinned(make) => host.spawn_pinned(make),
             });
             (said, ran)
         }
@@ -757,10 +764,22 @@ mod tests {
             }
         }
 
-        /// Kills machine 1 as soon as it exists; otherwise `Fifo`.
-        struct KillsTheChild(bool);
+        /// Kills one machine as soon as it exists; otherwise `Fifo`.
+        struct KillsOnce {
+            target: usize,
+            done: bool,
+        }
 
-        impl Schedule for KillsTheChild {
+        impl KillsOnce {
+            const fn new(target: usize) -> Self {
+                Self {
+                    target,
+                    done: false,
+                }
+            }
+        }
+
+        impl Schedule for KillsOnce {
             fn next(&mut self, _: usize) -> usize {
                 0
             }
@@ -770,9 +789,9 @@ mod tests {
             }
 
             fn kill(&mut self, machines: usize) -> Option<usize> {
-                (!self.0 && machines > 1).then(|| {
-                    self.0 = true;
-                    1
+                (!self.done && machines > self.target).then(|| {
+                    self.done = true;
+                    self.target
                 })
             }
         }
@@ -784,7 +803,7 @@ mod tests {
             let parent = || Driver::new(|outbox| Parent(outbox).run());
             assert_eq!(said(parent(), Fifo), [1]);
 
-            let (said, ran) = run(parent(), KillsTheChild(false), None);
+            let (said, ran) = run(parent(), KillsOnce::new(1), None);
             assert_eq!(said, [(0, Duration::ZERO)]);
             assert_eq!(ran.expect("the parent completes").killed(), [1]);
         }
@@ -802,6 +821,148 @@ mod tests {
                     assert_eq!(said, [(1, Duration::ZERO)]);
                 }
             });
+        }
+
+        /// Spawns a child, and a pinned child holding an `Rc` (so its future
+        /// is not `Send`); each says its number, as does the root.
+        struct Family(Outbox<Effect>);
+
+        impl Step for Family {
+            async fn step(&mut self) -> ControlFlow<()> {
+                self.0
+                    .tell(Effect::Spawn(Box::new(|outbox: Outbox<Effect>| {
+                        Box::pin(async move { outbox.tell(Effect::Say(10)) }) as BoxedRoutine
+                    })));
+                self.0
+                    .tell(Effect::SpawnPinned(Box::new(|outbox: Outbox<Effect>| {
+                        let local = alloc::rc::Rc::new(20);
+                        Box::pin(async move { outbox.tell(Effect::Say(*local)) })
+                            as LocalBoxedRoutine
+                    })));
+                self.0.tell(Effect::Say(0));
+                ControlFlow::Break(())
+            }
+        }
+
+        /// What each machine said, by machine, under `schedule`.
+        fn family<S: Schedule>(schedule: S) -> (Vec<(usize, u64)>, Completed) {
+            let mut said = Vec::new();
+            let ran = drive_with(
+                Driver::new(|outbox| Family(outbox).run()),
+                schedule,
+                |effect, host| match effect {
+                    Effect::Say(n) => said.push((host.machine(), n)),
+                    Effect::Spawn(make) => host.spawn(make),
+                    Effect::SpawnPinned(make) => host.spawn_pinned(make),
+                    Effect::Ask(_) | Effect::Sleep(..) => unreachable!("the family only tells"),
+                },
+            )
+            .expect("completes");
+            said.sort_unstable();
+            (said, ran)
+        }
+
+        /// The root is machine 0, then each child in the order spawned; a
+        /// pinned child runs as a local machine.
+        #[test]
+        fn children_are_numbered_in_spawn_order_and_pinned_ones_run() {
+            let (said, ran) = family(Fifo);
+            assert_eq!(said, [(0, 0), (1, 10), (2, 20)]);
+            assert_eq!(ran.killed(), []);
+        }
+
+        #[test]
+        fn a_kill_is_reported_by_the_machine_it_named() {
+            let (said, ran) = family(KillsOnce::new(2));
+            assert_eq!(said, [(0, 0), (1, 10)], "the pinned child never ran");
+            assert_eq!(ran.killed(), [2]);
+        }
+
+        /// Takes the newest action, by naming one past the end.
+        struct PastTheEnd;
+
+        impl Schedule for PastTheEnd {
+            fn next(&mut self, _: usize) -> usize {
+                usize::MAX
+            }
+
+            fn stutter(&mut self, _: usize) -> Option<usize> {
+                None
+            }
+        }
+
+        /// Takes the newest action, by naming it.
+        struct Newest;
+
+        impl Schedule for Newest {
+            fn next(&mut self, ready: usize) -> usize {
+                ready - 1
+            }
+
+            fn stutter(&mut self, _: usize) -> Option<usize> {
+                None
+            }
+        }
+
+        #[test]
+        fn a_choice_past_the_end_means_the_newest() {
+            let racer = || Driver::new(|outbox| Racer(outbox).run());
+            assert_eq!(said(racer(), PastTheEnd), said(racer(), Newest));
+        }
+
+        /// Killing drops the machine's timers and no others, and says
+        /// whether it was still running.
+        #[test]
+        fn a_kill_drops_only_its_own_timers() {
+            let mut world: World<Effect> = World {
+                machines: Vec::new(),
+                ready: Vec::new(),
+                timers: Vec::new(),
+                now: Duration::ZERO,
+                woken: Arc::new(Mutex::new(VecDeque::new())),
+            };
+            world.adopt(Machine::Migrating(Driver::new(|_: Outbox<Effect>| {
+                core::future::pending::<()>()
+            })));
+            world.adopt(Machine::Migrating(
+                Driver::new(|_: Outbox<Effect>| async {}),
+            ));
+            drop(world.machine(1).expect("alive").resume());
+            for at in [0, 1] {
+                world.timers.push(Timer {
+                    due: ms(5),
+                    at,
+                    deliver: Box::new(|_| Yield::new(Vec::new(), Vec::new())),
+                });
+            }
+
+            assert!(world.kill(0), "it was waiting");
+            let timers: Vec<usize> = world.timers.iter().map(|timer| timer.at).collect();
+            assert_eq!(timers, [1], "only its own timer went");
+            assert!(!world.kill(1), "it had completed");
+            assert!(!world.kill(0), "already gone");
+        }
+
+        /// The root completes; its child waits on a channel it holds the
+        /// sender of, forever — and is named.
+        #[test]
+        fn a_stalled_child_is_named() {
+            let root = Driver::new(|outbox: Outbox<Effect>| async move {
+                outbox.tell(Effect::Spawn(Box::new(|_: Outbox<Effect>| {
+                    Box::pin(async move {
+                        let (tx, rx) = async_channel::bounded::<()>(1);
+                        let _kept = tx;
+                        rx.recv().await.unwrap_or_default();
+                    }) as BoxedRoutine
+                })));
+            });
+            let stalled = drive(root, |effect, host| {
+                if let Effect::Spawn(make) = effect {
+                    host.spawn(make);
+                }
+            })
+            .expect_err("the child waits forever");
+            assert_eq!(stalled.machines(), [1]);
         }
 
         /// Waits on a channel whose sender it keeps and never uses.

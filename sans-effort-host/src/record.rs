@@ -365,7 +365,7 @@ mod tests {
         contract::{BAD_HANDLE, PANICKED},
         fixtures::{Both, Echo, Effect, quietly},
     };
-    use sans_effort_core::driver::outbox::Outbox;
+    use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox};
     use sans_effort_core::step::Step;
 
     fn echo() -> u64 {
@@ -457,6 +457,144 @@ mod tests {
         assert_eq!(codes, [status_code(Status::Awaiting), PANICKED, BAD_HANDLE]);
 
         quietly(|| replay(&log, panics_when_answered)).expect("the same calls, the same outcomes");
+    }
+
+    /// Creates a child mid-poll, as a binding's `split` does when a
+    /// routine spawns, and says the child's handle.
+    fn spawner() -> u64 {
+        table::new(|outbox: Outbox<Effect>| async move {
+            let child =
+                table::new_boxed(|o: Outbox<Effect>| -> BoxedRoutine { Box::pin(Echo(o).run()) });
+            outbox.tell(Effect::Say(format!("spawned {child}")));
+        })
+    }
+
+    /// Record a spawner and its child to the end, both freed.
+    fn recorded_spawn() -> Log {
+        let root = spawner();
+        let recorder = record(root);
+        table::resume(root).expect("spawns and completes");
+        table::free(root).expect("freed");
+        let log = recorder.finish();
+        let [_, child] = log.handles() else {
+            unreachable!("the root and its child: {:?}", log.handles());
+        };
+        // The child was created during a recorded call, so it is in the
+        // session too — though the recorder has finished, its calls are not.
+        let child = *child;
+        table::resume(child).expect("asks");
+        table::free(child).expect("freed");
+        log
+    }
+
+    /// A child joins its parent's session, its calls are logged as its
+    /// own machine's, and replay issues the recorded handles again — the
+    /// parent's output names the child, so only the same handle replays it.
+    #[test]
+    fn a_spawning_run_replays_with_the_same_handles() {
+        let root = spawner();
+        let recorder = record(root);
+        table::resume(root).expect("spawns and completes");
+        let child = recorder_child(&recorder);
+        table::resume(child).expect("asks");
+        table::reply(child, &str_reply(1, "hi")).expect("answered");
+        table::free(child).expect("freed");
+        table::free(root).expect("freed");
+        let log = recorder.finish();
+
+        assert_eq!(log.handles(), [root, child]);
+        let machines: Vec<u32> = log.events().iter().map(Event::machine).collect();
+        assert_eq!(
+            machines,
+            [0, 1, 1, 1, 0],
+            "resume, then the child's three calls, then free"
+        );
+        replay(&log, spawner).expect("the same calls, the same outcomes");
+    }
+
+    /// The child a session's root has created so far.
+    fn recorder_child(recorder: &Recorder) -> u64 {
+        let session = recorder.session.expect("recording");
+        table::recorded_handle(session, 1).expect("adopted")
+    }
+
+    /// A replay that stops early leaves recorded handles unissued; once it
+    /// returns, this thread gets fresh handles again, not those.
+    #[test]
+    fn after_a_replay_handles_are_fresh_again() {
+        let log = recorded_spawn();
+        let [_, child] = log.handles() else {
+            unreachable!("two handles");
+        };
+        assert!(
+            replay(&log, echo).is_err(),
+            "another routine diverges at once"
+        );
+        let fresh = echo();
+        assert_ne!(fresh, *child, "the unissued recorded handle is not reused");
+        table::free(fresh).expect("freed");
+    }
+
+    /// Replay a log of `handles` and no calls; the handle its root got (and
+    /// replay freed).
+    fn replayed_root(handles: Vec<u64>) -> u64 {
+        let root = core::cell::Cell::new(0);
+        let log = Log {
+            handles,
+            events: Vec::new(),
+        };
+        replay(&log, || {
+            let h = echo();
+            root.set(h);
+            h
+        })
+        .expect("no calls, nothing to diverge");
+        root.get()
+    }
+
+    /// A log from another process may name handles this one has not reached:
+    /// re-issuing one moves the counter past it, so no fresh handle repeats it.
+    #[test]
+    fn a_handle_replayed_from_ahead_moves_the_counter_past_it() {
+        let probe = echo();
+        table::free(probe).expect("freed");
+        let ahead = probe + 1_000;
+
+        assert_eq!(replayed_root(vec![ahead]), ahead, "free, so issued again");
+        let fresh = echo();
+        assert!(fresh > ahead, "{fresh} after {ahead}");
+        table::free(fresh).expect("freed");
+    }
+
+    /// A recorded handle whose machine still lives — migrating, parked, or
+    /// pinned and started — is not issued again; replay gets a fresh one.
+    #[test]
+    fn a_recorded_handle_still_in_use_is_not_issued_again() {
+        let pinned = || {
+            table::park_pinned(|outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+                Box::pin(Echo(outbox).run())
+            })
+        };
+        let started = pinned();
+        table::resume(started).expect("started here, so pinned to this thread");
+
+        for live in [echo(), pinned(), started] {
+            let root = replayed_root(vec![live]);
+            assert_ne!(root, live);
+            table::free(live).expect("freed");
+        }
+    }
+
+    /// Dropping a recorder without finishing ends its session.
+    #[test]
+    fn a_dropped_recorder_ends_its_session() {
+        let root = echo();
+        let recorder = record(root);
+        let session = recorder.session.expect("recording");
+        assert_eq!(table::recorded_handle(session, 0), Some(root));
+        drop(recorder);
+        assert_eq!(table::recorded_handle(session, 0), None);
+        table::free(root).expect("freed");
     }
 
     #[test]

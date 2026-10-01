@@ -377,10 +377,19 @@ impl<A> core::fmt::Debug for Refused<A> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
+    #![expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "tests assert their preconditions; let-else arms name the effect they expected"
+    )]
 
     use super::*;
-    use crate::{step::Step, testing::poll_once};
+    use crate::{
+        boundary::{codec::DecodeError, pending::Pending},
+        reply::Answer,
+        step::Step,
+        testing::poll_once,
+    };
     use alloc::string::String;
     use core::{
         ops::ControlFlow,
@@ -435,6 +444,142 @@ mod tests {
     fn one(mut handles: Vec<ReplyHandle<String>>) -> ReplyHandle<String> {
         assert_eq!(handles.len(), 1, "exactly one request in the batch");
         handles.pop().expect("one")
+    }
+
+    /// Whatever it holds, a yield gives it back as it was: emptiness is
+    /// "no effects and no closed ids", the parts come out unchanged, `map`
+    /// touches only the effects, and a `Vec` is the effects alone.
+    #[test]
+    fn a_yield_gives_back_what_it_holds() {
+        bolero::check!()
+            .with_type::<(Vec<u8>, Vec<u64>)>()
+            .for_each(|(effects, closed)| {
+                let made = || Yield::new(effects.clone(), closed.clone());
+                assert_eq!(made().is_empty(), effects.is_empty() && closed.is_empty());
+                assert_eq!(made().into_parts(), (effects.clone(), closed.clone()));
+
+                let mapped = made().map(|e| u16::from(e) + 1);
+                let expected: Vec<u16> = effects.iter().map(|e| u16::from(*e) + 1).collect();
+                assert_eq!(mapped.effects(), expected.as_slice());
+                assert_eq!(mapped.closed(), closed.as_slice());
+
+                assert_eq!(Vec::from(made()), *effects);
+            });
+    }
+
+    /// Answers whose decoding can fail, one per wire kind, so that what a
+    /// mailbox checks — the value as delivered — is visible.
+    #[derive(Debug)]
+    struct NonEmpty(String);
+
+    impl Answer for NonEmpty {
+        type Wire = String;
+
+        fn into_wire(self) -> String {
+            self.0
+        }
+
+        fn from_wire(wire: String) -> Result<Self, DecodeError> {
+            if wire.is_empty() {
+                Err(DecodeError::UnknownTag { tag: 0 })
+            } else {
+                Ok(Self(wire))
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct Positive(u64);
+
+    impl Answer for Positive {
+        type Wire = u64;
+
+        fn into_wire(self) -> u64 {
+            self.0
+        }
+
+        fn from_wire(wire: u64) -> Result<Self, DecodeError> {
+            if wire == 0 {
+                Err(DecodeError::UnknownTag { tag: 0 })
+            } else {
+                Ok(Self(wire))
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    enum Typed {
+        Text(ReplyHandle<NonEmpty>),
+        Number(ReplyHandle<Positive>),
+        Either(ReplyHandle<Result<String, u64>>),
+        Said(String),
+    }
+
+    /// The only effect of a yield that must hold exactly one.
+    fn only(effects: Yield<Typed>) -> Typed {
+        let mut effects = effects.into_iter();
+        let effect = effects.next().expect("an effect");
+        assert!(effects.next().is_none(), "only one");
+        effect
+    }
+
+    /// A host replying on the wire: a value that does not decode as the
+    /// answer is refused, the request staying open; one that does is
+    /// delivered. For a string, a number, and bytes alike.
+    #[test]
+    fn try_reply_delivers_what_decodes_and_refuses_the_rest() {
+        let mut driver = Driver::new(|outbox: Outbox<Typed>| async move {
+            let text = outbox.ask(Typed::Text).await;
+            let number = outbox.ask(Typed::Number).await;
+            let either = outbox.ask(Typed::Either).await;
+            outbox.tell(Typed::Said(alloc::format!(
+                "{} {} {either:?}",
+                text.0,
+                number.0
+            )));
+        });
+        assert!(!driver.is_finished());
+
+        let Typed::Text(text) = only(driver.resume()) else {
+            panic!("asks for text first");
+        };
+        let Pending::Str(wire) = NonEmpty::pending(text) else {
+            unreachable!("text crosses as a string");
+        };
+        let (wire, _) = driver
+            .try_reply(wire, String::new())
+            .expect_err("empty is not a NonEmpty")
+            .into_parts();
+        assert_eq!(driver.status(), Status::Awaiting);
+
+        let Ok(Typed::Number(number)) = driver.try_reply(wire, String::from("hi")).map(only) else {
+            panic!("a good string is delivered, and the routine asks for a number");
+        };
+        let Pending::U64(wire) = Positive::pending(number) else {
+            unreachable!("a number crosses as a u64");
+        };
+        let (wire, _) = driver
+            .try_reply(wire, 0)
+            .expect_err("0 is not a Positive")
+            .into_parts();
+
+        let Ok(Typed::Either(either)) = driver.try_reply(wire, 7).map(only) else {
+            panic!("a good number is delivered, and the routine asks for a result");
+        };
+        let Pending::Bytes(wire) = <Result<String, u64>>::pending(either) else {
+            unreachable!("a result crosses as bytes");
+        };
+        let (wire, _) = driver
+            .try_reply(wire, alloc::vec![9])
+            .expect_err("9 is not an encoded result")
+            .into_parts();
+
+        let good = Ok::<String, u64>(String::from("x")).into_wire();
+        let Ok(Typed::Said(said)) = driver.try_reply(wire, good).map(only) else {
+            panic!("good bytes are delivered, and the routine says what it got");
+        };
+        assert_eq!(said, r#"hi 7 Ok("x")"#);
+        assert!(driver.is_finished());
     }
 
     #[test]

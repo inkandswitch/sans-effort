@@ -318,7 +318,7 @@ mod tests {
     use super::*;
 
     /// A wire value comes back as itself from its own kind, and as nothing
-    /// from any other.
+    /// from any other — borrowed or taken.
     #[test]
     fn menu_round_trips_through_value() {
         bolero::check!()
@@ -331,6 +331,15 @@ mod tests {
                     ().into_value(),
                 ];
                 for (at, value) in values.into_iter().enumerate() {
+                    // Borrowing sees what taking sees.
+                    assert_eq!(
+                        <Vec<u8>>::from_value_ref(&value),
+                        (at == 0).then_some(bytes)
+                    );
+                    assert_eq!(String::from_value_ref(&value), (at == 1).then_some(text));
+                    assert_eq!(u64::from_value_ref(&value), (at == 2).then_some(n));
+                    assert_eq!(<()>::from_value_ref(&value), (at == 3).then_some(&()));
+
                     assert_eq!(
                         <Vec<u8>>::from_value(value.clone()),
                         (at == 0).then(|| bytes.clone())

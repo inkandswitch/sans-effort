@@ -1,7 +1,11 @@
 name: Mutation Testing
 
-# Too slow for every push (~20 minutes for the four library crates). Weekly in
-# full, and on a pull request only for the lines it changes.
+# Too slow for every push (~8 minutes for the four library crates on four
+# cores). Weekly in full, and on a pull request only for the lines it changes.
+#
+# Exit code 3 means some mutants only timed out: the tests hung rather than
+# passed (a mutant that makes the test runner loop forever), so those count
+# as caught. Exit code 2 — a mutant no test caught — fails the job.
 
 on:
   schedule:
@@ -42,7 +46,7 @@ jobs:
       - name: Mutants in the changed lines
         run: |
           git diff "origin/${{ github.base_ref }}..." > mutants.diff
-          cargo mutants $CRATES --in-diff mutants.diff -j 2 --output target/mutants
+          cargo mutants $CRATES --in-diff mutants.diff -j 2 --output target/mutants || test $? -eq 3
 
       - name: Survivors
         if: failure()
@@ -68,7 +72,7 @@ jobs:
           tool: cargo-mutants
 
       - name: Every mutant in the library crates
-        run: cargo mutants $CRATES -j 2 --output target/mutants
+        run: cargo mutants $CRATES -j 2 --output target/mutants || test $? -eq 3
 
       - name: Results
         if: always()

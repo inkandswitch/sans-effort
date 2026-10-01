@@ -271,6 +271,57 @@ mod tests {
     use crate::fixtures::{Both, Echo, Holds, Impatient, View};
     use sans_effort_core::{reply::kind::Kind, step::Step};
 
+    /// One ask of each wire kind, answered through the typed helpers a
+    /// binding uses (`PyO3`, Rustler): each value arrives as itself.
+    #[test]
+    fn the_typed_helpers_deliver_each_kind() {
+        use alloc::{format, string::String, vec::Vec};
+        use sans_effort_core::{
+            boundary::{host_effect::HostEffect, pending::Pending},
+            reply::handle::ReplyHandle,
+        };
+
+        enum Kinds {
+            Str(ReplyHandle<String>),
+            U64(ReplyHandle<u64>),
+            Unit(ReplyHandle<()>),
+            Bytes(ReplyHandle<Vec<u8>>),
+            Said(String),
+        }
+
+        impl HostEffect for Kinds {
+            type View = Option<String>;
+
+            fn split(self) -> (Option<String>, Option<Pending>) {
+                match self {
+                    Kinds::Str(r) => (None, Some(Pending::Str(r))),
+                    Kinds::U64(r) => (None, Some(Pending::U64(r))),
+                    Kinds::Unit(r) => (None, Some(Pending::Unit(r))),
+                    Kinds::Bytes(r) => (None, Some(Pending::Bytes(r))),
+                    Kinds::Said(text) => (Some(text), None),
+                }
+            }
+        }
+
+        let mut m = Machine::from_routine(
+            |outbox: sans_effort_core::driver::outbox::Outbox<Kinds>| async move {
+                let s = outbox.ask(Kinds::Str).await;
+                let n = outbox.ask(Kinds::U64).await;
+                outbox.ask(Kinds::Unit).await;
+                let b = outbox.ask(Kinds::Bytes).await;
+                outbox.tell(Kinds::Said(format!("{s} {n} () {b:?}")));
+            },
+        );
+        assert!(!m.is_finished());
+        drop(m.resume().expect("asks for a str"));
+        drop(m.reply_str(1, "s".into()).expect("a str"));
+        drop(m.reply_u64(2, 7).expect("a u64"));
+        drop(m.reply_unit(3).expect("a unit"));
+        let said = m.reply_bytes(4, alloc::vec![1, 2]).expect("bytes");
+        assert_eq!(said.effects(), [Some(String::from("s 7 () [1, 2]"))]);
+        assert!(m.is_finished());
+    }
+
     #[test]
     fn a_reply_is_checked_for_kind_and_refused_after_completion() {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());

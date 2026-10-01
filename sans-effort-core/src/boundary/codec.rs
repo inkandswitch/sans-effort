@@ -443,6 +443,8 @@ pub enum DecodeError {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
+
     use super::*;
     use core::fmt::Debug;
 
@@ -461,6 +463,40 @@ mod tests {
                 prefix.len()
             );
         }
+    }
+
+    /// Through the `Encode` impls for borrowed forms — `str`, `[u8]`, and
+    /// a reference — as through the owned ones.
+    #[test]
+    fn borrowed_forms_encode_as_the_owned_ones() {
+        bolero::check!()
+            .with_type::<(String, Vec<u8>)>()
+            .for_each(|(text, bytes)| {
+                assert_eq!(
+                    String::from_bytes(&text.as_str().to_bytes()).as_ref(),
+                    Ok(text)
+                );
+                assert_eq!(
+                    <Vec<u8>>::from_bytes(&bytes.as_slice().to_bytes()).as_ref(),
+                    Ok(bytes)
+                );
+                assert_eq!((&text).to_bytes(), text.to_bytes());
+            });
+    }
+
+    /// A reader is empty exactly when every byte has been read.
+    #[test]
+    fn a_reader_is_empty_once_every_byte_is_read() {
+        bolero::check!()
+            .with_type::<(Vec<u8>, usize)>()
+            .for_each(|(bytes, take)| {
+                let take = take % (bytes.len() + 1);
+                let mut r = Reader::new(bytes);
+                for _ in 0..take {
+                    r.u8().expect("a byte left");
+                }
+                assert_eq!(r.is_empty(), take == bytes.len());
+            });
     }
 
     #[test]

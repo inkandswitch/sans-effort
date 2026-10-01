@@ -66,3 +66,21 @@ impl<T> PartialEq for ReplyHandle<T> {
 }
 
 impl<T> Eq for ReplyHandle<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Equal exactly when both the driver and the request are the same.
+    #[test]
+    fn handles_are_equal_when_they_address_the_same_request() {
+        bolero::check!()
+            .with_type::<(u64, u64, bool, bool)>()
+            .for_each(|(driver, id, same_driver, same_id)| {
+                let other = |same: bool, n: u64| if same { n } else { n.wrapping_add(1) };
+                let a = ReplyHandle::<()>::mint(*driver, *id);
+                let b = ReplyHandle::<()>::mint(other(*same_driver, *driver), other(*same_id, *id));
+                assert_eq!(a == b, *same_driver && *same_id);
+            });
+    }
+}

@@ -81,3 +81,33 @@ pub const fn status_code(status: Status) -> i32 {
 pub fn code_of(result: Result<(), Error>) -> i32 {
     result.map_or_else(Error::code, |()| OK)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The numbers are the ABI: `ABI.md` documents them, and hosts in other
+    /// languages hard-code them. Changing one breaks every host.
+    #[test]
+    fn the_codes_are_the_abi() {
+        assert_eq!([OK, AWAITING, COMPLETE, IDLE], [0, 0, 1, 2]);
+        assert_eq!(
+            [
+                BUSY,
+                FINISHED,
+                WRONG_KIND,
+                PANICKED,
+                BAD_HANDLE,
+                BAD_INPUT,
+                MALFORMED,
+                STALE,
+                WRONG_THREAD
+            ],
+            [-1, -2, -3, -4, -5, -6, -7, -8, -9]
+        );
+        assert_eq!(
+            [Status::Awaiting, Status::Complete, Status::Idle].map(status_code),
+            [AWAITING, COMPLETE, IDLE]
+        );
+    }
+}

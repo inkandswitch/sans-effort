@@ -11,7 +11,12 @@
 //! Built once per driver and reused for every poll, so stepping still
 //! allocates nothing.
 
-use super::sync::{Arc, AtomicBool, Mutex, Wake};
+#[cfg(feature = "portable-atomic")]
+mod portable_atomic;
+
+#[cfg(not(feature = "portable-atomic"))]
+use super::sync::Wake;
+use super::sync::{Arc, AtomicBool, Mutex};
 use alloc::boxed::Box;
 use core::{sync::atomic::Ordering, task::Waker};
 
@@ -66,17 +71,5 @@ impl Wake for Wakeup {
 
     fn wake_by_ref(self: &Arc<Self>) {
         self.wake_up();
-    }
-}
-
-/// `portable-atomic-util`'s `Wake` names the receiver `this`, not `self`.
-#[cfg(feature = "portable-atomic")]
-impl Wake for Wakeup {
-    fn wake(this: Arc<Self>) {
-        this.wake_up();
-    }
-
-    fn wake_by_ref(this: &Arc<Self>) {
-        this.wake_up();
     }
 }

@@ -104,3 +104,50 @@ impl<I: Iterator<Item = u8>> Choices<I> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fifo_takes_the_oldest_and_never_stutters_or_kills() {
+        assert_eq!(
+            (Fifo.next(3), Fifo.stutter(3), Fifo.kill(3)),
+            (0, None, None)
+        );
+    }
+
+    #[test]
+    fn a_choice_is_its_byte_modulo_the_ready_count_then_fifo() {
+        let mut choices = Choices::new([5_u8].into_iter());
+        assert_eq!(choices.next(3), 2);
+        assert_eq!(choices.next(3), 0, "out of bytes: the oldest");
+    }
+
+    #[test]
+    fn one_byte_in_eight_stutters_and_the_next_names_the_machine() {
+        assert_eq!(Choices::new([8_u8, 5].into_iter()).stutter(3), Some(2));
+        assert_eq!(Choices::new([9_u8, 5].into_iter()).stutter(3), None);
+        assert_eq!(
+            Choices::new([8_u8, 5].into_iter()).stutter(0),
+            None,
+            "no machine to name"
+        );
+    }
+
+    #[test]
+    fn only_a_crashing_schedule_kills_and_then_one_byte_in_sixteen() {
+        let mut plain = Choices::new([16_u8, 5].into_iter());
+        assert_eq!(plain.kill(3), None);
+        assert_eq!(plain.next(256), 16, "deciding not to kill read no byte");
+
+        assert_eq!(
+            Choices::new([16_u8, 5].into_iter()).crashing().kill(3),
+            Some(2)
+        );
+        assert_eq!(
+            Choices::new([17_u8, 5].into_iter()).crashing().kill(3),
+            None
+        );
+    }
+}

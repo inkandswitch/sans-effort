@@ -7,4 +7,16 @@ exclude_re = [
   # `TokioOutput` logs only its first failed write; which write logs shows
   # only in `tracing` output. Later writes are dropped either way (tested).
   "delete ! in <impl WriteLine for TokioOutput<W>>::write_line",
+  # The host table's `note` checks whether any session is open only to skip
+  # taking the table's lock; `>=` would take it on every call, with the same
+  # result.
+  "replace > with >= in note",
+  # `Decode for ()` is `Ok(())`, which is what `Ok(Default::default())` is.
+  "replace <impl Decode for \\(\\)>::decode -> Result<Self, DecodeError> with Ok\\(Default::default\\(\\)\\)",
+]
+
+exclude_globs = [
+  # Built only with the `portable-atomic` feature, which the tests do not
+  # enable; `cargo hack` checks that it compiles.
+  "sans-effort-core/src/driver/wake/portable_atomic.rs",
 ]

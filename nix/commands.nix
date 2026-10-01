@@ -82,12 +82,14 @@ in {
   # A fixed seed keeps bolero's properties drawing the same inputs, so a
   # mutant is caught or missed the same way every run. Survivors are listed
   # in target/mutants/mutants.out/missed.txt; accepted ones are excluded, with
-  # reasons, in .cargo/mutants.toml.
-  "test:mutants" = cmd "Mutation-test the four library crates (slow: ~20 min); survivors in target/mutants" ''
+  # reasons, in .cargo/mutants.toml. Exit code 3 means some mutants only timed
+  # out: the tests hung rather than passed — a mutant that makes the test
+  # runner loop forever — so those count as caught.
+  "test:mutants" = cmd "Mutation-test the four library crates (~8 min); survivors in target/mutants" ''
     set -e
     export BOLERO_RANDOM_SEED=1
     ${cargo} mutants -p sans-effort-core -p sans-effort-effects -p sans-effort-host -p sans-effort-tokio \
-      -j 4 --output target/mutants "$@"
+      -j 4 --output target/mutants "$@" || test $? -eq 3
   '';
 
   "test:mutants:diff" = cmd "Mutation-test only the lines changed since a base (default origin/main)" ''
@@ -96,7 +98,7 @@ in {
     mkdir -p target
     git diff "''${1:-origin/main}" > target/mutants.diff
     ${cargo} mutants -p sans-effort-core -p sans-effort-effects -p sans-effort-host -p sans-effort-tokio \
-      --in-diff target/mutants.diff -j 4 --output target/mutants
+      --in-diff target/mutants.diff -j 4 --output target/mutants || test $? -eq 3
   '';
 
   "demo:wasm" = cmd "Build the wasm-bindgen module and generate the JS glue into demo/native/js/pkg" ''
