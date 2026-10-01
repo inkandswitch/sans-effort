@@ -13,6 +13,7 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/driven/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
     python3 demo/driven/python/main.py --ring         # 16 machines passing a counter: woke frames only
     python3 demo/driven/python/main.py --journal      # env, files, clock, randomness (tags 8–12)
+    python3 demo/driven/python/main.py --deadline     # receives raced against sleeps: closed frames
 
 With spawning, the loop is a small scheduler: it keeps every machine by
 handle, resumes each child it is told about to begin it, and each machine a `woke`
@@ -20,9 +21,17 @@ frame names. A message between two routines never passes through here; the
 sender's call reports whom it woke, and resuming is how the receiver finds
 the message. When nothing is queued it asks `wakes` for anything woken
 outside a call; if that is empty too, the run is over — or stalled.
+
+Time is virtual: a sleep sets a timer, and timers fire, earliest first, only
+when there is nothing else to do — so a sleep never holds up work that can
+happen now, and costs no wall time. A closed frame names a request the
+routine abandoned (the losing side of a race): its timer is dropped, and an
+ask still queued behind the call that closed it is never performed.
 """
 
 import ctypes
+import heapq
+import itertools
 import struct
 import sys
 import time
@@ -115,6 +124,7 @@ class Library:
         self.lib.greeter_new_front_desk.restype = ctypes.c_uint64
         self.lib.greeter_new_ring.restype = ctypes.c_uint64
         self.lib.greeter_new_journal.restype = ctypes.c_uint64
+        self.lib.greeter_new_deadline.restype = ctypes.c_uint64
         self.lib.greeter_resume.restype = ctypes.c_int32
         self.lib.greeter_resume.argtypes = [
             ctypes.c_uint64,
@@ -143,6 +153,7 @@ class Library:
             "front-desk": self.lib.greeter_new_front_desk,
             "ring": self.lib.greeter_new_ring,
             "journal": self.lib.greeter_new_journal,
+            "deadline": self.lib.greeter_new_deadline,
         }[kind]()
 
     def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
@@ -277,11 +288,20 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
     readings, next_byte = 0, 0
     machines: dict[int, int] = {}  # handle → status of its last call
     queue: deque[tuple[int, dict]] = deque()
+    closed: set[tuple[int, int]] = set()  # (handle, id) the routine abandoned
+    timers: list[tuple[int, int, int, int]] = []  # (due ms, order set, handle, id)
+    now, order = 0, itertools.count()
 
     def ran(handle: int, result: tuple[int, bytes]) -> None:
         status, data = result
         machines[handle] = status
-        queue.extend((handle, e) for e in decode(data))
+        for e in decode(data):
+            # A closed id may name an ask still queued from an earlier batch —
+            # in a race, answering one side closes the other — so note it now.
+            if e["kind"] == "closed":
+                closed.add((handle, e["id"]))
+            else:
+                queue.append((handle, e))
         if status == COMPLETE:
             lib.free(handle)
 
@@ -290,8 +310,8 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
     while True:
         while queue:
             handle, e = queue.popleft()
-            if e["kind"] == "closed":
-                continue  # nothing to cancel: this host performs each effect before replying
+            if (handle, e.get("id")) in closed:
+                continue  # abandoned while it waited its turn: never performed
             if e["kind"] == "write_line":
                 written.append(e["text"])
                 print(e["text"])
@@ -308,8 +328,8 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
             elif e["kind"] == "lookup":
                 record = reply_str(e["id"], GREETINGS.get(e["name"], "Greetings"))
             elif e["kind"] == "sleep":
-                time.sleep(e["millis"] / 1000)
-                record = reply_unit(e["id"])
+                heapq.heappush(timers, (now + e["millis"], next(order), handle, e["id"]))
+                continue
             elif e["kind"] == "count":
                 greeted += 1
                 record = reply_u64(e["id"], greeted)
@@ -328,12 +348,19 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
                 record = reply_bytes(e["id"], b"\x00")
             ran(handle, lib.reply(handle, record))
 
-        # Nothing queued: anything woken outside a call? If not, nothing can
-        # happen again — the end, or a stall.
+        # Nothing queued: anything woken outside a call? Then any timer due,
+        # earliest first. If neither, nothing can happen again — the end, or
+        # a stall.
         woken = decode(lib.wakes())
-        if not woken:
+        if woken:
+            queue.extend((0, e) for e in woken)
+            continue
+        while timers and (timers[0][2], timers[0][3]) in closed:
+            heapq.heappop(timers)  # abandoned: the routine stopped waiting
+        if not timers:
             break
-        queue.extend((0, e) for e in woken)
+        now, _, handle, ask = heapq.heappop(timers)
+        ran(handle, lib.reply(handle, reply_unit(ask)))
 
     stuck = [h for h, status in machines.items() if status != COMPLETE]
     assert not stuck, f"stalled: machines {stuck} can never progress"
@@ -351,9 +378,9 @@ def find_library() -> Path:
 
 
 if __name__ == "__main__":
-    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal")
+    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline")
     kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
-    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": []}[kind]
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": [], "deadline": []}[kind]
     lib = Library(find_library())
     began = time.perf_counter()
     drive(lib, lib.new(kind), script)

@@ -1,7 +1,7 @@
 # Cancellation
 
 > [!NOTE]
-> _Status:_ implemented: `select`, closed frames, `Yield`, and the `MALFORMED`/`STALE` codes. The Java demo host cancels on closed frames, but no demo routine races yet; the channel demos' receive-with-timeout will be the first to produce them end to end.
+> _Status:_ implemented: `select`, closed frames, `Yield`, and the `MALFORMED`/`STALE` codes. The demo's `deadline` routine races a receive against a sleep and produces closed frames end to end: Python drops the abandoned timer, Java cancels the thread sleeping it, Node's dispatcher aborts the host's timer through an `AbortSignal`, and tokio drops it — checked in CI by a time limit.
 
 ## `select`
 

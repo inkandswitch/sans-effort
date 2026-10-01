@@ -57,6 +57,7 @@ use core::{
     future::{Future, IntoFuture, poll_fn},
     pin::{Pin, pin},
     task::{Context, Poll, Waker},
+    time::Duration,
 };
 
 /// Poll `future` once with a no-op waker and return its output.
@@ -141,14 +142,15 @@ pub async fn poll_once<F: IntoFuture<IntoFuture: Unpin>>(future: F) -> F::IntoFu
 /// progress. [`drive_with`] under [`Fifo`].
 ///
 /// The handler sees each effect with an [`Answers`] for the machine that
-/// recorded it: reply to an ask, begin a spawned child, or — for a tell —
-/// nothing. Replies and a child's first resume are queued, not run at once,
-/// so the schedule decides when they happen.
+/// recorded it: reply to an ask — now, or after a delay on the run's virtual
+/// clock — begin a spawned child, or, for a tell, nothing. Replies and a
+/// child's first resume are queued, not run at once, so the schedule decides
+/// when they happen.
 ///
 /// # Errors
 ///
 /// [`Stalled`] if some machine can never progress: nothing is queued,
-/// nothing woke, and it has not completed.
+/// nothing woke, no timer is set, and it has not completed.
 ///
 /// ```
 /// use core::ops::ControlFlow;
@@ -185,19 +187,30 @@ pub async fn poll_once<F: IntoFuture<IntoFuture: Unpin>>(future: F) -> F::IntoFu
 pub fn drive<E: 'static, H: FnMut(E, &mut Answers<'_, E>)>(
     root: Driver<E>,
     handle: H,
-) -> Result<(), Stalled> {
+) -> Result<Completed, Stalled> {
     drive_with(root, Fifo, handle)
 }
 
 /// As [`drive`], with `schedule` choosing, at every step, which ready action
 /// runs next — an effect for the handler, a queued reply, a child's first
-/// resume, a woken machine's resume — and whether to resume some machine
-/// spuriously first. A routine whose output depends on the schedule, or that
-/// a spurious resume breaks, fails under one.
+/// resume, a woken machine's resume — whether to resume some machine
+/// spuriously first, and whether to kill one. A routine whose output depends
+/// on the schedule, or that a spurious resume breaks, fails under one.
 ///
 /// Each machine's effects reach the handler in the order it recorded them,
 /// as a batch's effects reach any host; what the schedule varies is when
 /// replies are delivered, when machines resume, and how machines interleave.
+///
+/// _Time is virtual._ A reply sent with [`Answers::reply_after`] waits on a
+/// timer, and timers fire — in the order they fall due, the clock jumping to
+/// each — only when nothing else is ready, as on tokio's paused clock. Work
+/// that can happen now always happens before a timer, under every schedule.
+///
+/// _A killed machine_ is dropped, as a host's `free` or a panic would drop
+/// it: its future and everything it held go, and a channel whose last sender
+/// it held closes. Effects it recorded before it died still reach the
+/// handler, as they would a host that already had them; replies to it and
+/// resumes of it are discarded. It is not counted as stalled.
 ///
 /// # Errors
 ///
@@ -206,104 +219,129 @@ pub fn drive_with<E: 'static, S: Schedule, H: FnMut(E, &mut Answers<'_, E>)>(
     root: Driver<E>,
     mut schedule: S,
     mut handle: H,
-) -> Result<(), Stalled> {
-    let woken: Woken = Arc::new(Mutex::new(VecDeque::new()));
-    let mut machines: Vec<Machine<E>> = Vec::new();
-    let mut ready: Vec<Action<E>> = Vec::new();
-    adopt(&mut machines, &mut ready, &woken, Machine::Migrating(root));
+) -> Result<Completed, Stalled> {
+    let mut world = World {
+        machines: Vec::new(),
+        ready: Vec::new(),
+        timers: Vec::new(),
+        now: Duration::ZERO,
+        woken: Arc::new(Mutex::new(VecDeque::new())),
+    };
+    world.adopt(Machine::Migrating(root));
+    let mut killed = Vec::new();
 
     loop {
-        for at in take_woken(&woken) {
-            if !ready
+        for at in take_woken(&world.woken) {
+            if !world
+                .ready
                 .iter()
                 .any(|a| matches!(a, Action::Resume(m) if *m == at))
             {
-                ready.push(Action::Resume(at));
+                world.ready.push(Action::Resume(at));
             }
         }
 
-        if let Some(at) = schedule.stutter(machines.len())
-            && let Some(machine) = machines.get_mut(at)
+        if let Some(at) = schedule.kill(world.machines.len())
+            && world.kill(at)
         {
-            let step = machine.resume();
-            push_effects(&mut ready, at, step);
+            killed.push(at);
             continue;
         }
 
-        if ready.is_empty() {
-            let stuck: Vec<usize> = machines
+        if let Some(at) = schedule.stutter(world.machines.len())
+            && let Some(machine) = world.machine(at)
+        {
+            let step = machine.resume();
+            world.push_effects(at, step);
+            continue;
+        }
+
+        if world.ready.is_empty() && !world.fire_next_timer() {
+            let stuck: Vec<usize> = world
+                .machines
                 .iter()
                 .enumerate()
-                .filter(|(_, m)| m.status() != Status::Complete)
+                .filter(|(_, m)| m.as_ref().is_some_and(|m| m.status() != Status::Complete))
                 .map(|(at, _)| at)
                 .collect();
             return if stuck.is_empty() {
-                Ok(())
+                Ok(Completed { killed })
             } else {
                 Err(Stalled { machines: stuck })
             };
         }
 
-        let offered = eligible(&ready);
+        let offered = eligible(&world.ready);
         let choice = schedule.next(offered.len()).min(offered.len() - 1);
         let pick = offered.get(choice).copied().unwrap_or_default();
-        match ready.remove(pick) {
+        match world.ready.remove(pick) {
             Action::Effect(at, effect) => {
                 let mut answers = Answers {
                     at,
-                    machines: &mut machines,
-                    ready: &mut ready,
-                    woken: &woken,
+                    world: &mut world,
                 };
                 handle(effect, &mut answers);
             }
             Action::Reply(at, deliver) => {
-                if let Some(machine) = machines.get_mut(at) {
+                if let Some(machine) = world.machine(at) {
                     let step = deliver(machine);
-                    push_effects(&mut ready, at, step);
+                    world.push_effects(at, step);
                 }
             }
             Action::Resume(at) => {
-                if let Some(machine) = machines.get_mut(at) {
+                if let Some(machine) = world.machine(at) {
                     let step = machine.resume();
-                    push_effects(&mut ready, at, step);
+                    world.push_effects(at, step);
                 }
             }
         }
     }
 }
 
-/// What a handler can do with an effect: reply to it, or begin a child the
-/// effect carried. Named for the machine that recorded the effect.
+/// What a handler can do with an effect: reply to it, now or later, or begin
+/// a child the effect carried. Named for the machine that recorded the
+/// effect.
 pub struct Answers<'a, E> {
     at: usize,
-    machines: &'a mut Vec<Machine<E>>,
-    ready: &'a mut Vec<Action<E>>,
-    woken: &'a Woken,
+    world: &'a mut World<E>,
 }
 
 impl<E: 'static> Answers<'_, E> {
     /// Queue `answer` for the ask `reply` names; the schedule decides when it
     /// is delivered.
     pub fn reply<A: Answer + 'static>(&mut self, reply: ReplyHandle<A>, answer: A) {
-        self.ready.push(Action::Reply(
-            self.at,
-            Box::new(move |machine: &mut Machine<E>| machine.reply(reply, answer)),
-        ));
+        self.world
+            .ready
+            .push(Action::Reply(self.at, deliver(reply, answer)));
+    }
+
+    /// Queue `answer` for the ask `reply` names once `delay` has passed on
+    /// the run's virtual clock: a sleep, or a slow host. It is delivered no
+    /// sooner than every action that is ready before then.
+    pub fn reply_after<A: Answer + 'static>(
+        &mut self,
+        delay: Duration,
+        reply: ReplyHandle<A>,
+        answer: A,
+    ) {
+        self.world.timers.push(Timer {
+            due: self.world.now.saturating_add(delay),
+            at: self.at,
+            deliver: deliver(reply, answer),
+        });
     }
 
     /// Begin a child whose future is `Send`: it joins the machines, and its
     /// first resume is queued.
     pub fn spawn<M: FnOnce(Outbox<E>) -> BoxedRoutine>(&mut self, make: M) {
-        let child = Machine::Migrating(Driver::from_boxed(make));
-        adopt(self.machines, self.ready, self.woken, child);
+        self.world
+            .adopt(Machine::Migrating(Driver::from_boxed(make)));
     }
 
     /// Begin a child whose future need not be `Send`, as [`spawn`](Self::spawn)
     /// does; every machine here runs on this thread.
     pub fn spawn_pinned<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(&mut self, make: M) {
-        let child = Machine::Local(Driver::local_boxed(make));
-        adopt(self.machines, self.ready, self.woken, child);
+        self.world.adopt(Machine::Local(Driver::local_boxed(make)));
     }
 
     /// Which machine recorded the effect: the root is `0`, then each child in
@@ -312,14 +350,105 @@ impl<E: 'static> Answers<'_, E> {
     pub const fn machine(&self) -> usize {
         self.at
     }
+
+    /// The run's virtual clock: how long since it began, which is the due
+    /// time of the last timer to fire.
+    #[must_use]
+    pub const fn now(&self) -> Duration {
+        self.world.now
+    }
 }
 
 impl<E> core::fmt::Debug for Answers<'_, E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Answers")
             .field("machine", &self.at)
+            .field("now", &self.world.now)
             .finish_non_exhaustive()
     }
+}
+
+/// A run that did not stall: every machine still running completed.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Completed {
+    killed: Vec<usize>,
+}
+
+impl Completed {
+    /// The machines the schedule killed before they completed, by index, in
+    /// the order it killed them.
+    #[must_use]
+    pub fn killed(&self) -> &[usize] {
+        &self.killed
+    }
+}
+
+/// Everything a run keeps between steps.
+struct World<E> {
+    /// By index; `None` once killed.
+    machines: Vec<Option<Machine<E>>>,
+    ready: Vec<Action<E>>,
+    /// In the order they were set, which breaks ties between equal due times.
+    timers: Vec<Timer<E>>,
+    now: Duration,
+    woken: Woken,
+}
+
+impl<E> World<E> {
+    /// The machine at `at`, unless it was killed.
+    fn machine(&mut self, at: usize) -> Option<&mut Machine<E>> {
+        self.machines.get_mut(at).and_then(Option::as_mut)
+    }
+
+    /// Add a machine: report its wakes by its index, and queue its first
+    /// resume.
+    fn adopt(&mut self, machine: Machine<E>) {
+        let at = self.machines.len();
+        let woken = Arc::clone(&self.woken);
+        machine.on_wake(move || woken.lock().push_back(at));
+        self.machines.push(Some(machine));
+        self.ready.push(Action::Resume(at));
+    }
+
+    /// Drop the machine at `at` and its timers. Whether it was still running.
+    fn kill(&mut self, at: usize) -> bool {
+        let Some(machine) = self.machines.get_mut(at).and_then(Option::take) else {
+            return false;
+        };
+        self.timers.retain(|timer| timer.at != at);
+        machine.status() != Status::Complete
+    }
+
+    /// Fire the timer that falls due first — the earliest set, among equals —
+    /// moving the clock to its due time and queueing its reply. Whether there
+    /// was one.
+    fn fire_next_timer(&mut self) -> bool {
+        let next = self
+            .timers
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, timer)| timer.due)
+            .map(|(i, _)| i);
+        let Some(next) = next else {
+            return false;
+        };
+        let timer = self.timers.remove(next);
+        self.now = self.now.max(timer.due);
+        self.ready.push(Action::Reply(timer.at, timer.deliver));
+        true
+    }
+
+    fn push_effects(&mut self, at: usize, step: Yield<E>) {
+        self.ready
+            .extend(step.into_iter().map(|effect| Action::Effect(at, effect)));
+    }
+}
+
+/// A reply waiting on the virtual clock.
+struct Timer<E> {
+    due: Duration,
+    at: usize,
+    deliver: Deliver<E>,
 }
 
 /// A machine the runner drives: migrating or local. All run on one thread.
@@ -371,25 +500,15 @@ enum Action<E> {
 /// A queued reply, typed answer and all, waiting to be delivered.
 type Deliver<E> = Box<dyn FnOnce(&mut Machine<E>) -> Yield<E>>;
 
+fn deliver<E, A: Answer + 'static>(reply: ReplyHandle<A>, answer: A) -> Deliver<E> {
+    Box::new(move |machine: &mut Machine<E>| machine.reply(reply, answer))
+}
+
 /// Which machines woke, in order.
 type Woken = Arc<Mutex<VecDeque<usize>>>;
 
 fn take_woken(woken: &Woken) -> Vec<usize> {
     woken.lock().drain(..).collect()
-}
-
-/// Add a machine: report its wakes by its index, and queue its first resume.
-fn adopt<E>(
-    machines: &mut Vec<Machine<E>>,
-    ready: &mut Vec<Action<E>>,
-    woken: &Woken,
-    machine: Machine<E>,
-) {
-    let at = machines.len();
-    let woken = Arc::clone(woken);
-    machine.on_wake(move || woken.lock().push_back(at));
-    machines.push(machine);
-    ready.push(Action::Resume(at));
 }
 
 /// The ready actions a schedule may pick, by index: everything but an effect
@@ -408,10 +527,6 @@ fn eligible<E>(ready: &[Action<E>]) -> Vec<usize> {
             Action::Reply(..) | Action::Resume(_) => Some(i),
         })
         .collect()
-}
-
-fn push_effects<E>(ready: &mut Vec<Action<E>>, at: usize, step: Yield<E>) {
-    ready.extend(step.into_iter().map(|effect| Action::Effect(at, effect)));
 }
 
 /// Some machines can never progress: nothing was queued, none had woken, and
@@ -445,13 +560,20 @@ mod tests {
         #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
 
         use super::super::{schedule::Choices, *};
-        use crate::{join::join, step::Step};
+        use crate::{
+            join::join,
+            select::{Either, select},
+            step::Step,
+        };
         use alloc::vec::Vec;
         use core::ops::ControlFlow;
 
         enum Effect {
             Ask(ReplyHandle<u64>),
             Say(u64),
+            /// Sleep this many milliseconds.
+            Sleep(u64, ReplyHandle<()>),
+            Spawn(Box<dyn FnOnce(Outbox<Effect>) -> BoxedRoutine + Send>),
         }
 
         /// Asks twice at once, then says the answers in the order it asked.
@@ -484,18 +606,42 @@ mod tests {
             }
         }
 
-        /// Answers each ask with its request id; records what is said.
-        fn said<S: Schedule>(root: Driver<Effect>, schedule: S) -> Vec<u64> {
+        /// Answers each ask with its request id — at once, or after
+        /// `ask_delay` — and each sleep after its length; begins each child.
+        /// What is said, with the clock when it was said, and how the run
+        /// ended.
+        fn run<S: Schedule>(
+            root: Driver<Effect>,
+            schedule: S,
+            ask_delay: Option<Duration>,
+        ) -> (Vec<(u64, Duration)>, Result<Completed, Stalled>) {
             let mut said = Vec::new();
-            drive_with(root, schedule, |effect, host| match effect {
+            let ran = drive_with(root, schedule, |effect, host| match effect {
                 Effect::Ask(reply) => {
                     let id = reply.id();
-                    host.reply(reply, id);
+                    match ask_delay {
+                        Some(delay) => host.reply_after(delay, reply, id),
+                        None => host.reply(reply, id),
+                    }
                 }
-                Effect::Say(n) => said.push(n),
-            })
-            .expect("completes");
-            said
+                Effect::Say(n) => said.push((n, host.now())),
+                Effect::Sleep(millis, reply) => {
+                    host.reply_after(Duration::from_millis(millis), reply, ());
+                }
+                Effect::Spawn(make) => host.spawn(make),
+            });
+            (said, ran)
+        }
+
+        /// What is said, in a run that must complete.
+        fn said<S: Schedule>(root: Driver<Effect>, schedule: S) -> Vec<u64> {
+            let (said, ran) = run(root, schedule, None);
+            ran.expect("completes");
+            said.into_iter().map(|(n, _)| n).collect()
+        }
+
+        const fn ms(millis: u64) -> Duration {
+            Duration::from_millis(millis)
         }
 
         #[test]
@@ -520,6 +666,142 @@ mod tests {
                 said(root, Choices::new(bytes)) == [2, 1]
             });
             assert!(reordered, "some choice delivers the second reply first");
+        }
+
+        /// Sleeps for both lengths at once, saying each as it wakes.
+        struct Sleepers(Outbox<Effect>, [u64; 2]);
+
+        impl Step for Sleepers {
+            async fn step(&mut self) -> ControlFlow<()> {
+                let nap = |millis: u64| {
+                    let outbox = self.0.clone();
+                    async move {
+                        outbox.ask(|reply| Effect::Sleep(millis, reply)).await;
+                        outbox.tell(Effect::Say(millis));
+                    }
+                };
+                let [a, b] = self.1;
+                join(nap(a), nap(b)).await;
+                ControlFlow::Break(())
+            }
+        }
+
+        /// Timers fire in due order, whatever order they were set in and
+        /// whatever the schedule, and the clock reads each due time.
+        #[test]
+        fn timers_fire_in_due_order_under_every_schedule() {
+            bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
+                let root = Driver::new(|outbox| Sleepers(outbox, [30, 10]).run());
+                let (said, ran) = run(root, Choices::new(bytes.iter().copied()), None);
+                assert_eq!(said, [(10, ms(10)), (30, ms(30))]);
+                assert_eq!(ran, Ok(Completed::default()));
+            });
+        }
+
+        /// Takes an answer or a 10 ms timeout, whichever comes first; says
+        /// the answer, or 0 for the timeout.
+        struct Deadline(Outbox<Effect>);
+
+        impl Step for Deadline {
+            async fn step(&mut self) -> ControlFlow<()> {
+                let answer = self.0.ask(Effect::Ask);
+                let timeout = self.0.ask(|reply| Effect::Sleep(10, reply));
+                let said = match select(answer, timeout).await {
+                    Either::Left(n) => n,
+                    Either::Right(()) => 0,
+                };
+                self.0.tell(Effect::Say(said));
+                ControlFlow::Break(())
+            }
+        }
+
+        /// An answer ready now beats any timer; a slow one beats the timeout
+        /// if it is due first, or at the same time — set first, it fires
+        /// first — and loses after. The same under every schedule.
+        #[test]
+        fn ready_work_beats_a_timer_and_a_slow_answer_races_it_in_due_order() {
+            bolero::check!()
+                .with_type::<(Option<u8>, Vec<u8>)>()
+                .for_each(|(delay, bytes)| {
+                    let root = Driver::new(|outbox| Deadline(outbox).run());
+                    let delay = delay.map(|d| ms(d.into()));
+                    let (said, ran) = run(root, Choices::new(bytes.iter().copied()), delay);
+                    let expected = match delay {
+                        None => (1, Duration::ZERO),
+                        Some(d) if d <= ms(10) => (1, d),
+                        Some(_) => (0, ms(10)),
+                    };
+                    assert_eq!(said, [expected]);
+                    assert_eq!(ran, Ok(Completed::default()));
+                });
+        }
+
+        /// Spawns a child that asks, then sends its answer to the parent
+        /// over a channel; says what arrives, or 0 if the channel closes.
+        struct Parent(Outbox<Effect>);
+
+        impl Step for Parent {
+            async fn step(&mut self) -> ControlFlow<()> {
+                let (tx, rx) = async_channel::bounded(1);
+                self.0
+                    .tell(Effect::Spawn(Box::new(move |outbox: Outbox<Effect>| {
+                        Box::pin(async move {
+                            let n = outbox.ask(Effect::Ask).await;
+                            // The parent may be gone: nothing to tell.
+                            tx.send(n).await.unwrap_or_default();
+                        }) as BoxedRoutine
+                    })));
+                let n = rx.recv().await.unwrap_or(0);
+                self.0.tell(Effect::Say(n));
+                ControlFlow::Break(())
+            }
+        }
+
+        /// Kills machine 1 as soon as it exists; otherwise `Fifo`.
+        struct KillsTheChild(bool);
+
+        impl Schedule for KillsTheChild {
+            fn next(&mut self, _: usize) -> usize {
+                0
+            }
+
+            fn stutter(&mut self, _: usize) -> Option<usize> {
+                None
+            }
+
+            fn kill(&mut self, machines: usize) -> Option<usize> {
+                (!self.0 && machines > 1).then(|| {
+                    self.0 = true;
+                    1
+                })
+            }
+        }
+
+        /// Killing the child drops the sender it held: the parent's receive
+        /// sees the channel closed, and the run completes, naming the kill.
+        #[test]
+        fn a_killed_machine_closes_its_channels() {
+            let parent = || Driver::new(|outbox| Parent(outbox).run());
+            assert_eq!(said(parent(), Fifo), [1]);
+
+            let (said, ran) = run(parent(), KillsTheChild(false), None);
+            assert_eq!(said, [(0, Duration::ZERO)]);
+            assert_eq!(ran.expect("the parent completes").killed(), [1]);
+        }
+
+        /// Whatever is killed, and whenever, no survivor stalls; with no
+        /// kill, the run is the usual one.
+        #[test]
+        fn survivors_complete_whatever_is_killed() {
+            bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
+                let root = Driver::new(|outbox| Parent(outbox).run());
+                let schedule = Choices::new(bytes.iter().copied()).crashing();
+                let (said, ran) = run(root, schedule, None);
+                let completed = ran.expect("no survivor stalls");
+                if completed.killed().is_empty() {
+                    assert_eq!(said, [(1, Duration::ZERO)]);
+                }
+            });
         }
 
         /// Waits on a channel whose sender it keeps and never uses.

@@ -31,7 +31,7 @@ A routine is ordinary, direct-style Rust (`async fn`, `.await`, loops, `?`) that
 | `join::join` | Two waits at once — the reason request ids exist |
 | `select::select` | The first of two waits; the other is abandoned, and its id is reported closed |
 | `boundary` | What an effect type implements to cross to a host that cannot hold a Rust value: `HostEffect` (handles → ids), `Encode` (the codec), `Pending` |
-| `testing` (feature `testing`) | `run_now`: run a routine against a mock whose every future is ready, in one poll, with no driver; `drive`/`drive_with`: run it and everything it spawns through drivers, in an order a schedule picks |
+| `testing` (feature `testing`) | `run_now`: run a routine against a mock whose every future is ready, in one poll, with no driver; `drive`/`drive_with`: run it and everything it spawns through drivers, in an order a schedule picks, on a virtual clock, optionally killing machines |
 
 ## A Routine, and a Rust Host
 

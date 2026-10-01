@@ -13,7 +13,7 @@ The greeter in Node or a browser, with no driver. JS is a runtime host like toki
 
 ```sh
 nix develop --command demo:wasm   # cargo build --target wasm32 + wasm-bindgen --target nodejs → demo/native/js/pkg
-node demo/native/js/main.mjs     # or --fanout, --ping-pong, --front-desk, --ring
+node demo/native/js/main.mjs     # or --fanout, --ping-pong, --front-desk, --ring, --journal, --deadline
 ```
 
 For a page, run `wasm-bindgen --target web` instead and `await init()` before constructing.
@@ -29,7 +29,10 @@ let greeted = 0;
 await new Greeter({
   readLine: () => lines.next().value ?? null,         // string | Promise<string>; null: end of input
   lookup:   (name) => GREETINGS[name] ?? "Greetings", // string | Promise<string>
-  sleep:    (ms) => new Promise((r) => setTimeout(r, ms)),
+  sleep:    (ms, signal) => new Promise((r) => {             // aborted: the routine stopped waiting
+    const timer = setTimeout(r, ms);
+    signal.addEventListener("abort", () => { clearTimeout(timer); r(); }, { once: true });
+  }),
   count:    () => ++greeted,                          // number | Promise<number>
   writeLine: (line) => console.log(line),
 }).run();

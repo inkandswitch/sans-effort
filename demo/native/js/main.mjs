@@ -8,13 +8,13 @@
 // routine step by step over the C ABI.
 //
 //   nix develop --command demo:wasm
-//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring | --journal]
+//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring | --journal | --deadline]
 
 import { createRequire } from "node:module";
 
 // `wasm-bindgen --target nodejs` emits CommonJS.
 const require = createRequire(import.meta.url);
-const { Greeter, Fanout, PingPong, FrontDesk, Ring, Journal } = require("./pkg/greeter_wasm.js");
+const { Deadline, Greeter, Fanout, PingPong, FrontDesk, Ring, Journal } = require("./pkg/greeter_wasm.js");
 
 const GREETINGS = { alice: "Hello", bob: "Hi", carol: "Hey" };
 
@@ -35,7 +35,13 @@ function host(script) {
   return {
     readLine: () => lines.next().value ?? null, // null: end of input
     lookup: (name) => GREETINGS[name] ?? "Greetings",
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    // Aborted when the routine stops waiting (the losing side of a race):
+    // clear the timer, or it keeps the event loop alive until it fires.
+    sleep: (ms, signal) =>
+      new Promise((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+      }),
     count: () => ++greeted,
     writeLine: (line) => console.log(line),
     now: () => EPOCH_MILLIS + 1_000 * readings++,
@@ -57,7 +63,9 @@ const routine = mode("--fanout")
         ? new FrontDesk(host(["alice", "bob", "carol"]))
         : mode("--journal")
           ? new Journal(host([]))
-          : new Greeter(host(["alice", "bob"]));
+          : mode("--deadline")
+            ? new Deadline(host([]))
+            : new Greeter(host(["alice", "bob"]));
 const began = performance.now();
 await routine.run();
 if (mode("--ring")) {

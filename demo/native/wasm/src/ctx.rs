@@ -16,10 +16,22 @@
 //! two waits in flight stay in flight together. It is the usual way to reach
 //! a resource tied to one thread from code that must be `Send`, and it costs
 //! one channel hop per call.
+//!
+//! # Abandoned Sleeps
+//!
+//! A routine that races a sleep and loses drops it. Dropping a future cannot
+//! reach JS — the future holds no JS value — so a dropped sleep sends the
+//! dispatcher one more request, `Abandon`, and the dispatcher aborts the
+//! `AbortSignal` it gave the host's `sleep`, which clears its timer. Without
+//! it a lost 30-second race would keep Node's event loop alive for 30
+//! seconds. It is the native counterpart of a closed frame.
 
 use crate::host::JsHost;
 use async_channel::{Receiver, Sender};
-use core::time::Duration;
+use core::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 use js_sys::{Promise, Uint8Array};
 use routines::effects::{count::Count, lookup::Lookup};
 use sans_effort_effects::{
@@ -30,7 +42,8 @@ use sans_effort_effects::{
     spawn::{Spawn, SpawnPinned},
     time::{Now, Sleep, UnixTime},
 };
-use wasm_bindgen::{JsCast, JsValue};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 /// A context whose waits are JS calls, made by a dispatcher on the JS thread.
@@ -38,6 +51,8 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 #[derive(Clone, Debug)]
 pub struct JsCtx {
     requests: Sender<Request>,
+    /// Numbers each sleep, so an abandoned one can be named.
+    tickets: Arc<AtomicU64>,
 }
 
 impl JsCtx {
@@ -50,7 +65,8 @@ impl JsCtx {
         let (requests, incoming) = async_channel::unbounded();
         let (done, drained) = async_channel::bounded(1);
         spawn_local(dispatch(host, incoming, done));
-        (Self { requests }, Drained(drained))
+        let tickets = Arc::new(AtomicU64::new(0));
+        (Self { requests, tickets }, Drained(drained))
     }
 
     /// Send the dispatcher a request that carries its reply channel, and
@@ -63,8 +79,17 @@ impl JsCtx {
 }
 
 impl Sleep for JsCtx {
+    /// Dropped before it finishes — the losing side of a race — it has the
+    /// dispatcher abort the host's timer.
     async fn sleep(&self, duration: Duration) {
-        self.ask(|reply| Request::Sleep(duration, reply)).await;
+        let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
+        let abandon = Abandon {
+            requests: Some(self.requests.clone()),
+            ticket,
+        };
+        self.ask(|reply| Request::Sleep(duration, ticket, reply))
+            .await;
+        abandon.disarm();
     }
 }
 
@@ -166,6 +191,28 @@ impl SpawnPinned for JsCtx {
     }
 }
 
+/// Sends `Abandon` for its ticket when dropped, unless disarmed first: a
+/// sleep that finished needs no aborting.
+struct Abandon {
+    requests: Option<Sender<Request>>,
+    ticket: u64,
+}
+
+impl Abandon {
+    fn disarm(mut self) {
+        self.requests = None;
+    }
+}
+
+impl Drop for Abandon {
+    fn drop(&mut self) {
+        if let Some(requests) = self.requests.take() {
+            // The dispatcher may be gone; then so is the timer.
+            drop(requests.try_send(Request::Abandon(self.ticket)));
+        }
+    }
+}
+
 /// Resolves once the dispatcher has served every request and stopped.
 #[derive(Debug)]
 pub struct Drained(Receiver<()>);
@@ -184,7 +231,9 @@ enum Request {
     Count(Sender<u64>),
     Lookup(String, Sender<String>),
     ReadLine(Sender<Result<String, ReadLineError>>),
-    Sleep(Duration, Sender<()>),
+    Sleep(Duration, u64, Sender<()>),
+    /// The sleep with this ticket was dropped: abort its timer.
+    Abandon(u64),
     WriteLine(String),
     Now(Sender<u64>),
     Random(u32, Sender<Vec<u8>>),
@@ -196,15 +245,31 @@ enum Request {
 /// Serve requests until every context is gone. Host methods are called here,
 /// in order; each promise is awaited in a task of its own.
 async fn dispatch(host: JsHost, requests: Receiver<Request>, _done: Sender<()>) {
+    // Each sleep in flight, by ticket: the controller whose signal its host
+    // timer listens to.
+    let timers: Rc<RefCell<HashMap<u64, AbortController>>> = Rc::default();
     while let Ok(request) = requests.recv().await {
         match request {
             Request::WriteLine(line) => host.write_line(&line),
-            Request::Sleep(duration, reply) => {
+            Request::Sleep(duration, ticket, reply) => {
                 // `setTimeout` takes milliseconds as a `number`;
                 // `as_secs_f64() * 1000` is exact for any duration a JS timer
                 // can represent.
-                let value = host.sleep(duration.as_secs_f64() * 1000.0);
-                answer(value, reply, |_| ());
+                let controller = AbortController::new();
+                let value = host.sleep(duration.as_secs_f64() * 1000.0, &controller.signal());
+                timers.borrow_mut().insert(ticket, controller);
+                let timers = Rc::clone(&timers);
+                spawn_local(async move {
+                    settle(value).await;
+                    timers.borrow_mut().remove(&ticket);
+                    // The context may be gone; then nobody is waiting.
+                    let _unheard = reply.send(()).await;
+                });
+            }
+            Request::Abandon(ticket) => {
+                if let Some(controller) = timers.borrow_mut().remove(&ticket) {
+                    controller.abort();
+                }
             }
             Request::Count(reply) => {
                 answer(host.count(), reply, |value| {
@@ -313,4 +378,21 @@ async fn settle(value: JsValue) -> JsValue {
             .unwrap_or_else(|rejection| rejection),
         Err(value) => value,
     }
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// The platform's `AbortController`, in Node and browsers alike: how the
+    /// dispatcher tells a host's `sleep` to stop its timer.
+    type AbortController;
+
+    #[wasm_bindgen(constructor)]
+    fn new() -> AbortController;
+
+    /// The `AbortSignal` handed to the host.
+    #[wasm_bindgen(method, getter)]
+    fn signal(this: &AbortController) -> JsValue;
+
+    #[wasm_bindgen(method)]
+    fn abort(this: &AbortController);
 }

@@ -13,8 +13,8 @@
 
 use greeter_boundary::{Full, Quiet};
 use routines::{
-    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal, ping_pong::PingPong,
-    ring::Ring, ticker::Ticker,
+    deadline::Deadline, fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal,
+    ping_pong::PingPong, ring::Ring, ticker::Ticker,
 };
 use sans_effort_core::{driver::status::Status, step::Step};
 use sans_effort_effects::ctx::Ctx;
@@ -65,6 +65,14 @@ pub extern "C" fn greeter_new_ping_pong() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_ring() -> u64 {
     table::new(|outbox| Ring::new(Ctx::<Full>::new(outbox), 16, 250).run())
+}
+
+/// Create a deadline: two workers, each raced against a sleep. The quick
+/// one wins, so the sleep's request closes — a closed frame — and the host
+/// should stop its timer; the slow one loses, then answers late.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_deadline() -> u64 {
+    table::new(|outbox| Deadline::new(Ctx::<Full>::new(outbox)).run())
 }
 
 /// Create a front desk: it reads names and spawns a pinned clerk per name

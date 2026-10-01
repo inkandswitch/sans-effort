@@ -23,7 +23,10 @@
 //! await new Greeter({
 //!   readLine: () => lines.next().value ?? "quit",
 //!   lookup:   (name) => ({ alice: "Hello", bob: "Hi" })[name] ?? "Greetings",
-//!   sleep:    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+//!   sleep:    (ms, signal) => new Promise((resolve) => {
+//!     const timer = setTimeout(resolve, ms);
+//!     signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+//!   }),
 //!   count:    () => ++greeted,
 //!   writeLine: (line) => console.log(line),
 //! }).run();
@@ -46,7 +49,10 @@
 //!     }, { once: true });
 //!   }),
 //!   lookup:   async (name) => (await fetch(`/greeting/`)).text(),
-//!   sleep:    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+//!   sleep:    (ms, signal) => new Promise((resolve) => {
+//!     const timer = setTimeout(resolve, ms);
+//!     signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+//!   }),
 //!   count:    () => Number(localStorage.greeted = (Number(localStorage.greeted) || 0) + 1),
 //!   writeLine: (line) => output.append(line, document.createElement("br")),
 //! };
@@ -58,6 +64,11 @@
 //! once, so `lookup` and `count` are in flight together.
 //! `PingPong` and `FrontDesk` have it too, and spawn children of their own;
 //! each `run` resolves once every child has finished.
+//!
+//! `sleep` gets an `AbortSignal` as well as its duration. A routine that
+//! races a sleep and loses — `Deadline` does, on purpose — no longer waits
+//! for it, and the signal aborts; a host that ignores it keeps the timer, and
+//! with it the event loop, alive until it fires.
 //!
 //! Compare `../../driven/cdylib` and `../../driven/python`: there Python cannot poll a Rust
 //! future, so the routine runs behind a `Driver` and Python replies by id. A
@@ -81,6 +92,7 @@
 //! the promise never settles, and the host sees a `RuntimeError`.
 
 pub mod ctx;
+pub mod deadline;
 pub mod fanout;
 pub mod front_desk;
 pub mod greeter;

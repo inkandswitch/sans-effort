@@ -87,13 +87,15 @@ in {
   '';
 
   "demo" = cmd "Run the demo routines natively on tokio and on Node, and drive them from Python and Java over the C ABI; transcripts must agree" ''
-    set -e
+    # pipefail: each host's output goes through `tee`, and a host that fails —
+    # or overruns its time limit — must fail the demo, not just stop early.
+    set -eo pipefail
 
     echo "===> Building the cdylib and the wasm module..."
     ${cargo} build -q -p greeter_cdylib
     demo:wasm
 
-    for variant in "" "--fanout" "--ping-pong" "--front-desk" "--ring" "--journal"; do
+    for variant in "" "--fanout" "--ping-pong" "--front-desk" "--ring" "--journal" "--deadline"; do
       case "$variant" in
         "") script='alice\nbob\nquit\n' ;;
         --fanout) script='bob\ncarol\n' ;;
@@ -101,7 +103,13 @@ in {
         --front-desk) script='alice\nbob\ncarol\n' ;;
         --ring) script="" ;;
         --journal) script="" ;;
+        --deadline) script="" ;;
       esac
+
+      # A deadline's quick worker beats a 30 s sleep; a host that fails to
+      # cancel the abandoned timer waits it out, which the limit catches.
+      limit=""
+      if [ "$variant" = "--deadline" ]; then limit="timeout 20"; fi
 
       echo ""
       echo "===> tokio, natively (no driver) $variant"
@@ -109,15 +117,15 @@ in {
 
       echo ""
       echo "===> Python host $variant"
-      ${python} demo/driven/python/main.py $variant | tee /tmp/sans-effort-python.txt
+      $limit ${python} demo/driven/python/main.py $variant | tee /tmp/sans-effort-python.txt
 
       echo ""
       echo "===> Node, natively (no driver) $variant"
-      ${node} demo/native/js/main.mjs $variant | tee /tmp/sans-effort-js.txt
+      $limit ${node} demo/native/js/main.mjs $variant | tee /tmp/sans-effort-js.txt
 
       echo ""
       echo "===> Java host (Panama, C ABI) $variant"
-      ${java} --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java $variant | tee /tmp/sans-effort-java.txt
+      $limit ${java} --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java $variant | tee /tmp/sans-effort-java.txt
 
       echo ""
       diff /tmp/sans-effort-rust.txt /tmp/sans-effort-python.txt

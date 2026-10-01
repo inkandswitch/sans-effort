@@ -111,3 +111,18 @@ jobs:
             diff rust-spawn.txt java-spawn.txt
             echo "Transcripts agree $mode"
           done
+
+      # Races: each quick worker beats a 30 s sleep, whose request then closes.
+      # A host that fails to cancel the abandoned timer waits it out, so the
+      # time limit is the check that every host stops it.
+      - name: Deadline mode agrees, and cancels its abandoned timer
+        run: |
+          cargo build -q -p greeter_tokio
+          timeout 10 cargo run -q -p greeter_tokio -- --deadline > rust-deadline.txt
+          timeout 10 python3 demo/driven/python/main.py --deadline > python-deadline.txt
+          timeout 10 node demo/native/js/main.mjs --deadline > js-deadline.txt
+          timeout 20 java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --deadline > java-deadline.txt
+          diff rust-deadline.txt python-deadline.txt
+          diff rust-deadline.txt js-deadline.txt
+          diff rust-deadline.txt java-deadline.txt
+          cat rust-deadline.txt

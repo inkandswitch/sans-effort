@@ -44,6 +44,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub mod deadline;
 pub mod effects;
 pub mod fanout;
 pub mod front_desk;

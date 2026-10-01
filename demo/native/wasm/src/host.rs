@@ -27,9 +27,11 @@ extern "C" {
     #[wasm_bindgen(method)]
     pub fn lookup(this: &JsHost, name: &str) -> JsValue;
 
-    /// Wait `millis`. Anything, or a `Promise` to await.
+    /// Wait `millis`: anything, or a `Promise` to await. `signal` is an
+    /// `AbortSignal`: when it aborts, the routine has stopped waiting, so
+    /// clear the timer and settle — or the timer keeps the event loop alive.
     #[wasm_bindgen(method)]
-    pub fn sleep(this: &JsHost, millis: f64) -> JsValue;
+    pub fn sleep(this: &JsHost, millis: f64, signal: &JsValue) -> JsValue;
 
     /// One more greeting; how many so far. `number`, or a `Promise` of one.
     #[wasm_bindgen(method)]

@@ -711,28 +711,35 @@ mod tests {
     #[cfg(feature = "table")]
     mod scheduled {
         use super::*;
-        use routines::{fanout::Fanout, front_desk::FrontDesk, ping_pong::PingPong, ring::Ring};
+        use routines::{
+            deadline::Deadline, fanout::Fanout, front_desk::FrontDesk, ping_pong::PingPong,
+            ring::Ring,
+        };
         use sans_effort_core::testing::{
-            self, Stalled,
+            self, Completed, Stalled,
             schedule::{Choices, Fifo, Schedule},
         };
 
-        /// What the routine and its children wrote, in order, if every
-        /// machine completed.
+        /// What the routine and its children wrote, in order, and how the
+        /// run ended — unless some machine stalled. Sleeps take their length
+        /// on the runner's virtual clock.
         fn run<S: Schedule>(
             root: Driver<Full>,
             script: &[&str],
             schedule: S,
-        ) -> Result<Vec<String>, Stalled> {
+        ) -> Result<(Vec<String>, Completed), Stalled> {
             let mut lines = script.iter().copied();
             let mut written = Vec::new();
-            testing::drive_with(root, schedule, |effect, host| match effect {
+            let completed = testing::drive_with(root, schedule, |effect, host| match effect {
                 Full::WriteLine(WriteLineEffect(text)) => written.push(text),
                 Full::Spawn(SpawnEffect(child)) => host.spawn(|outbox| child.start(outbox)),
                 Full::SpawnPinned(SpawnPinnedEffect(child)) => {
                     host.spawn_pinned(|outbox| child.start(outbox));
                 }
-                Full::Sleep(Asked { reply, .. }) => host.reply(reply, ()),
+                Full::Sleep(Asked {
+                    request: SleepEffect(duration),
+                    reply,
+                }) => host.reply_after(duration, reply, ()),
                 Full::ReadLine(Asked { reply, .. }) => {
                     let line = lines.next().map(String::from);
                     host.reply(reply, line.ok_or(ReadLineError::Closed));
@@ -748,7 +755,19 @@ mod tests {
                 | Full::ReadFile(_)
                 | Full::WriteFile(_) => panic!("no routine run here keeps a journal"),
             })?;
-            Ok(written)
+            Ok((written, completed))
+        }
+
+        /// What was written, if every machine completed and none was killed.
+        fn written<S: Schedule>(
+            root: Driver<Full>,
+            script: &[&str],
+            schedule: S,
+        ) -> Result<Vec<String>, Stalled> {
+            run(root, script, schedule).map(|(written, completed)| {
+                assert_eq!(completed.killed(), [], "this schedule kills nothing");
+                written
+            })
         }
 
         fn greeting(name: &str) -> &'static str {
@@ -787,6 +806,10 @@ mod tests {
             Driver::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
         }
 
+        fn deadline() -> Driver<Full> {
+            Driver::new(|outbox| Deadline::new(Ctx::<Full>::new(outbox)).run())
+        }
+
         fn ring() -> Driver<Full> {
             Driver::new(|outbox| Ring::new(Ctx::<Full>::new(outbox), 4, 3).run())
         }
@@ -795,11 +818,16 @@ mod tests {
         const NAMES: [&str; 3] = ["alice", "bob", "zed"];
         const FRONT_DESK: [&str; 4] = ["Hello, alice!", "Hi, bob!", "Greetings, zed!", "Closed."];
         const RING: [&str; 1] = ["ring of 4, 3 laps: 12 hops"];
+        const DEADLINE: [&str; 3] = [
+            "quick worker: answered 1 in time",
+            "slow worker: no answer within 50 ms",
+            "slow worker: answered 2 late",
+        ];
 
         #[test]
         fn ping_pong_across_two_machines() {
             assert_eq!(
-                run(ping_pong(), &[], Fifo),
+                written(ping_pong(), &[], Fifo),
                 Ok(PING_PONG.map(String::from).to_vec())
             );
         }
@@ -807,14 +835,28 @@ mod tests {
         #[test]
         fn front_desk_greets_in_arrival_order() {
             assert_eq!(
-                run(front_desk(), &NAMES, Fifo),
+                written(front_desk(), &NAMES, Fifo),
                 Ok(FRONT_DESK.map(String::from).to_vec())
             );
         }
 
         #[test]
         fn a_ring_counts_every_hop() {
-            assert_eq!(run(ring(), &[], Fifo), Ok(RING.map(String::from).to_vec()));
+            assert_eq!(
+                written(ring(), &[], Fifo),
+                Ok(RING.map(String::from).to_vec())
+            );
+        }
+
+        /// Sleeps take virtual time, and a timer fires only when nothing else
+        /// can happen: the quick worker always beats its deadline, the slow
+        /// one never can.
+        #[test]
+        fn a_deadline_is_met_by_the_quick_and_missed_by_the_slow() {
+            assert_eq!(
+                written(deadline(), &[], Fifo),
+                Ok(DEADLINE.map(String::from).to_vec())
+            );
         }
 
         /// Fan-out puts two asks in one batch, twice. Whatever order the
@@ -827,7 +869,7 @@ mod tests {
                 .for_each(|(names, bytes)| {
                     let script: Vec<&str> = names.iter().map(String::as_str).collect();
                     assert_eq!(
-                        run(fanout(), &script, Choices::new(bytes.iter().copied())),
+                        written(fanout(), &script, Choices::new(bytes.iter().copied())),
                         Ok(fanned_out(&script))
                     );
                 });
@@ -841,26 +883,48 @@ mod tests {
             bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
                 let choices = || Choices::new(bytes.iter().copied());
                 assert_eq!(
-                    run(ping_pong(), &[], choices()),
+                    written(ping_pong(), &[], choices()),
                     Ok(PING_PONG.map(String::from).to_vec())
                 );
                 assert_eq!(
-                    run(front_desk(), &NAMES, choices()),
+                    written(front_desk(), &NAMES, choices()),
                     Ok(FRONT_DESK.map(String::from).to_vec())
                 );
                 assert_eq!(
-                    run(ring(), &[], choices()),
+                    written(ring(), &[], choices()),
                     Ok(RING.map(String::from).to_vec())
                 );
+                assert_eq!(
+                    written(deadline(), &[], choices()),
+                    Ok(DEADLINE.map(String::from).to_vec())
+                );
+            });
+        }
+
+        /// Crash faults: whichever machines the schedule kills, and whenever,
+        /// every survivor still completes — a peer's death closes the
+        /// channels it held, and these routines take a closed channel as the
+        /// end. With no kill, the run is the usual one.
+        #[test]
+        fn survivors_complete_whatever_is_killed() {
+            bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
+                let crashing = || Choices::new(bytes.iter().copied()).crashing();
+                let runs = [
+                    (run(ping_pong(), &[], crashing()), PING_PONG.as_slice()),
+                    (run(front_desk(), &NAMES, crashing()), FRONT_DESK.as_slice()),
+                    (run(ring(), &[], crashing()), RING.as_slice()),
+                    (run(deadline(), &[], crashing()), DEADLINE.as_slice()),
+                ];
+                for (ran, expected) in runs {
+                    let (written, completed) = ran.expect("no survivor stalls");
+                    if completed.killed().is_empty() {
+                        assert_eq!(written, expected);
+                    }
+                }
             });
         }
     }
 
-    /// Record → replay through the host crate's table, with a sequential
-    /// host like the Python one. The routines spawn, so their outputs name
-    /// machines — in `woke` frames and in tags 6 and 7 — and the replay only
-    /// agrees byte for byte if the table issues the recorded handles again.
-    #[cfg(feature = "table")]
     mod recorded {
         use super::*;
         use routines::{front_desk::FrontDesk, ping_pong::PingPong};

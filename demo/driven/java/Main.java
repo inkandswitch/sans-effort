@@ -36,7 +36,7 @@
 /// routine runs natively.
 ///
 ///     cargo build -p greeter_cdylib
-///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal] [--trace]
+///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal | --deadline] [--trace]
 ///
 /// `--trace` logs every call to stderr — thread, call, handle, status — to
 /// show which worker polled what.
@@ -106,7 +106,7 @@ public class Main {
     static final class Library {
         /** Shared: the symbols are called from every driver thread. */
         final Arena arena = Arena.ofShared();
-        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, reply, resume, wakes, free, bufFree;
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, newDeadline, reply, resume, wakes, free, bufFree;
 
         Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
@@ -123,6 +123,7 @@ public class Main {
             newFrontDesk = linker.downcallHandle(lib.find("greeter_new_front_desk").get(), FunctionDescriptor.of(u64));
             newRing      = linker.downcallHandle(lib.find("greeter_new_ring").get(), FunctionDescriptor.of(u64));
             newJournal   = linker.downcallHandle(lib.find("greeter_new_journal").get(), FunctionDescriptor.of(u64));
+            newDeadline  = linker.downcallHandle(lib.find("greeter_new_deadline").get(), FunctionDescriptor.of(u64));
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             resume     = linker.downcallHandle(lib.find("greeter_resume").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             wakes      = linker.downcallHandle(lib.find("greeter_wakes").get(), FunctionDescriptor.of(i32, ptr, ptr));
@@ -141,6 +142,7 @@ public class Main {
                 case "front-desk" -> (long) newFrontDesk.invokeExact();
                 case "ring" -> (long) newRing.invokeExact();
                 case "journal" -> (long) newJournal.invokeExact();
+                case "deadline" -> (long) newDeadline.invokeExact();
                 default -> (long) newGreeter.invokeExact();
             };
         }
@@ -571,11 +573,11 @@ public class Main {
     public static void main(String[] args) throws Throwable {
         List<String> argv = List.of(args);
         TRACE = argv.contains("--trace");
-        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal").stream()
+        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline").stream()
             .filter(k -> argv.contains("--" + k)).findFirst().orElse("greeter");
         List<String> script = switch (kind) {
             case "fanout" -> List.of("bob", "carol");
-            case "ticker", "ping-pong", "ring", "journal" -> List.of();
+            case "ticker", "ping-pong", "ring", "journal", "deadline" -> List.of();
             case "front-desk" -> List.of("alice", "bob", "carol");
             default -> List.of("alice", "bob");
         };

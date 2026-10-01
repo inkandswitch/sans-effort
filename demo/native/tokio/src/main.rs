@@ -18,6 +18,7 @@
 //! printf 'alice\nbob\n' | cargo run -p greeter_tokio -- --front-desk
 //! cargo run -p greeter_tokio -- --ring      # 16 tasks passing a counter
 //! cargo run -p greeter_tokio -- --journal   # env, files, clock, randomness
+//! cargo run -p greeter_tokio -- --deadline  # receives raced against sleeps
 //! ```
 //!
 //! The tests at the bottom run the same routines under tokio's paused clock,
@@ -28,8 +29,8 @@ mod ctx;
 
 use ctx::DemoCtx;
 use routines::{
-    fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal, ping_pong::PingPong,
-    ring::Ring,
+    deadline::Deadline, fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal,
+    ping_pong::PingPong, ring::Ring,
 };
 use sans_effort::step::Step;
 use sans_effort::tokio::ctx::TokioCtx;
@@ -61,6 +62,8 @@ async fn main() -> Result<(), tokio::task::JoinError> {
         tokio::spawn(FrontDesk::new(ctx).run()).await
     } else if mode("--journal") {
         tokio::spawn(Journal::new(ctx, 3).run()).await
+    } else if mode("--deadline") {
+        tokio::spawn(Deadline::new(ctx).run()).await
     } else {
         tokio::spawn(Greeter::new(ctx).run()).await
     }
@@ -164,6 +167,23 @@ mod tests {
     async fn ping_pong_spawns_a_task() {
         let written = transcript(b"", |ctx| PingPong::new(ctx, 3).run()).await;
         assert_eq!(written, "ping 1, pong 1\nping 2, pong 2\nping 3, pong 3\n");
+    }
+
+    /// A race is two native futures; the loser is dropped, and a dropped
+    /// tokio sleep is a cancelled timer. Under a paused clock the whole run
+    /// takes the slow worker's 50 ms deadline and nothing more: the quick
+    /// worker's 30 s deadline never fires.
+    #[tokio::test(start_paused = true)]
+    async fn deadline_drops_the_losing_sleep() {
+        let virtual_start = tokio::time::Instant::now();
+        let written = transcript(b"", |ctx| Deadline::new(ctx).run()).await;
+        assert_eq!(
+            written,
+            "quick worker: answered 1 in time\n\
+             slow worker: no answer within 50 ms\n\
+             slow worker: answered 2 late\n"
+        );
+        assert_eq!(virtual_start.elapsed().as_millis(), 50);
     }
 
     /// The front desk's clerks are pinned: each runs on the context's local
