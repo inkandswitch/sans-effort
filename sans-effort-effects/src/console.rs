@@ -9,6 +9,45 @@ use core::future::Future;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// Read a line.
+///
+/// # Cancellation
+///
+/// _Consuming, and not cancel-safe._ A read abandoned before it finishes —
+/// the losing side of a [`select`] — may lose its line: a host that had
+/// already read it when it learned the routine stopped waiting discards it,
+/// and the next read gets the line after. Some contexts keep it (a
+/// cancel-safe `TokioInput` natively); a routine meant for any host must not
+/// count on that.
+///
+/// To wait for a line without giving up the read, race the read _by
+/// reference_. The losing side dropped is then only the reference; the read
+/// itself goes on, and the next poll picks it up:
+///
+/// ```
+/// use core::{pin::pin, time::Duration};
+/// use sans_effort_core::select::{Either, select};
+/// use sans_effort_effects::{
+///     console::{ReadLine, ReadLineError, WriteLine},
+///     time::Sleep,
+/// };
+///
+/// /// The next line, with a reminder every five seconds until it comes.
+/// async fn patiently<C: ReadLine + Sleep + WriteLine>(
+///     ctx: &C,
+/// ) -> Result<String, ReadLineError> {
+///     let mut read = pin!(ctx.read_line());
+///     loop {
+///         match select(read.as_mut(), ctx.sleep(Duration::from_secs(5))).await {
+///             Either::Left(line) => return line,
+///             Either::Right(()) => ctx.write_line("Still waiting…".into()),
+///         }
+///     }
+/// }
+/// ```
+///
+/// A read still pending when the routine ends is abandoned all the same.
+///
+/// [`select`]: sans_effort_core::select::select
 pub trait ReadLine {
     /// The next line, without its line ending.
     ///
@@ -19,7 +58,8 @@ pub trait ReadLine {
     fn read_line(&self) -> impl Future<Output = Result<String, ReadLineError>> + Send;
 }
 
-/// Write a line. Fire-and-forget, so not `async`.
+/// Write a line. Fire-and-forget, so not `async`: there is nothing to
+/// abandon, and so nothing to cancel.
 pub trait WriteLine {
     /// Show `line`.
     fn write_line(&self, line: String);
@@ -252,6 +292,14 @@ mod tests {
                 .collect();
             assert_eq!(lines, [expected]);
             assert_eq!(driver.status(), Status::Complete);
+        });
+    }
+
+    #[test]
+    fn written_lines_round_trip() {
+        bolero::check!().with_type::<String>().for_each(|line| {
+            let effect = WriteLineEffect(line.clone());
+            assert_eq!(WriteLineEffect::from_bytes(&effect.to_bytes()), Ok(effect));
         });
     }
 

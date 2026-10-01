@@ -17,6 +17,11 @@ use sans_effort_core::{
 ///
 /// Infallible: nothing a routine could act on makes a sleep fail. A host may
 /// answer at once, after a real delay, or on a virtual clock.
+///
+/// # Cancellation
+///
+/// _Retractable:_ an abandoned sleep loses nothing. A host should stop its
+/// timer, or it waits on a timer nobody needs.
 pub trait Sleep {
     /// Return after `duration` has passed.
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send;
@@ -36,6 +41,10 @@ where
 /// Infallible, like [`Sleep`]. Wall-clock time can jump — a host's clock may
 /// be adjusted — so measure a pause with [`Sleep`], not by subtracting two
 /// readings.
+///
+/// # Cancellation
+///
+/// _Retractable:_ an abandoned reading is discarded, and loses nothing.
 pub trait Now {
     /// The current time.
     fn now(&self) -> impl Future<Output = UnixTime> + Send;

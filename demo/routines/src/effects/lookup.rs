@@ -9,6 +9,10 @@ use sans_effort::{
 };
 
 /// Look a name up.
+///
+/// # Cancellation
+///
+/// _Retractable:_ an abandoned lookup is discarded, and loses nothing.
 pub trait Lookup {
     /// The greeting word for `name`.
     fn lookup(&self, name: String) -> impl Future<Output = String> + Send;

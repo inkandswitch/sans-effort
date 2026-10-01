@@ -12,6 +12,10 @@ use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Wri
 ///
 /// Infallible: an unset variable is `None`, not an error. A host whose value
 /// is not UTF-8 answers `None` too — a routine could do nothing else with it.
+///
+/// # Cancellation
+///
+/// _Retractable:_ an abandoned lookup is discarded, and loses nothing.
 pub trait Var {
     /// The value of `name`, or `None` if it is unset.
     fn var(&self, name: String) -> impl Future<Output = Option<String>> + Send;

@@ -12,6 +12,11 @@ use core::future::Future;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 
 /// Read a file whole.
+///
+/// # Cancellation
+///
+/// _Retractable:_ reading changes nothing, so an abandoned read loses
+/// nothing.
 pub trait ReadFile {
     /// The contents of the file at `path`.
     ///
@@ -22,6 +27,12 @@ pub trait ReadFile {
 }
 
 /// Write a file whole.
+///
+/// # Cancellation
+///
+/// _Committing:_ abandoning a write does not undo it. The file may or may
+/// not have been written, and the routine will not learn which; race a write
+/// only where either outcome will do.
 pub trait WriteFile {
     /// Replace the contents of the file at `path` with `bytes`, creating it
     /// if it does not exist. Its directory must.

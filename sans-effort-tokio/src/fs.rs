@@ -43,6 +43,18 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn what_the_os_says_becomes_what_a_routine_can_act_on() {
+        for (kind, error) in [
+            (io::ErrorKind::NotFound, FsError::NotFound),
+            (io::ErrorKind::PermissionDenied, FsError::PermissionDenied),
+            (io::ErrorKind::AlreadyExists, FsError::Other),
+            (io::ErrorKind::InvalidData, FsError::Other),
+        ] {
+            assert_eq!(fs_error(&io::Error::from(kind)), error, "{kind:?}");
+        }
+    }
+
     #[tokio::test]
     async fn written_then_read_back_and_a_missing_file_is_not_found() {
         let dir = std::env::temp_dir().join(format!("sans-effort-fs-{}", std::process::id()));

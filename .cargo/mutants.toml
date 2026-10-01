@@ -1,0 +1,10 @@
+# cargo-mutants: `nix develop -c test:mutants`, or `test:mutants:diff` for the
+# lines a change touches. A mutant listed here is one no test should catch;
+# each has its reason.
+exclude_re = [
+  # What a `Debug` impl prints is for people reading logs, not behaviour.
+  "impl (core::)?(fmt::)?Debug for",
+  # `TokioOutput` logs only its first failed write; which write logs shows
+  # only in `tracing` output. Later writes are dropped either way (tested).
+  "delete ! in <impl WriteLine for TokioOutput<W>>::write_line",
+]

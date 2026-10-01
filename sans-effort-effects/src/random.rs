@@ -17,6 +17,11 @@ use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Wri
 /// Infallible: a host that has no entropy has nothing a routine could act
 /// on. Whether the bytes are fit for keys is the host's promise, not this
 /// trait's.
+///
+/// # Cancellation
+///
+/// _Consuming, but nothing a routine needed is lost:_ bytes drawn for an
+/// abandoned request are discarded, and the next request draws fresh ones.
 pub trait Random {
     /// `len` random bytes.
     fn random_bytes(&self, len: u32) -> impl Future<Output = Vec<u8>> + Send;

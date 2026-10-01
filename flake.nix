@@ -73,6 +73,7 @@
           cargo-criterion
           cargo-deny
           cargo-hack
+          cargo-mutants
           cargo-nextest
           cargo-semver-checks
           cargo-watch

@@ -61,7 +61,7 @@ Precedent: Cap'n Proto's RPC protocol has a `Finish` message — "the caller no 
 
 ### A Closed Frame Means "no longer needed", Not "undone"
 
-If `select(pay(), sleep(TIMEOUT))` times out, the payment may still go through. Cancellation tells the host it may stop; it cannot unperform an effect that has started. Tokio has the same property. A routine that races an effect with consequences must treat the losing branch as _possibly done_, and effects should say whether they are safe to cancel.
+If `select(pay(), sleep(TIMEOUT))` times out, the payment may still go through. Cancellation tells the host it may stop; it cannot unperform an effect that has started. Tokio has the same property. A routine that races an effect with consequences must treat the losing branch as _possibly done_. Each effect says which kind it is — see [Cancel Safety](#cancel-safety).
 
 ### Late Replies Stay Harmless
 
@@ -76,6 +76,46 @@ A routine that completes, panics, or is freed with requests still outstanding ha
 ### Only Asks Can Be Cancelled
 
 A tell has no id and no reply, so there is nothing to close.
+
+## Cancel Safety
+
+`select` is correct whatever it races: the loser is dropped, its asks close, a late reply is refused. What the race can _lose_ depends on the loser, and only on the loser — so cancel safety is each effect's to state, not the mechanism's. Every effect trait has a "Cancellation" section naming one of three kinds:
+
+| Kind | Effects | If its request closes after the host performed it |
+|---|---|---|
+| _Retractable_ | `Sleep`, `Now`, `Var`, `ReadFile` | The result is discarded; nothing is lost. A host should stop the work (a timer). |
+| _Consuming_ | `ReadLine`; `Random` | The value is used up. For `Random` nothing a routine needed is lost — the next draw is as good. For `ReadLine` a line is: it is the one effect here that is _not cancel-safe_. |
+| _Committing_ | `WriteFile` | It happened, or may have; the routine will not learn which. |
+
+A host that already holds a result for a closed id discards it, and releases anything it stands for; `ABI.md` asks nothing more.
+
+### Racing a Read Without Losing It
+
+The pattern is tokio's: race a pinned future _by reference_. The loser dropped is then the reference, not the read, which goes on and is awaited later — no request is ever closed, so no host can lose its line:
+
+```rust
+let mut read = pin!(ctx.read_line());
+loop {
+    match select(read.as_mut(), ctx.sleep(Duration::from_secs(5))).await {
+        Either::Left(line) => return line,
+        Either::Right(()) => ctx.write_line("Still waiting…".into()),
+    }
+}
+```
+
+It needs no help from hosts, contexts, or the library. Its limits are visible in the routine's own code: a read still pending when the routine ends is abandoned all the same; and natively a pending read holds `TokioInput`'s lock, so another reader of a shared input waits for it.
+
+Natively, `TokioInput` is cancel-safe on its own: it reads with `read_until` into a buffer it keeps, so a read dropped mid-line leaves its bytes for the next read. tokio's own `read_line` throws them away — a timeout that fired while a user was typing would garble the next line.
+
+### What Was Tried, and Why Not
+
+A scratch experiment compared ways to make an abandoned read lose nothing, against a worst-case host: one that takes a line the moment it sees the ask, replies after a random delay, and cannot stop a read once started (as a host blocked on `System.in` cannot).
+
+- _Host push-back_ — a held line for a closed id goes back to the input. Alone, it is a trap: with purely sequential reads it still produced gaps and reorders, because the line returns only when the host's read finishes, by which time later reads have taken later lines. It needs a second rule — one read in flight per input, served in the order asked, a read that closes while waiting giving up its place — and with both it loses nothing, even when a routine ends with a read pending. It is the only design that does, and the only one that asks every host author for something subtle; it remains the path if zero loss is ever needed.
+- _A context that keeps the read alive_ — an adapter whose abandoned read is parked for the next `read_line`. No gaps, but the parked read is per context (a parent's late line arrives after a child's), and natively it parks `TokioInput`'s lock with nobody polling it, so another reader of the same input waits until the parent reads again — a deadlock if the parent waits on that reader.
+- _A reader machine and a channel_ — the routine races the channel instead. No gaps, but it reads ahead, and what it read ahead is lost when the consumer stops: about a line in nearly every run.
+
+Racing by reference beats all three on what it asks for — nothing — and shares their one remaining leak.
 
 ## Decisions Along the Way
 

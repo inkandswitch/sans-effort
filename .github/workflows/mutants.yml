@@ -1,0 +1,78 @@
+name: Mutation Testing
+
+# Too slow for every push (~20 minutes for the four library crates). Weekly in
+# full, and on a pull request only for the lines it changes.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # bolero's properties draw the same inputs every run, so a mutant is caught
+  # or missed the same way every time.
+  BOLERO_RANDOM_SEED: "1"
+  CRATES: -p sans-effort-core -p sans-effort-effects -p sans-effort-host -p sans-effort-tokio
+
+jobs:
+  changed-lines:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Mutants in the changed lines
+        run: |
+          git diff "origin/${{ github.base_ref }}..." > mutants.diff
+          cargo mutants $CRATES --in-diff mutants.diff -j 2 --output target/mutants
+
+      - name: Survivors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants
+          path: target/mutants/mutants.out
+
+  full:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Every mutant in the library crates
+        run: cargo mutants $CRATES -j 2 --output target/mutants
+
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants
+          path: target/mutants/mutants.out

@@ -32,8 +32,9 @@ use tokio_util::task::LocalPoolHandle;
 #[derive(Debug)]
 pub struct TokioCtx<R, W> {
     clock: TokioClock,
-    input: Arc<TokioInput<R>>,
-    output: Arc<TokioOutput<W>>,
+    /// Behind one `Arc`: clones share input and output together, so one
+    /// count says whether a clone still holds them.
+    console: Arc<Console<R, W>>,
     fs: TokioFs,
     env: TokioEnv,
     random: TokioRandom,
@@ -47,8 +48,10 @@ impl<R, W> TokioCtx<R, W> {
     pub fn new(reader: R, writer: W, pool: LocalPoolHandle) -> Self {
         Self {
             clock: TokioClock,
-            input: Arc::new(TokioInput::new(reader)),
-            output: Arc::new(TokioOutput::new(writer)),
+            console: Arc::new(Console {
+                input: TokioInput::new(reader),
+                output: TokioOutput::new(writer),
+            }),
             fs: TokioFs,
             env: TokioEnv,
             random: TokioRandom,
@@ -65,13 +68,13 @@ impl<R, W> TokioCtx<R, W> {
     /// The input.
     #[must_use]
     pub fn input(&self) -> &TokioInput<R> {
-        &self.input
+        &self.console.input
     }
 
     /// The output.
     #[must_use]
     pub fn output(&self) -> &TokioOutput<W> {
-        &self.output
+        &self.console.output
     }
 
     /// The file system.
@@ -105,14 +108,24 @@ impl<R, W> TokioCtx<R, W> {
     /// The context itself, unchanged, while a clone — a child's context —
     /// still shares them.
     pub fn into_parts(self) -> Result<(R, W), Self> {
-        if Arc::strong_count(&self.input) > 1 || Arc::strong_count(&self.output) > 1 {
-            return Err(self);
-        }
-
-        let Self { input, output, .. } = self;
-        match (Arc::into_inner(input), Arc::into_inner(output)) {
-            (Some(input), Some(output)) => Ok((input.into_inner(), output.into_inner())),
-            _ => unreachable!("no clone shares them: counted just now, and only a clone could"),
+        let Self {
+            clock,
+            console,
+            fs,
+            env,
+            random,
+            spawner,
+        } = self;
+        match Arc::try_unwrap(console) {
+            Ok(Console { input, output }) => Ok((input.into_inner(), output.into_inner())),
+            Err(console) => Err(Self {
+                clock,
+                console,
+                fs,
+                env,
+                random,
+                spawner,
+            }),
         }
     }
 }
@@ -130,8 +143,7 @@ impl<R, W> Clone for TokioCtx<R, W> {
     fn clone(&self) -> Self {
         Self {
             clock: self.clock,
-            input: Arc::clone(&self.input),
-            output: Arc::clone(&self.output),
+            console: Arc::clone(&self.console),
             fs: self.fs,
             env: self.env,
             random: self.random,
@@ -182,14 +194,21 @@ impl<R, W> Random for TokioCtx<R, W> {
 
 impl<R: AsyncBufRead + Unpin + Send, W> ReadLine for TokioCtx<R, W> {
     fn read_line(&self) -> impl Future<Output = Result<String, ReadLineError>> + Send {
-        self.input.read_line()
+        self.console.input.read_line()
     }
 }
 
 impl<R, W: io::Write> WriteLine for TokioCtx<R, W> {
     fn write_line(&self, line: String) {
-        self.output.write_line(line);
+        self.console.output.write_line(line);
     }
+}
+
+/// The input and the output a context's clones share.
+#[derive(Debug)]
+struct Console<R, W> {
+    input: TokioInput<R>,
+    output: TokioOutput<W>,
 }
 
 /// A child's context is a clone of its parent's.

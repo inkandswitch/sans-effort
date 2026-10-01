@@ -7,6 +7,11 @@ use sans_effort::{
 };
 
 /// Count a greeting.
+///
+/// # Cancellation
+///
+/// _Consuming, but nothing a routine needed is lost:_ an abandoned count
+/// still advanced the host's counter, so the next count skips a number.
 pub trait Count {
     /// One more greeting; how many so far, including this one.
     fn count(&self) -> impl Future<Output = u64> + Send;

@@ -21,6 +21,33 @@
 //! [`Asking`](crate::driver::asking::Asking)s are recorded in argument order. `a` is
 //! polled first on every poll, so if both are ready at once, `a` wins. Put
 //! the branch that should win ties first.
+//!
+//! # Cancel Safety
+//!
+//! Whether dropping the loser loses anything depends on the loser. A sleep,
+//! or a receive on a channel, loses nothing. A consuming effect — reading a
+//! line — may lose what it read: the host may already hold the line when it
+//! learns the routine stopped waiting. Each effect trait says which it is in
+//! its "Cancellation" section.
+//!
+//! To keep a future through a race, race it _by reference_: pin it and pass
+//! `fut.as_mut()`. The loser dropped is then only the reference; the future
+//! goes on, to be awaited later or raced again.
+//!
+//! ```
+//! use core::{future::ready, pin::pin};
+//! use sans_effort_core::{
+//!     select::{Either, select},
+//!     testing::run_now,
+//! };
+//!
+//! run_now(async {
+//!     let mut kept = pin!(ready("still here"));
+//!     let first = select(ready(()), kept.as_mut()).await;
+//!     assert_eq!(first, Either::Left(()), "ties go to the first");
+//!     assert_eq!(kept.await, "still here", "the loser was not dropped");
+//! });
+//! ```
 
 use core::{
     future::{Future, IntoFuture, poll_fn},
