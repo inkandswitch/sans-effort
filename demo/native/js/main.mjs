@@ -8,13 +8,13 @@
 // routine step by step over the C ABI.
 //
 //   nix develop --command demo:wasm
-//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring | --journal | --deadline]
+//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring | --journal | --deadline | --deadlock]
 
 import { createRequire } from "node:module";
 
 // `wasm-bindgen --target nodejs` emits CommonJS.
 const require = createRequire(import.meta.url);
-const { Deadline, Greeter, Fanout, PingPong, FrontDesk, Ring, Journal } = require("./pkg/greeter_wasm.js");
+const { Deadline, Deadlock, Greeter, Fanout, PingPong, FrontDesk, Ring, Journal } = require("./pkg/greeter_wasm.js");
 
 const GREETINGS = { alice: "Hello", bob: "Hi", carol: "Hey" };
 
@@ -65,7 +65,9 @@ const routine = mode("--fanout")
           ? new Journal(host([]))
           : mode("--deadline")
             ? new Deadline(host([]))
-            : new Greeter(host(["alice", "bob"]));
+            : mode("--deadlock")
+              ? new Deadlock(host([]))
+              : new Greeter(host(["alice", "bob"]));
 const began = performance.now();
 await routine.run();
 if (mode("--ring")) {

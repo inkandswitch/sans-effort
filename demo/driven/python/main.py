@@ -14,6 +14,7 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/driven/python/main.py --ring         # 16 machines passing a counter: woke frames only
     python3 demo/driven/python/main.py --journal      # env, files, clock, randomness (tags 8–12)
     python3 demo/driven/python/main.py --deadline     # receives raced against sleeps: closed frames
+    python3 demo/driven/python/main.py --deadlock     # host check: two machines waiting on each other, a stall reported
 
 With spawning, the loop is a small scheduler: it keeps every machine by
 handle, resumes each child it is told about to begin it, and each machine a `woke`
@@ -125,6 +126,7 @@ class Library:
         self.lib.greeter_new_ring.restype = ctypes.c_uint64
         self.lib.greeter_new_journal.restype = ctypes.c_uint64
         self.lib.greeter_new_deadline.restype = ctypes.c_uint64
+        self.lib.greeter_new_deadlock.restype = ctypes.c_uint64
         self.lib.greeter_resume.restype = ctypes.c_int32
         self.lib.greeter_resume.argtypes = [
             ctypes.c_uint64,
@@ -154,6 +156,7 @@ class Library:
             "ring": self.lib.greeter_new_ring,
             "journal": self.lib.greeter_new_journal,
             "deadline": self.lib.greeter_new_deadline,
+            "deadlock": self.lib.greeter_new_deadlock,
         }[kind]()
 
     def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
@@ -363,8 +366,18 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
         ran(handle, lib.reply(handle, reply_unit(ask)))
 
     stuck = [h for h, status in machines.items() if status != COMPLETE]
-    assert not stuck, f"stalled: machines {stuck} can never progress"
+    if stuck:
+        raise Stalled(len(stuck))
     return written
+
+
+class Stalled(Exception):
+    """Machines that can never progress: nothing to call, nothing to reply
+    to, nothing woken, and they have not completed. A deadlock, or a routine
+    waiting on something no machine will provide."""
+
+    def __init__(self, machines: int):
+        super().__init__(f"stalled: {machines} machines can never progress")
 
 
 def find_library() -> Path:
@@ -378,12 +391,16 @@ def find_library() -> Path:
 
 
 if __name__ == "__main__":
-    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline")
+    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline", "deadlock")
     kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
-    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": [], "deadline": []}[kind]
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": [], "deadline": [], "deadlock": []}[kind]
     lib = Library(find_library())
     began = time.perf_counter()
-    drive(lib, lib.new(kind), script)
+    try:
+        drive(lib, lib.new(kind), script)
+    except Stalled as stalled:
+        print(stalled, file=sys.stderr)
+        sys.exit(1)
     if kind == "ring":
         hops, elapsed = 16 * 250, time.perf_counter() - began
         print(f"{hops} hops in {elapsed * 1e3:.1f} ms: {elapsed * 1e6 / hops:.2f} µs per hop", file=sys.stderr)

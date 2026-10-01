@@ -112,6 +112,28 @@ jobs:
             echo "Transcripts agree $mode"
           done
 
+      # Host checks (`demo:faults` locally): routines that misbehave on purpose,
+      # from `routines::faults`. A deadlock: two machines each waiting for the
+      # other. The driven hosts
+      # report the stall on stderr and exit 1; Node's event loop runs dry and it
+      # exits 13 (an unsettled top-level await). tokio has no detector: it would
+      # hang, so it is not run. A host that hangs instead hits the time limit.
+      - name: "Host check: a deadlock is reported, not hung on"
+        run: |
+          set +e
+          timeout 20 python3 demo/driven/python/main.py --deadlock > python-deadlock.txt 2> python-deadlock-err.txt
+          python=$?
+          timeout 20 java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --deadlock > java-deadlock.txt 2> java-deadlock-err.txt
+          java=$?
+          timeout 20 node demo/native/js/main.mjs --deadlock > js-deadlock.txt
+          node=$?
+          set -e
+          test "$python $java $node" = "1 1 13"
+          diff python-deadlock.txt java-deadlock.txt
+          diff python-deadlock.txt js-deadlock.txt
+          diff python-deadlock-err.txt java-deadlock-err.txt
+          cat python-deadlock.txt python-deadlock-err.txt
+
       # Races: each quick worker beats a 30 s sleep, whose request then closes.
       # A host that fails to cancel the abandoned timer waits it out, so the
       # time limit is the check that every host stops it.

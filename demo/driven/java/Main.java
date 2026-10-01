@@ -36,7 +36,7 @@
 /// routine runs natively.
 ///
 ///     cargo build -p greeter_cdylib
-///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal | --deadline] [--trace]
+///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal | --deadline | --deadlock] [--trace]
 ///
 /// `--trace` logs every call to stderr — thread, call, handle, status — to
 /// show which worker polled what.
@@ -106,7 +106,7 @@ public class Main {
     static final class Library {
         /** Shared: the symbols are called from every driver thread. */
         final Arena arena = Arena.ofShared();
-        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, newDeadline, reply, resume, wakes, free, bufFree;
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, newDeadline, newDeadlock, reply, resume, wakes, free, bufFree;
 
         Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
@@ -124,6 +124,7 @@ public class Main {
             newRing      = linker.downcallHandle(lib.find("greeter_new_ring").get(), FunctionDescriptor.of(u64));
             newJournal   = linker.downcallHandle(lib.find("greeter_new_journal").get(), FunctionDescriptor.of(u64));
             newDeadline  = linker.downcallHandle(lib.find("greeter_new_deadline").get(), FunctionDescriptor.of(u64));
+            newDeadlock  = linker.downcallHandle(lib.find("greeter_new_deadlock").get(), FunctionDescriptor.of(u64));
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             resume     = linker.downcallHandle(lib.find("greeter_resume").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             wakes      = linker.downcallHandle(lib.find("greeter_wakes").get(), FunctionDescriptor.of(i32, ptr, ptr));
@@ -143,6 +144,7 @@ public class Main {
                 case "ring" -> (long) newRing.invokeExact();
                 case "journal" -> (long) newJournal.invokeExact();
                 case "deadline" -> (long) newDeadline.invokeExact();
+                case "deadlock" -> (long) newDeadlock.invokeExact();
                 default -> (long) newGreeter.invokeExact();
             };
         }
@@ -540,8 +542,7 @@ public class Main {
                 dispatch(first, woken);
             }
 
-            if (!machines.isEmpty())
-                throw new IllegalStateException("stalled: machines " + machines.keySet() + " can never progress");
+            if (!machines.isEmpty()) throw new Stalled(machines.size());
         }
 
         @Override
@@ -570,21 +571,34 @@ public class Main {
 
     static boolean TRACE;
 
+    /**
+     * Machines that can never progress: nothing to call, nothing to reply to, nothing woken, and they have not
+     * completed. A deadlock, or a routine waiting on something no machine will provide.
+     */
+    static final class Stalled extends RuntimeException {
+        Stalled(int machines) { super("stalled: " + machines + " machines can never progress"); }
+    }
+
     public static void main(String[] args) throws Throwable {
         List<String> argv = List.of(args);
         TRACE = argv.contains("--trace");
-        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline").stream()
+        String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline", "deadlock").stream()
             .filter(k -> argv.contains("--" + k)).findFirst().orElse("greeter");
         List<String> script = switch (kind) {
             case "fanout" -> List.of("bob", "carol");
-            case "ticker", "ping-pong", "ring", "journal", "deadline" -> List.of();
+            case "ticker", "ping-pong", "ring", "journal", "deadline", "deadlock" -> List.of();
             case "front-desk" -> List.of("alice", "bob", "carol");
             default -> List.of("alice", "bob");
         };
 
         Library lib = new Library(findLibrary());
         long began = System.nanoTime();
-        drive(lib, lib.create(kind), script);
+        try {
+            drive(lib, lib.create(kind), script);
+        } catch (Stalled stalled) {
+            System.err.println(stalled.getMessage());
+            System.exit(1);
+        }
         if (kind.equals("ring")) {
             int hops = 16 * 250;
             double ms = (System.nanoTime() - began) / 1e6;

@@ -94,6 +94,7 @@
 pub mod ctx;
 pub mod deadline;
 pub mod fanout;
+pub mod faults;
 pub mod front_desk;
 pub mod greeter;
 pub mod host;

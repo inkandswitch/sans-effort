@@ -13,8 +13,8 @@
 
 use greeter_boundary::{Full, Quiet};
 use routines::{
-    deadline::Deadline, fanout::Fanout, front_desk::FrontDesk, greeter::Greeter, journal::Journal,
-    ping_pong::PingPong, ring::Ring, ticker::Ticker,
+    deadline::Deadline, fanout::Fanout, faults::deadlock::Deadlock, front_desk::FrontDesk,
+    greeter::Greeter, journal::Journal, ping_pong::PingPong, ring::Ring, ticker::Ticker,
 };
 use sans_effort_core::{driver::status::Status, step::Step};
 use sans_effort_effects::ctx::Ctx;
@@ -73,6 +73,13 @@ pub extern "C" fn greeter_new_ring() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_new_deadline() -> u64 {
     table::new(|outbox| Deadline::new(Ctx::<Full>::new(outbox)).run())
+}
+
+/// Create a deadlock: two machines, each waiting for the other to go first.
+/// Nothing will ever wake either; a host should report it, not hang.
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_new_deadlock() -> u64 {
+    table::new(|outbox| Deadlock::new(Ctx::<Full>::new(outbox)).run())
 }
 
 /// Create a front desk: it reads names and spawns a pinned clerk per name

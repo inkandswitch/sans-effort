@@ -12,6 +12,9 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    with the time and a random id to a file the environment names),
                    deadline (two workers, each raced against a sleep: the quick one
                    wins, the slow one answers late). no_std.
+                   faults/: routines that misbehave on purpose, for testing hosts,
+                   not examples to follow — deadlock (two routines each waiting
+                   for the other). See Host Checks.
                    effects/: the demo's own effect traits, one module each — count
                    (Count, CountEffect) and lookup (Lookup, LookupEffect) — each
                    with its reifying Ctx impl beside it (the orphan rule puts it
@@ -61,8 +64,15 @@ nix develop --command demo:wasm && node demo/native/js/main.mjs         # native
 cargo build -p greeter_cdylib && python3 demo/driven/python/main.py     # driven: C ABI, ctypes
 java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java     # driven: C ABI, Panama
 nix develop --command demo                                              # all four, diffed
+nix develop --command demo:faults                                       # host checks (below)
 ```
 
 `--fanout` on any host runs the two-waits-per-batch variant; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
 
 `--deadline` races a receive against a sleep, twice. The quick worker beats a 30-second sleep, so that sleep is abandoned: tokio drops its timer, Node's dispatcher aborts the `AbortSignal` it gave the host's `sleep`, and the driven hosts get a closed frame — Python drops its pending timer (its time is virtual: timers fire only when nothing else can happen), Java cancels the virtual thread sleeping it. A host that fails to cancel waits the 30 seconds out, so `demo` and CI run this mode under a time limit. The slow worker cannot answer until told to, so its 50 ms deadline always passes first.
+
+## Host Checks
+
+`nix develop --command demo:faults` runs routines that misbehave on purpose — `routines::faults` — and checks what each host does about them. They are not part of `demo`, which shows how routines are written; these check the hosts.
+
+- `--deadlock` is two machines each waiting for the other, holding the sender the other waits on: nothing can ever wake either. The driven hosts see it — no call to make, no request outstanding, nothing from `wakes` — print `stalled: 2 machines can never progress` to stderr, and exit 1. Node's event loop runs dry with the routine's promise unsettled, and Node exits 13. tokio has no such detector and would hang, so it is not run there. `demo:faults` and CI check the exit codes, and that the hosts agree.

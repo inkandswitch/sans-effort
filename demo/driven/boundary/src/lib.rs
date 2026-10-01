@@ -712,8 +712,8 @@ mod tests {
     mod scheduled {
         use super::*;
         use routines::{
-            deadline::Deadline, fanout::Fanout, front_desk::FrontDesk, ping_pong::PingPong,
-            ring::Ring,
+            deadline::Deadline, fanout::Fanout, faults::deadlock::Deadlock, front_desk::FrontDesk,
+            ping_pong::PingPong, ring::Ring,
         };
         use sans_effort_core::testing::{
             self, Completed, Stalled,
@@ -806,6 +806,10 @@ mod tests {
             Driver::new(|outbox| FrontDesk::new(Ctx::<Full>::new(outbox)).run())
         }
 
+        fn deadlock() -> Driver<Full> {
+            Driver::new(|outbox| Deadlock::new(Ctx::<Full>::new(outbox)).run())
+        }
+
         fn deadline() -> Driver<Full> {
             Driver::new(|outbox| Deadline::new(Ctx::<Full>::new(outbox)).run())
         }
@@ -857,6 +861,24 @@ mod tests {
                 written(deadline(), &[], Fifo),
                 Ok(DEADLINE.map(String::from).to_vec())
             );
+        }
+
+        /// Each machine waits for the other: under every schedule the runner
+        /// reports both as stalled rather than hanging. Kill either, and the
+        /// survivor hears its channel close and finishes.
+        #[test]
+        fn a_deadlock_is_reported_under_every_schedule_and_a_kill_breaks_it() {
+            bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
+                let stalled = run(deadlock(), &[], Choices::new(bytes.iter().copied()))
+                    .expect_err("neither can go first");
+                assert_eq!(stalled.machines(), [0, 1]);
+
+                let crashing = Choices::new(bytes.iter().copied()).crashing();
+                match run(deadlock(), &[], crashing) {
+                    Ok((_, completed)) => assert_ne!(completed.killed(), [], "only a kill ends it"),
+                    Err(stalled) => assert_eq!(stalled.machines(), [0, 1]),
+                }
+            });
         }
 
         /// Fan-out puts two asks in one batch, twice. Whatever order the

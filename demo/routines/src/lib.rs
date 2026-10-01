@@ -47,6 +47,7 @@ extern crate std;
 pub mod deadline;
 pub mod effects;
 pub mod fanout;
+pub mod faults;
 pub mod front_desk;
 pub mod greeter;
 pub mod journal;
