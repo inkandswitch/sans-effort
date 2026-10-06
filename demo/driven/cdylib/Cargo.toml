@@ -11,7 +11,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+# `rlib` too, so `src/bin/replay.rs` can call the same root constructors.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 sans-effort-core = { workspace = true, features = ["std"] }

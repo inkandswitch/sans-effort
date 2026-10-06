@@ -19,7 +19,11 @@
 //! cargo run -p greeter_tokio -- --ring      # 16 tasks passing a counter
 //! cargo run -p greeter_tokio -- --journal   # env, files, clock, randomness
 //! cargo run -p greeter_tokio -- --deadline  # receives raced against sleeps
+//! cargo run -p greeter_tokio -- --ring --workers 1   # a runtime of one worker
 //! ```
+//!
+//! `--workers K` sets the runtime's worker threads (by default, one per
+//! core): `demo:stress` varies it, with tokio's own scheduling the adversary.
 //!
 //! The tests at the bottom run the same routines under tokio's paused clock,
 //! writing into a buffer: the 50 ms `PAUSE`s cost no wall time, and the
@@ -36,8 +40,22 @@ use sans_effort::step::Step;
 use sans_effort::tokio::ctx::TokioCtx;
 use tokio_util::task::LocalPoolHandle;
 
-#[tokio::main]
-async fn main() -> Result<(), tokio::task::JoinError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    runtime.enable_all();
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(at) = args.iter().position(|a| a == "--workers") {
+        let workers = args
+            .get(at + 1)
+            .ok_or("--workers needs a number")?
+            .parse()?;
+        runtime.worker_threads(workers);
+    }
+    runtime.build()?.block_on(run())?;
+    Ok(())
+}
+
+async fn run() -> Result<(), tokio::task::JoinError> {
     // Workers for pinned children — the front desk's clerks. The pool is the
     // application's to size; one thread is plenty here.
     let ctx = DemoCtx::new(TokioCtx::stdio(LocalPoolHandle::new(1)));
@@ -184,6 +202,45 @@ mod tests {
              slow worker: answered 2 late\n"
         );
         assert_eq!(virtual_start.elapsed().as_millis(), 50);
+    }
+
+    /// The multi-machine routines on real multithreaded runtimes of 1 to 4
+    /// workers, many times over: tokio's own scheduling is the adversary, and
+    /// every run must write the same.
+    #[test]
+    fn multi_machine_routines_agree_on_every_multithreaded_run() {
+        for workers in 1..=4 {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(workers)
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            for _ in 0..20 {
+                assert_eq!(
+                    runtime.block_on(transcript(b"", |ctx| PingPong::new(ctx, 3).run())),
+                    "ping 1, pong 1\nping 2, pong 2\nping 3, pong 3\n"
+                );
+                assert_eq!(
+                    runtime.block_on(transcript(b"alice\nbob\ncarol\n", |ctx| {
+                        FrontDesk::new(ctx).run()
+                    })),
+                    "Hello, alice!\nHi, bob!\nHey, carol!\nClosed.\n"
+                );
+                assert_eq!(
+                    runtime.block_on(transcript(b"", |ctx| Ring::new(ctx, 8, 20).run())),
+                    "ring of 8, 20 laps: 160 hops\n"
+                );
+            }
+            // Real time: each run waits out a 50 ms deadline.
+            for _ in 0..3 {
+                assert_eq!(
+                    runtime.block_on(transcript(b"", |ctx| Deadline::new(ctx).run())),
+                    "quick worker: answered 1 in time\n\
+                     slow worker: no answer within 50 ms\n\
+                     slow worker: answered 2 late\n"
+                );
+            }
+        }
     }
 
     /// The front desk's clerks are pinned: each runs on the context's local

@@ -164,6 +164,14 @@ in {
     ${python} demo/driven/python/main.py --ticker
   '';
 
+  # Host check: every host under many seeded, adversarial schedules writes
+  # what tokio writes on an ordinary run. The checks are demo/stress.sh.
+  "demo:stress" = cmd "Run every host under seeded adversarial schedules (default 10 seeds; pass a number); output must match the tokio reference" ''
+    set -eo pipefail
+    demo:wasm > /dev/null
+    PATH=${pkgs.python3}/bin:${pkgs.nodejs}/bin:${pkgs.jdk25}/bin:$PATH bash demo/stress.sh "$@"
+  '';
+
   # Host checks: routines that misbehave on purpose (`routines::faults`), and
   # what every host must do about them. Not part of `demo`, which shows how
   # routines are written; these check the hosts.

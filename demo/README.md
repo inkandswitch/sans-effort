@@ -65,6 +65,7 @@ cargo build -p greeter_cdylib && python3 demo/driven/python/main.py     # driven
 java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java     # driven: C ABI, Panama
 nix develop --command demo                                              # all four, diffed
 nix develop --command demo:faults                                       # host checks (below)
+nix develop --command demo:stress                                       # host checks: seeded schedules
 ```
 
 `--fanout` on any host runs the two-waits-per-batch variant; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
@@ -76,3 +77,5 @@ nix develop --command demo:faults                                       # host c
 `nix develop --command demo:faults` runs routines that misbehave on purpose — `routines::faults` — and checks what each host does about them. They are not part of `demo`, which shows how routines are written; these check the hosts.
 
 - `--deadlock` is two machines each waiting for the other, holding the sender the other waits on: nothing can ever wake either. The driven hosts see it — no call to make, no request outstanding, nothing from `wakes` — print `stalled: 2 machines can never progress` to stderr, and exit 1. Node's event loop runs dry with the routine's promise unsettled, and Node exits 13. tokio has no such detector and would hang, so it is not run there. `demo:faults` and CI check the exit codes, and that the hosts agree.
+- `--seed N`, on the Python, Node, and Java hosts, makes the host adversarial, reproducibly: Python takes the next action from a machine chosen at random (each machine's own effects stay in order), defers each reply to a random later turn, and now and then resumes a machine for no reason; Node settles every answer after a random 0–3 ms, so answers asked together settle out of order; Java's seed picks its worker count (1 to 4) and delays each ask by up to 2 ms, and resumes spuriously too. tokio's `--workers K` sets its runtime's worker threads, so its own scheduler is the adversary. `nix develop --command demo:stress [SEEDS]` (default 10) runs every mode on every host under each seed and checks each writes what tokio writes on an ordinary run; CI runs it with 3.
+- `--record FILE`, on the Python and Java hosts, saves the run's log through the binding's `greeter_record` and `greeter_record_finish`; `cargo run -p greeter_cdylib --bin replay -- FILE MODE` replays it in Rust and reports the first divergence. A sequential host's runs replay exactly, seeded or not, so `demo:stress` records and replays every seeded Python run.

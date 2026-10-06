@@ -8,7 +8,11 @@
 // routine step by step over the C ABI.
 //
 //   nix develop --command demo:wasm
-//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring | --journal | --deadline | --deadlock]
+//   node demo/native/js/main.mjs [--fanout | --ping-pong | --front-desk | --ring | --journal | --deadline | --deadlock] [--seed N]
+//
+// `--seed N` makes the host adversarial: every answer arrives as a promise
+// that settles after a random 0–3 ms, so answers asked together settle in
+// varied orders. The seed reproduces the order. The transcript must not change.
 
 import { createRequire } from "node:module";
 
@@ -24,6 +28,25 @@ const GREETINGS = { alice: "Hello", bob: "Hi", carol: "Hey" };
 const ENVIRONMENT = { JOURNAL: "notes.txt" };
 const EPOCH_MILLIS = 1_700_000_000_000;
 
+/** mulberry32: a small seeded generator of floats in [0, 1). */
+function dice(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const seedAt = process.argv.indexOf("--seed");
+const roll = seedAt >= 0 ? dice(Number(process.argv[seedAt + 1])) : null;
+
+/** The answer — or, seeded, a promise of it that settles a random 0–3 ms later. */
+const late = (value) =>
+  roll === null ? value : new Promise((resolve) => setTimeout(() => resolve(value), Math.floor(roll() * 4)));
+
 /** The routine's world: scripted input, a fixed directory, a real clock. */
 function host(script) {
   const lines = script[Symbol.iterator]();
@@ -33,8 +56,8 @@ function host(script) {
   let nextByte = 0;
 
   return {
-    readLine: () => lines.next().value ?? null, // null: end of input
-    lookup: (name) => GREETINGS[name] ?? "Greetings",
+    readLine: () => late(lines.next().value ?? null), // null: end of input
+    lookup: (name) => late(GREETINGS[name] ?? "Greetings"),
     // Aborted when the routine stops waiting (the losing side of a race):
     // clear the timer, or it keeps the event loop alive until it fires.
     sleep: (ms, signal) =>
@@ -42,13 +65,13 @@ function host(script) {
         const timer = setTimeout(resolve, ms);
         signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
       }),
-    count: () => ++greeted,
+    count: () => late(++greeted),
     writeLine: (line) => console.log(line),
-    now: () => EPOCH_MILLIS + 1_000 * readings++,
-    randomBytes: (len) => Uint8Array.from({ length: len }, () => nextByte++ % 256),
-    env: (name) => ENVIRONMENT[name] ?? null,
-    readFile: (path) => files.get(path) ?? null, // null: no such file
-    writeFile: (path, bytes) => void files.set(path, bytes),
+    now: () => late(EPOCH_MILLIS + 1_000 * readings++),
+    randomBytes: (len) => late(Uint8Array.from({ length: len }, () => nextByte++ % 256)),
+    env: (name) => late(ENVIRONMENT[name] ?? null),
+    readFile: (path) => late(files.get(path) ?? null), // null: no such file
+    writeFile: (path, bytes) => late(void files.set(path, bytes)),
   };
 }
 

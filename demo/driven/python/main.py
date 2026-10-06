@@ -15,6 +15,9 @@ rather than the ABI's, and it is `TAGS` below.
     python3 demo/driven/python/main.py --journal      # env, files, clock, randomness (tags 8–12)
     python3 demo/driven/python/main.py --deadline     # receives raced against sleeps: closed frames
     python3 demo/driven/python/main.py --deadlock     # host check: two machines waiting on each other, a stall reported
+    python3 demo/driven/python/main.py --ring --seed 7    # host check: a seeded, adversarial schedule
+    python3 demo/driven/python/main.py --ring --seed 7 --record /tmp/ring.log   # …saved, to replay in Rust:
+    cargo run -p greeter_cdylib --bin replay -- /tmp/ring.log ring
 
 With spawning, the loop is a small scheduler: it keeps every machine by
 handle, resumes each child it is told about to begin it, and each machine a `woke`
@@ -28,11 +31,18 @@ when there is nothing else to do — so a sleep never holds up work that can
 happen now, and costs no wall time. A closed frame names a request the
 routine abandoned (the losing side of a race): its timer is dropped, and an
 ask still queued behind the call that closed it is never performed.
+
+With `--seed N` the loop is adversarial, and reproducible by the seed: it
+takes the next action from a machine chosen at random (each machine's own
+effects stay in order, as a batch's do for any host), defers each reply to a
+random later turn, and now and then resumes a machine for no reason — which
+the ABI says is harmless. The transcript must not change.
 """
 
 import ctypes
 import heapq
 import itertools
+import random
 import struct
 import sys
 import time
@@ -141,6 +151,14 @@ class Library:
             ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
             ctypes.POINTER(ctypes.c_size_t),
         ]
+        self.lib.greeter_record.restype = ctypes.c_uint32
+        self.lib.greeter_record.argtypes = [ctypes.c_uint64]
+        self.lib.greeter_record_finish.restype = ctypes.c_int32
+        self.lib.greeter_record_finish.argtypes = [
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
         self.lib.greeter_wakes.restype = ctypes.c_int32
         self.lib.greeter_wakes.argtypes = self.lib.greeter_resume.argtypes[1:]
         self.lib.greeter_free.restype = ctypes.c_int32
@@ -158,6 +176,17 @@ class Library:
             "deadline": self.lib.greeter_new_deadline,
             "deadlock": self.lib.greeter_new_deadlock,
         }[kind]()
+
+    def record(self, handle: int) -> int:
+        """Begin recording `handle` and the machines it creates; the recording's number."""
+        return self.lib.greeter_record(handle)
+
+    def record_finish(self, recording: int) -> bytes:
+        """The recording's log, encoded. Raises on an error code."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_record_finish(recording, ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)[1]
 
     def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
         """One reply record in; (status, effect bytes) out. Raises on an error code."""
@@ -281,16 +310,20 @@ ENVIRONMENT = {"JOURNAL": "notes.txt"}
 EPOCH_MILLIS = 1_700_000_000_000
 
 
-def drive(lib: Library, root: int, script: list[str]) -> list[str]:
+def drive(lib: Library, root: int, script: list[str], seed: int | None = None) -> list[str]:
     """Perform each effect and reply by id; resume every child a machine
     spawns, to begin it; resume each machine a `woke` frame names; free each machine as it
     completes. Every call comes from this one thread, so a pinned child stays
-    on the thread that first resumed it."""
+    on the thread that first resumed it. With a `seed`, adversarially (see the
+    module's docs)."""
     lines, written, greeted = iter(script), [], 0
     files: dict[str, bytes] = {}
     readings, next_byte = 0, 0
     machines: dict[int, int] = {}  # handle → status of its last call
-    queue: deque[tuple[int, dict]] = deque()
+    rng = random.Random(seed) if seed is not None else None
+    # (lane, handle, effect): a machine's effects share its lane, and stay in
+    # order; deferred replies have lanes of their own.
+    queue: deque[tuple[object, int, dict]] = deque()
     closed: set[tuple[int, int]] = set()  # (handle, id) the routine abandoned
     timers: list[tuple[int, int, int, int]] = []  # (due ms, order set, handle, id)
     now, order = 0, itertools.count()
@@ -304,7 +337,24 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
             if e["kind"] == "closed":
                 closed.add((handle, e["id"]))
             else:
-                queue.append((handle, e))
+                queue.append((handle, handle, e))
+
+    def take() -> tuple[int, dict]:
+        """The next action: the oldest, or — seeded — the oldest of a lane
+        chosen at random, after perhaps a spurious resume."""
+        if rng is None:
+            _, handle, e = queue.popleft()
+            return handle, e
+        live = [h for h, status in machines.items() if status != COMPLETE]
+        if live and rng.random() < 1 / 8:
+            stutter = rng.choice(live)
+            ran(stutter, lib.resume(stutter))
+        seen: set[object] = set()
+        eligible = [i for i, (lane, _, _) in enumerate(queue) if not (lane in seen or seen.add(lane))]
+        at = rng.choice(eligible)
+        _, handle, e = queue[at]
+        del queue[at]
+        return handle, e
         if status == COMPLETE:
             lib.free(handle)
 
@@ -312,7 +362,7 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
 
     while True:
         while queue:
-            handle, e = queue.popleft()
+            handle, e = take()
             if (handle, e.get("id")) in closed:
                 continue  # abandoned while it waited its turn: never performed
             if e["kind"] == "write_line":
@@ -325,6 +375,9 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
             if e["kind"] == "woke":
                 if e["handle"] in machines and machines[e["handle"]] != COMPLETE:
                     ran(e["handle"], lib.resume(e["handle"]))
+                continue
+            if e["kind"] == "reply":  # a deferred reply's turn
+                ran(handle, lib.reply(handle, e["record"]))
                 continue
             if e["kind"] == "read_line":
                 record = read_line_reply(e["id"], next(lines, None))
@@ -349,14 +402,17 @@ def drive(lib: Library, root: int, script: list[str]) -> list[str]:
             elif e["kind"] == "write_file":
                 files[e["path"]] = e["bytes"]
                 record = reply_bytes(e["id"], b"\x00")
-            ran(handle, lib.reply(handle, record))
+            if rng is None:
+                ran(handle, lib.reply(handle, record))
+            else:
+                queue.append((("reply", handle, e["id"]), handle, {"kind": "reply", "id": e["id"], "record": record}))
 
         # Nothing queued: anything woken outside a call? Then any timer due,
         # earliest first. If neither, nothing can happen again — the end, or
         # a stall.
         woken = decode(lib.wakes())
         if woken:
-            queue.extend((0, e) for e in woken)
+            queue.extend((("woke", e["handle"]), 0, e) for e in woken)
             continue
         while timers and (timers[0][2], timers[0][3]) in closed:
             heapq.heappop(timers)  # abandoned: the routine stopped waiting
@@ -393,14 +449,21 @@ def find_library() -> Path:
 if __name__ == "__main__":
     kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline", "deadlock")
     kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
+    seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else None
+    record_to = sys.argv[sys.argv.index("--record") + 1] if "--record" in sys.argv else None
     script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": [], "deadline": [], "deadlock": []}[kind]
     lib = Library(find_library())
     began = time.perf_counter()
+    root = lib.new(kind)
+    recording = lib.record(root) if record_to else None
     try:
-        drive(lib, lib.new(kind), script)
+        drive(lib, root, script, seed)
     except Stalled as stalled:
         print(stalled, file=sys.stderr)
         sys.exit(1)
+    finally:
+        if recording is not None:
+            Path(record_to).write_bytes(lib.record_finish(recording))
     if kind == "ring":
         hops, elapsed = 16 * 250, time.perf_counter() - began
         print(f"{hops} hops in {elapsed * 1e3:.1f} ms: {elapsed * 1e6 / hops:.2f} µs per hop", file=sys.stderr)

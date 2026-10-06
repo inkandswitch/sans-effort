@@ -1,5 +1,6 @@
 //! C ABI over the greeter: `abi_version`, `new`, `resume`, `reply`, `wakes`,
-//! `free`.
+//! `free` — and, for host checks, `record` and `record_finish`, so a run a
+//! foreign host made can be replayed in Rust (`src/bin/replay.rs`).
 //!
 //! The vocabulary and the reifying context are `greeter_boundary`; the handle
 //! table and the type check on replies are `sans-effort-host`. This crate
@@ -16,12 +17,20 @@ use routines::{
     deadline::Deadline, fanout::Fanout, faults::deadlock::Deadlock, front_desk::FrontDesk,
     greeter::Greeter, journal::Journal, ping_pong::PingPong, ring::Ring, ticker::Ticker,
 };
-use sans_effort_core::{driver::status::Status, step::Step};
+use sans_effort_core::{boundary::codec::Encode, driver::status::Status, step::Step};
 use sans_effort_effects::ctx::Ctx;
 use sans_effort_host::{
-    contract::{OK, REVISION, code_of, status_code},
+    contract::{BAD_HANDLE, OK, REVISION, code_of, status_code},
     error::Error,
+    record::{Recorder, record},
     table,
+};
+use std::{
+    collections::HashMap,
+    sync::{
+        LazyLock, Mutex, PoisonError,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 /// The revision of `ABI.md` this binding speaks. Check it before `new`.
@@ -162,6 +171,46 @@ pub unsafe extern "C" fn greeter_wakes(out_ptr: *mut *mut u8, out_len: *mut usiz
     OK
 }
 
+/// Begin recording `handle` and every machine it creates: each later
+/// `resume`, `reply`, and `free` on them, with its outcome. Returns the
+/// recording's number, never 0, for [`greeter_record_finish`].
+#[unsafe(no_mangle)]
+pub extern "C" fn greeter_record(handle: u64) -> u32 {
+    let recording = NEXT_RECORDING.fetch_add(1, Ordering::Relaxed);
+    RECORDINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(recording, record(handle));
+    recording
+}
+
+/// Stop a recording and hand the host its log, encoded: `OK`, or
+/// `BAD_HANDLE` for a number that is not a recording in progress. Save the
+/// bytes to a file and replay them with
+/// `cargo run -p greeter_cdylib --bin replay -- FILE MODE`.
+///
+/// # Safety
+///
+/// `out_ptr` and `out_len` must be valid for writes. Free the buffer with
+/// [`greeter_buf_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn greeter_record_finish(
+    recording: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    let recorder = RECORDINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&recording);
+    let Some(recorder) = recorder else {
+        return BAD_HANDLE;
+    };
+    // SAFETY: caller contract.
+    unsafe { write_out(recorder.finish().to_bytes(), out_ptr, out_len) };
+    OK
+}
+
 /// Drop a greeter, including any request it had outstanding.
 #[unsafe(no_mangle)]
 pub extern "C" fn greeter_free(handle: u64) -> i32 {
@@ -184,6 +233,12 @@ pub unsafe extern "C" fn greeter_buf_free(ptr: *mut u8, len: usize) {
     // SAFETY: reconstructing the `Box<[u8]>` leaked in `deliver`.
     drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
 }
+
+/// Recordings begun and not finished, by number.
+static RECORDINGS: LazyLock<Mutex<HashMap<u32, Recorder>>> = LazyLock::new(Mutex::default);
+
+/// The next recording's number.
+static NEXT_RECORDING: AtomicU32 = AtomicU32::new(1);
 
 /// Hand a result to the host: on success, the buffer through the two
 /// out-pointers and the status as the return code; on error, the error's

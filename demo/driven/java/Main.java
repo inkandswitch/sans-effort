@@ -36,10 +36,22 @@
 /// routine runs natively.
 ///
 ///     cargo build -p greeter_cdylib
-///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal | --deadline | --deadlock] [--trace]
+///     java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java [--fanout | --ticker | --ping-pong | --front-desk | --ring | --journal | --deadline | --deadlock] [--seed N] [--record FILE] [--trace]
 ///
 /// `--trace` logs every call to stderr — thread, call, handle, status — to
 /// show which worker polled what.
+///
+/// `--seed N` makes the host adversarial: the seed picks the number of
+/// workers (1 to 4; one is a sequential host), every ask waits a random 0–2 ms
+/// before it is performed, so replies land in varied orders, and one event in
+/// eight also resumes a random machine for no reason — harmless, the ABI says.
+/// The seed reproduces the dice, not the threads' timing. The transcript must
+/// not change.
+///
+/// `--record FILE` saves the run's log (`greeter_record`, `greeter_record_finish`)
+/// for `cargo run -p greeter_cdylib --bin replay -- FILE MODE`. Replay repeats
+/// the calls one at a time, in the order they were logged: exact for one
+/// worker; with several, calls that raced may replay differently.
 
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
@@ -47,6 +59,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -106,7 +119,7 @@ public class Main {
     static final class Library {
         /** Shared: the symbols are called from every driver thread. */
         final Arena arena = Arena.ofShared();
-        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, newDeadline, newDeadlock, reply, resume, wakes, free, bufFree;
+        final MethodHandle abiVersion, newGreeter, newFanout, newTicker, newPingPong, newFrontDesk, newRing, newJournal, newDeadline, newDeadlock, reply, resume, wakes, recordStart, recordFinish, free, bufFree;
 
         Library(Path path) throws Throwable {
             Linker linker = Linker.nativeLinker();
@@ -128,6 +141,8 @@ public class Main {
             reply      = linker.downcallHandle(lib.find("greeter_reply").get(), FunctionDescriptor.of(i32, u64, ptr, u64, ptr, ptr));
             resume     = linker.downcallHandle(lib.find("greeter_resume").get(), FunctionDescriptor.of(i32, u64, ptr, ptr));
             wakes      = linker.downcallHandle(lib.find("greeter_wakes").get(), FunctionDescriptor.of(i32, ptr, ptr));
+            recordStart  = linker.downcallHandle(lib.find("greeter_record").get(), FunctionDescriptor.of(i32, u64));
+            recordFinish = linker.downcallHandle(lib.find("greeter_record_finish").get(), FunctionDescriptor.of(i32, i32, ptr, ptr));
             free       = linker.downcallHandle(lib.find("greeter_free").get(), FunctionDescriptor.of(i32, u64));
             bufFree    = linker.downcallHandle(lib.find("greeter_buf_free").get(), FunctionDescriptor.ofVoid(ptr, u64));
 
@@ -147,6 +162,21 @@ public class Main {
                 case "deadlock" -> (long) newDeadlock.invokeExact();
                 default -> (long) newGreeter.invokeExact();
             };
+        }
+
+        /** Begin recording `handle` and the machines it creates; the recording's number. */
+        int startRecording(long handle) throws Throwable {
+            return (int) recordStart.invokeExact(handle);
+        }
+
+        /** The recording's log, encoded. */
+        byte[] finishRecording(int recording) throws Throwable {
+            try (Arena call = Arena.ofConfined()) {
+                MemorySegment outPtr = call.allocate(ValueLayout.ADDRESS);
+                MemorySegment outLen = call.allocate(ValueLayout.JAVA_LONG);
+                int code = (int) recordFinish.invokeExact(recording, outPtr, outLen);
+                return collect(code, outPtr, outLen).data();
+            }
         }
 
         /** One reply record in; the next batch out. */
@@ -450,6 +480,10 @@ public class Main {
                 event.getClass().getSimpleName().toLowerCase(), m.handle, out.status());
             m.status = out.status();
             dispatch(m, decode(out.data()));
+            if (SEED != null && SEED.nextInt(8) == 0) {
+                List<Machine> live = new ArrayList<>(machines.values());
+                if (!live.isEmpty()) post(live.get(SEED.nextInt(live.size())), new Resume()); // spurious
+            }
             if (out.status() == COMPLETE) {
                 machines.remove(m.handle);
                 lib.free(m.handle); // on this worker: a pinned machine's own thread
@@ -491,6 +525,7 @@ public class Main {
             inFlight.put(request, new InFlight(null, settled));
             Future<?> running = effects.submit(() -> {
                 try {
+                    if (SEED != null) Thread.sleep(Duration.ofNanos(SEED.nextInt(2_000_000)));
                     post(m, new Reply(e.id(), perform(e)));
                 } catch (InterruptedException cancelled) {
                     // closed: nothing to reply
@@ -553,7 +588,8 @@ public class Main {
     }
 
     static void drive(Library lib, long root, List<String> script) throws Throwable {
-        int threads = Math.max(2, Runtime.getRuntime().availableProcessors());
+        int threads = SEED != null ? 1 + SEED.nextInt(4) : Math.max(2, Runtime.getRuntime().availableProcessors());
+        if (SEED != null) System.err.printf("seeded: %d worker%s%n", threads, threads == 1 ? "" : "s");
         try (Scheduler scheduler = new Scheduler(lib, script, threads)) {
             scheduler.run(root);
         }
@@ -571,6 +607,9 @@ public class Main {
 
     static boolean TRACE;
 
+    /** With `--seed N`: the dice for an adversarial schedule; `null` without. */
+    static Random SEED;
+
     /**
      * Machines that can never progress: nothing to call, nothing to reply to, nothing woken, and they have not
      * completed. A deadlock, or a routine waiting on something no machine will provide.
@@ -582,6 +621,10 @@ public class Main {
     public static void main(String[] args) throws Throwable {
         List<String> argv = List.of(args);
         TRACE = argv.contains("--trace");
+        int seedAt = argv.indexOf("--seed");
+        // Mixed first: `Random`'s first draws from small, nearby seeds are nearly
+        // the same. `Random` itself, because the dice are shared across threads.
+        if (seedAt >= 0) SEED = new Random(new SplittableRandom(Long.parseLong(argv.get(seedAt + 1))).nextLong());
         String kind = List.of("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline", "deadlock").stream()
             .filter(k -> argv.contains("--" + k)).findFirst().orElse("greeter");
         List<String> script = switch (kind) {
@@ -593,12 +636,19 @@ public class Main {
 
         Library lib = new Library(findLibrary());
         long began = System.nanoTime();
+        long root = lib.create(kind);
+        int recordAt = argv.indexOf("--record");
+        int recording = recordAt >= 0 ? lib.startRecording(root) : 0;
+        boolean stalled = false;
         try {
-            drive(lib, lib.create(kind), script);
-        } catch (Stalled stalled) {
-            System.err.println(stalled.getMessage());
-            System.exit(1);
+            drive(lib, root, script);
+        } catch (Stalled stall) {
+            System.err.println(stall.getMessage());
+            stalled = true;
         }
+        // Saved before any exit: `System.exit` skips `finally`.
+        if (recording != 0) Files.write(Path.of(argv.get(recordAt + 1)), lib.finishRecording(recording));
+        if (stalled) System.exit(1);
         if (kind.equals("ring")) {
             int hops = 16 * 250;
             double ms = (System.nanoTime() - began) / 1e6;

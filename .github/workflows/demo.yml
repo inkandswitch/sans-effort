@@ -134,6 +134,13 @@ jobs:
           diff python-deadlock-err.txt java-deadlock-err.txt
           cat python-deadlock.txt python-deadlock-err.txt
 
+      # Host check (`demo:stress` locally): every host under seeded, adversarial
+      # schedules — Python reordering machines and deferring replies, Node
+      # settling answers out of order, Java varying its workers, tokio its
+      # runtime's — must write what tokio writes on an ordinary run.
+      - name: "Host check: seeded schedules agree"
+        run: bash demo/stress.sh 3
+
       # Races: each quick worker beats a 30 s sleep, whose request then closes.
       # A host that fails to cancel the abandoned timer waits it out, so the
       # time limit is the check that every host stops it.
