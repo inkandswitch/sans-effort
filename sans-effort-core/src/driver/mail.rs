@@ -120,14 +120,17 @@ impl Mail {
         }
     }
 
-    /// The routine dropped a polled request. If its slot is still open it
-    /// goes, and its id is reported in the next step's
-    /// [`closed`](super::Yield::closed); if the reply was already
-    /// collected there is nothing to close.
+    /// The routine dropped a polled request. Its slot goes; if no reply had
+    /// arrived, its id is reported in the next step's
+    /// [`closed`](super::Yield::closed). A request whose reply arrived —
+    /// collected or not — was answered, not abandoned: the host has no work
+    /// left to stop, so it is not reported.
     pub(super) fn close(&mut self, id: u64) {
         if let Some(at) = self.position(id) {
-            self.slots.swap_remove(at);
-            self.closed.push(id);
+            let answered = self.slots.swap_remove(at).value.is_some();
+            if !answered {
+                self.closed.push(id);
+            }
         }
     }
 

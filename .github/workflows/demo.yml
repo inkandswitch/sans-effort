@@ -22,136 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: ./.github/actions/nix
         with:
-          cache: true
-          target: wasm32-unknown-unknown
+          cargo-cache: demo
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "25"
-
-      - name: Install wasm-bindgen-cli
-        # Must match the `=` pin on the `wasm-bindgen` crate in Cargo.toml.
-        uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-bindgen@0.2.127
-
-      - name: Build the cdylib and the wasm module
-        run: |
-          cargo build -p greeter_cdylib
-          cargo build -p greeter_wasm --release --target wasm32-unknown-unknown
-          wasm-bindgen --target nodejs --out-dir demo/native/js/pkg \
-            target/wasm32-unknown-unknown/release/greeter_wasm.wasm
-
-      - name: Native host (tokio, no driver)
-        run: |
-          printf 'alice\nbob\nquit\n' | cargo run -q -p greeter_tokio > rust.txt
-          printf 'bob\ncarol\n' | cargo run -q -p greeter_tokio -- --fanout > rust-fanout.txt
-          cargo run -q -p greeter_tokio -- --journal < /dev/null > rust-journal.txt
-
-      - name: Python host
-        run: |
-          python3 demo/driven/python/main.py > python.txt
-          python3 demo/driven/python/main.py --fanout > python-fanout.txt
-          python3 demo/driven/python/main.py --journal > python-journal.txt
-          python3 demo/driven/python/main.py --ticker
-
-      - name: JS host (native)
-        run: |
-          node demo/native/js/main.mjs > js.txt
-          node demo/native/js/main.mjs --fanout > js-fanout.txt
-          node demo/native/js/main.mjs --journal > js-journal.txt
-
-      - name: Java host (Panama, C ABI)
-        run: |
-          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java > java.txt
-          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --fanout > java-fanout.txt
-          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --journal > java-journal.txt
-          java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --ticker
-
+      # Every mode, on every host; transcripts must agree. A deadline's host
+      # that fails to cancel its abandoned timer overruns the time limit.
       - name: Transcripts agree
-        run: |
-          diff rust.txt python.txt
-          diff rust.txt js.txt
-          diff rust-fanout.txt python-fanout.txt
-          diff rust-fanout.txt js-fanout.txt
-          diff rust.txt java.txt
-          diff rust-fanout.txt java-fanout.txt
-          diff rust-journal.txt python-journal.txt
-          diff rust-journal.txt js-journal.txt
-          diff rust-journal.txt java-journal.txt
-          cat rust.txt rust-fanout.txt rust-journal.txt
+        run: nix develop .#ci --command demo
 
-      # Spawning and channels: children, pinned children, and woke frames. Each
-      # host's stdout is deterministic (the ring prints its timing to stderr).
-      - name: Spawning modes agree
-        run: |
-          for mode in --ping-pong --front-desk --ring; do
-            case "$mode" in
-              --front-desk) script='alice\nbob\ncarol\n' ;;
-              *) script='' ;;
-            esac
-            printf "$script" | cargo run -q -p greeter_tokio -- $mode > rust-spawn.txt
-            python3 demo/driven/python/main.py $mode > python-spawn.txt
-            node demo/native/js/main.mjs $mode > js-spawn.txt
-            java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java $mode > java-spawn.txt
-            diff rust-spawn.txt python-spawn.txt
-            diff rust-spawn.txt js-spawn.txt
-            diff rust-spawn.txt java-spawn.txt
-            echo "Transcripts agree $mode"
-          done
+      # Routines that misbehave on purpose (`routines::faults`): a deadlock
+      # must be reported, the same way by every host, not hung on.
+      - name: "Host check: a deadlock is reported"
+        run: nix develop .#ci --command demo:faults
 
-      # Host checks (`demo:faults` locally): routines that misbehave on purpose,
-      # from `routines::faults`. A deadlock: two machines each waiting for the
-      # other. The driven hosts
-      # report the stall on stderr and exit 1; Node's event loop runs dry and it
-      # exits 13 (an unsettled top-level await). tokio has no detector: it would
-      # hang, so it is not run. A host that hangs instead hits the time limit.
-      - name: "Host check: a deadlock is reported, not hung on"
-        run: |
-          set +e
-          timeout 20 python3 demo/driven/python/main.py --deadlock > python-deadlock.txt 2> python-deadlock-err.txt
-          python=$?
-          timeout 20 java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --deadlock > java-deadlock.txt 2> java-deadlock-err.txt
-          java=$?
-          timeout 20 node demo/native/js/main.mjs --deadlock > js-deadlock.txt
-          node=$?
-          set -e
-          test "$python $java $node" = "1 1 13"
-          diff python-deadlock.txt java-deadlock.txt
-          diff python-deadlock.txt js-deadlock.txt
-          diff python-deadlock-err.txt java-deadlock-err.txt
-          cat python-deadlock.txt python-deadlock-err.txt
-
-      # Host check (`demo:stress` locally): every host under seeded, adversarial
-      # schedules — Python reordering machines and deferring replies, Node
-      # settling answers out of order, Java varying its workers, tokio its
-      # runtime's — must write what tokio writes on an ordinary run.
+      # Every host under seeded, adversarial schedules must write what tokio
+      # writes on an ordinary run; every Python run must replay exactly.
       - name: "Host check: seeded schedules agree"
-        run: bash demo/stress.sh 3
-
-      # Races: each quick worker beats a 30 s sleep, whose request then closes.
-      # A host that fails to cancel the abandoned timer waits it out, so the
-      # time limit is the check that every host stops it.
-      - name: Deadline mode agrees, and cancels its abandoned timer
-        run: |
-          cargo build -q -p greeter_tokio
-          timeout 10 cargo run -q -p greeter_tokio -- --deadline > rust-deadline.txt
-          timeout 10 python3 demo/driven/python/main.py --deadline > python-deadline.txt
-          timeout 10 node demo/native/js/main.mjs --deadline > js-deadline.txt
-          timeout 20 java --enable-native-access=ALL-UNNAMED demo/driven/java/Main.java --deadline > java-deadline.txt
-          diff rust-deadline.txt python-deadline.txt
-          diff rust-deadline.txt js-deadline.txt
-          diff rust-deadline.txt java-deadline.txt
-          cat rust-deadline.txt
+        run: nix develop .#ci --command demo:stress 3

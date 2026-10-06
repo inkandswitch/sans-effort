@@ -28,7 +28,7 @@ Each effect, and each closed request, crosses as one frame: `u8 kind · u32 len 
 |------------|------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
 | `1` tell   | an effect that awaits no reply                                                                 | performs it; skips it if it does not know the tag                                      |
 | `2` ask    | an effect that awaits a reply; its payload ends with the request id                            | performs it and replies; refuses to continue if it does not know the tag — nobody else will answer |
-| `3` closed | one `u64` request id the routine abandoned: a race's losing branch, or anything outstanding at completion | may stop that work; a reply to it is `STALE`                                           |
+| `3` closed | one `u64` request id the routine abandoned before its reply: a race's losing branch, or anything outstanding at completion. A request the host has replied to is never closed, even if the routine drops the reply unread | may stop that work; a reply to it is `STALE`                                           |
 | `4` woke   | one `u64` machine handle: that machine may be able to progress — something it waits on inside the process changed, such as a channel this call's routine sent on | `resume`s it when it chooses; it may be this machine, or any other, and it may have been freed since (`BAD_HANDLE`) |
 | other      | reserved for records a later revision adds                                                     | skips the frame                                                                        |
 

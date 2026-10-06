@@ -467,6 +467,38 @@ mod tests {
             });
     }
 
+    /// Raced against a message: the reply arrives on the same poll as the
+    /// message, `select` takes the message (it polls first), and the ask is
+    /// dropped unread. It was answered, not abandoned: not closed.
+    #[test]
+    fn an_answered_request_dropped_unread_is_not_closed() {
+        let (tx, rx) = async_channel::unbounded::<()>();
+        let mut driver = Driver::new(move |outbox: Outbox<Effect>| async move {
+            let won = crate::select::select(rx.recv(), outbox.ask(Effect::Ask)).await;
+            let said = if matches!(won, crate::select::Either::Left(_)) {
+                "message"
+            } else {
+                "reply"
+            };
+            outbox.tell(Effect::Say(String::from(said)));
+        });
+        let (_, handles) = split(driver.resume());
+        let ask = one(handles);
+
+        tx.try_send(()).expect("unbounded");
+        let (effects, closed) = driver.reply(ask, String::from("late")).into_parts();
+        let said: Vec<String> = effects
+            .into_iter()
+            .filter_map(|e| match e {
+                Effect::Say(s) => Some(s),
+                Effect::Ask(_) => None,
+            })
+            .collect();
+        assert_eq!(said, ["message"], "the receive is polled first, and wins");
+        assert!(closed.is_empty(), "the ask had its reply: nothing to close");
+        assert_eq!(driver.status(), Status::Complete);
+    }
+
     /// Answers whose decoding can fail, one per wire kind, so that what a
     /// mailbox checks — the value as delivered — is visible.
     #[derive(Debug)]

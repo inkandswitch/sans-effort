@@ -33,6 +33,7 @@ async-channel = { workspace = true }
 sans-effort-core = { workspace = true, features = ["testing"] }
 bolero = { workspace = true }
 criterion = { workspace = true }
+serde_json = { workspace = true }
 
 [[bench]]
 name = "table"

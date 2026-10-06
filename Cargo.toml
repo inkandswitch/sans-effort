@@ -45,6 +45,9 @@ portable-atomic = { version = "1.15", default-features = false, features = [
 portable-atomic-util = { version = "0.2.8", default-features = false, features = [
   "alloc",
 ] }
+serde_json = { version = "1.0.151", default-features = false, features = [
+  "std",
+] }
 spin = { version = "0.12.3", default-features = false, features = [
   "mutex",
   "spin_mutex",

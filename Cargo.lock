@@ -916,6 +916,7 @@ dependencies = [
  "bolero",
  "criterion",
  "sans-effort-core",
+ "serde_json",
  "thiserror",
 ]
 
