@@ -1,0 +1,50 @@
+name: Spec
+
+# The host-protocol spec (spec/host_protocol.qnt), model-checked by TLC through
+# Quint: every real instance must pass, and every mistaken host must be caught.
+# The checks are spec/check.sh, which `nix develop --command spec:check` runs
+# too.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - "spec/**"
+      - "ABI.md"
+      - ".github/workflows/spec.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # Apalache, which Quint compiles to TLA+ through, and TLC need Java 17+.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      # The version the flake pins.
+      - name: Install Quint
+        run: npm install --global @informalsystems/quint@0.32.0
+
+      - name: Model-check the host protocol
+        run: bash spec/check.sh
+
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-logs
+          path: /tmp/sans-effort-spec-*.log

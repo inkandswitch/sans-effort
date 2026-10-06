@@ -10,6 +10,7 @@
   java = "${pkgs.jdk25}/bin/java";
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
+  quint = "${pkgs.quint}/bin/quint";
   wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
   bench-path = pkgs.lib.makeBinPath bench-pkgs;
 in {
@@ -197,6 +198,13 @@ in {
     echo "Deadlock reported --deadlock"
   '';
 
+  # The host-protocol spec (spec/host_protocol.qnt), model-checked by TLC
+  # through Quint. The checks themselves are in spec/check.sh, which CI runs
+  # too.
+  "spec:check" = cmd "Model-check the host-protocol spec (TLC via Quint): real instances pass, mistaken hosts are caught" ''
+    PATH=${pkgs.jdk25}/bin:$PATH QUINT=${quint} bash spec/check.sh
+  '';
+
   "ci:quick" = cmd "Run quick CI checks (fmt, clippy, test)" ''
     set -e
 
@@ -213,7 +221,7 @@ in {
     echo "Done"
   '';
 
-  "ci:full" = cmd "Run full CI (fmt, clippy, all-features, no_std, typos, deny, demo, host checks)" ''
+  "ci:full" = cmd "Run full CI (fmt, clippy, all-features, no_std, typos, deny, demo, host checks, spec)" ''
     set -e
 
     echo "===> [1/7] Checking formatting..."
@@ -238,6 +246,7 @@ in {
     echo "===> [7/7] Running the demo (Rust, Python, JS)..."
     demo
     demo:faults
+    spec:check
 
     echo ""
     echo "All CI suites passed"

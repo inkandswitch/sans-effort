@@ -109,7 +109,7 @@
         # The demo's foreign hosts. `wasm-bindgen-cli` must match the `=` pin on
         # the `wasm-bindgen` crate in Cargo.toml; bump both together.
         demo-pkgs = [
-          pkgs.jdk25 # java.lang.foreign is final from 22
+          pkgs.jdk25 # java.lang.foreign is final from 22; also runs TLC for `spec:check`
           pkgs.nodejs
           pkgs.python3
           unstable.wasm-bindgen-cli
@@ -204,6 +204,7 @@
               rust-toolchain
 
               pkgs.rust-analyzer
+              pkgs.quint # spec/: the host-protocol spec (`spec:check`)
             ]
             ++ format-pkgs
             ++ cargo-installs
