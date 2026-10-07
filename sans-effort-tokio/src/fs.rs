@@ -39,9 +39,8 @@ fn fs_error(error: &io::Error) -> FsError {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
+    use testresult::TestResult;
 
     #[test]
     fn what_the_os_says_becomes_what_a_routine_can_act_on() {
@@ -56,21 +55,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn written_then_read_back_and_a_missing_file_is_not_found() {
+    async fn written_then_read_back_and_a_missing_file_is_not_found() -> TestResult {
         let dir = std::env::temp_dir().join(format!("sans-effort-fs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        std::fs::create_dir_all(&dir)?;
         let path = dir.join("file").to_string_lossy().into_owned();
 
         assert_eq!(
             TokioFs.read_file(path.clone()).await,
             Err(FsError::NotFound)
         );
-        TokioFs
-            .write_file(path.clone(), b"hello".to_vec())
-            .await
-            .expect("written");
+        TokioFs.write_file(path.clone(), b"hello".to_vec()).await?;
         assert_eq!(TokioFs.read_file(path).await, Ok(b"hello".to_vec()));
 
-        std::fs::remove_dir_all(dir).expect("cleaned up");
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
     }
 }

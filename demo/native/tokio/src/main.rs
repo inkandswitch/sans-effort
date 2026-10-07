@@ -89,14 +89,13 @@ async fn run() -> Result<(), tokio::task::JoinError> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
     use std::{
         io,
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, PoisonError},
         time::Instant,
     };
+    use testresult::TestResult;
 
     /// A writer the test keeps a handle to while the routine owns the context.
     #[derive(Clone, Default)]
@@ -104,7 +103,10 @@ mod tests {
 
     impl io::Write for Shared {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0.lock().expect("unpoisoned").extend_from_slice(bytes);
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(bytes);
             Ok(bytes.len())
         }
 
@@ -120,7 +122,7 @@ mod tests {
     >(
         input: &'static [u8],
         routine: F,
-    ) -> String {
+    ) -> TestResult<String> {
         let out = Shared::default();
         let pool = LocalPoolHandle::new(1);
         tokio::spawn(routine(DemoCtx::new(TokioCtx::new(
@@ -128,10 +130,9 @@ mod tests {
             out.clone(),
             pool,
         ))))
-        .await
-        .expect("finished");
-        let written = out.0.lock().expect("unpoisoned").clone();
-        String::from_utf8(written).expect("UTF-8")
+        .await?;
+        let written = out.0.lock()?.clone();
+        Ok(String::from_utf8(written)?)
     }
 
     /// The greeter runs to completion under tokio alone — no `Driver`
@@ -141,11 +142,11 @@ mod tests {
     /// `tokio::spawn` accepts the future: the effect traits declare
     /// their futures `Send`, and the context is `Send`.
     #[tokio::test(start_paused = true)]
-    async fn greeter_runs_natively_in_virtual_time() {
+    async fn greeter_runs_natively_in_virtual_time() -> TestResult {
         let started = Instant::now();
         let virtual_start = tokio::time::Instant::now();
 
-        let written = transcript(b"alice\nbob\ncarol\n", |ctx| Greeter::new(ctx).run()).await;
+        let written = transcript(b"alice\nbob\ncarol\n", |ctx| Greeter::new(ctx).run()).await?;
 
         assert_eq!(
             written,
@@ -165,26 +166,29 @@ mod tests {
             150,
             "three PAUSEs of 50 ms each"
         );
+        Ok(())
     }
 
     /// Fan-out's `join` is two native tokio futures polled together: the
     /// sleep and the read overlap, so one 50 ms pause covers both.
     #[tokio::test(start_paused = true)]
-    async fn fanout_joins_native_futures() {
+    async fn fanout_joins_native_futures() -> TestResult {
         let virtual_start = tokio::time::Instant::now();
-        let written = transcript(b"bob\ncarol\n", |ctx| Fanout::new(ctx).run()).await;
+        let written = transcript(b"bob\ncarol\n", |ctx| Fanout::new(ctx).run()).await?;
 
         assert_eq!(written, "Who are you?\nHi, bob! (#1)\nBye, carol.\n");
         assert_eq!(virtual_start.elapsed().as_millis(), 50);
+        Ok(())
     }
 
     /// Ping-pong's child is spawned with `spawn`, so under tokio it is an
     /// ordinary task that may run on any worker; each round waits for the
     /// other side, and only the parent writes.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn ping_pong_spawns_a_task() {
-        let written = transcript(b"", |ctx| PingPong::new(ctx, 3).run()).await;
+    async fn ping_pong_spawns_a_task() -> TestResult {
+        let written = transcript(b"", |ctx| PingPong::new(ctx, 3).run()).await?;
         assert_eq!(written, "ping 1, pong 1\nping 2, pong 2\nping 3, pong 3\n");
+        Ok(())
     }
 
     /// A race is two native futures; the loser is dropped, and a dropped
@@ -192,9 +196,9 @@ mod tests {
     /// takes the slow worker's 50 ms deadline and nothing more: the quick
     /// worker's 30 s deadline never fires.
     #[tokio::test(start_paused = true)]
-    async fn deadline_drops_the_losing_sleep() {
+    async fn deadline_drops_the_losing_sleep() -> TestResult {
         let virtual_start = tokio::time::Instant::now();
-        let written = transcript(b"", |ctx| Deadline::new(ctx).run()).await;
+        let written = transcript(b"", |ctx| Deadline::new(ctx).run()).await?;
         assert_eq!(
             written,
             "quick worker: answered 1 in time\n\
@@ -202,52 +206,54 @@ mod tests {
              slow worker: answered 2 late\n"
         );
         assert_eq!(virtual_start.elapsed().as_millis(), 50);
+        Ok(())
     }
 
     /// The multi-machine routines on real multithreaded runtimes of 1 to 4
     /// workers, many times over: tokio's own scheduling is the adversary, and
     /// every run must write the same.
     #[test]
-    fn multi_machine_routines_agree_on_every_multithreaded_run() {
+    fn multi_machine_routines_agree_on_every_multithreaded_run() -> TestResult {
         for workers in 1..=4 {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(workers)
                 .enable_all()
-                .build()
-                .expect("a runtime");
+                .build()?;
             for _ in 0..20 {
                 assert_eq!(
-                    runtime.block_on(transcript(b"", |ctx| PingPong::new(ctx, 3).run())),
+                    runtime.block_on(transcript(b"", |ctx| PingPong::new(ctx, 3).run()))?,
                     "ping 1, pong 1\nping 2, pong 2\nping 3, pong 3\n"
                 );
                 assert_eq!(
                     runtime.block_on(transcript(b"alice\nbob\ncarol\n", |ctx| {
                         FrontDesk::new(ctx).run()
-                    })),
+                    }))?,
                     "Hello, alice!\nHi, bob!\nHey, carol!\nClosed.\n"
                 );
                 assert_eq!(
-                    runtime.block_on(transcript(b"", |ctx| Ring::new(ctx, 8, 20).run())),
+                    runtime.block_on(transcript(b"", |ctx| Ring::new(ctx, 8, 20).run()))?,
                     "ring of 8, 20 laps: 160 hops\n"
                 );
             }
             // Real time: each run waits out a 50 ms deadline.
             for _ in 0..3 {
                 assert_eq!(
-                    runtime.block_on(transcript(b"", |ctx| Deadline::new(ctx).run())),
+                    runtime.block_on(transcript(b"", |ctx| Deadline::new(ctx).run()))?,
                     "quick worker: answered 1 in time\n\
                      slow worker: no answer within 50 ms\n\
                      slow worker: answered 2 late\n"
                 );
             }
         }
+        Ok(())
     }
 
     /// The front desk's clerks are pinned: each runs on the context's local
     /// pool, while the receptionist is an ordinary task.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn front_desk_pins_its_clerks() {
-        let written = transcript(b"alice\nbob\ncarol\n", |ctx| FrontDesk::new(ctx).run()).await;
+    async fn front_desk_pins_its_clerks() -> TestResult {
+        let written = transcript(b"alice\nbob\ncarol\n", |ctx| FrontDesk::new(ctx).run()).await?;
         assert_eq!(written, "Hello, alice!\nHi, bob!\nHey, carol!\nClosed.\n");
+        Ok(())
     }
 }

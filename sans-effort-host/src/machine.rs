@@ -265,16 +265,15 @@ fn views<V>(step: Yield<Shown<V>>) -> Yield<V> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
     use crate::fixtures::{Both, Echo, Holds, Impatient, View};
     use sans_effort_core::{reply::kind::Kind, step::Step};
+    use testresult::TestResult;
 
     /// One ask of each wire kind, answered through the typed helpers a
     /// binding uses (`PyO3`, Rustler): each value arrives as itself.
     #[test]
-    fn the_typed_helpers_deliver_each_kind() {
+    fn the_typed_helpers_deliver_each_kind() -> TestResult {
         use alloc::{format, string::String, vec::Vec};
         use sans_effort_core::{
             boundary::{host_effect::HostEffect, pending::Pending},
@@ -313,21 +312,22 @@ mod tests {
             },
         );
         assert!(!m.is_finished());
-        drop(m.resume().expect("asks for a str"));
-        drop(m.reply_str(1, "s".into()).expect("a str"));
-        drop(m.reply_u64(2, 7).expect("a u64"));
-        drop(m.reply_unit(3).expect("a unit"));
-        let said = m.reply_bytes(4, alloc::vec![1, 2]).expect("bytes");
+        drop(m.resume()?);
+        drop(m.reply_str(1, "s".into())?);
+        drop(m.reply_u64(2, 7)?);
+        drop(m.reply_unit(3)?);
+        let said = m.reply_bytes(4, alloc::vec![1, 2])?;
         assert_eq!(said.effects(), [Some(String::from("s 7 () [1, 2]"))]);
         assert!(m.is_finished());
+        Ok(())
     }
 
     #[test]
-    fn a_reply_is_checked_for_kind_and_refused_after_completion() {
+    fn a_reply_is_checked_for_kind_and_refused_after_completion() -> TestResult {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
-        assert_eq!(m.resume().expect("resume").effects(), [View::Ask(1)]);
+        assert_eq!(m.resume()?.effects(), [View::Ask(1)]);
         assert!(
-            m.resume().expect("resume").is_empty(),
+            m.resume()?.is_empty(),
             "resuming again before the reply: nothing new, harmless"
         );
         assert_eq!(
@@ -340,17 +340,18 @@ mod tests {
             "wrong kind: named, and the handle kept"
         );
         assert_eq!(
-            m.reply(1, String::from("hi")).expect("reply").effects(),
+            m.reply(1, String::from("hi"))?.effects(),
             [View::Say("hi".into())]
         );
         assert_eq!(m.status(), Status::Complete);
         assert_eq!(m.reply(1, String::from("again")), Err(Error::Finished));
+        Ok(())
     }
 
     #[test]
-    fn dropped_requests_are_forgotten() {
+    fn dropped_requests_are_forgotten() -> TestResult {
         let mut m = Machine::from_routine(|outbox| Impatient(outbox).run());
-        let step = m.resume().expect("resume");
+        let step = m.resume()?;
         assert_eq!(
             step.effects(),
             [View::Ask(1), View::Ask(2)],
@@ -373,47 +374,45 @@ mod tests {
             "an id never issued is a host bug"
         );
         assert_eq!(
-            m.reply(2, String::from("kept")).expect("reply").effects(),
+            m.reply(2, String::from("kept"))?.effects(),
             [View::Say("kept".into())]
         );
         assert_eq!(m.status(), Status::Complete);
+        Ok(())
     }
 
     #[test]
-    fn a_second_reply_to_an_answered_id_is_stale() {
+    fn a_second_reply_to_an_answered_id_is_stale() -> TestResult {
         let mut m = Machine::from_routine(|outbox| Both(outbox).run());
-        drop(m.resume().expect("resume"));
-        drop(m.reply(1, String::from("a")).expect("reply 1"));
+        drop(m.resume()?);
+        drop(m.reply(1, String::from("a"))?);
         assert_eq!(m.reply(1, String::from("a")), Err(Error::Stale { id: 1 }));
+        Ok(())
     }
 
     #[test]
-    fn completion_closes_what_the_routine_still_held() {
+    fn completion_closes_what_the_routine_still_held() -> TestResult {
         let mut m = Machine::from_routine(|outbox| Holds(outbox).run());
-        let step = m.resume().expect("resume");
+        let step = m.resume()?;
         assert_eq!(m.status(), Status::Complete);
         assert_eq!(step.effects(), [View::Ask(1), View::Say("done".into())]);
         assert_eq!(step.closed(), [1], "held until return, then closed");
+        Ok(())
     }
 
     #[test]
-    fn resume_begins_a_machine_and_is_harmless_after() {
+    fn resume_begins_a_machine_and_is_harmless_after() -> TestResult {
         let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
         assert_eq!(
             m.reply(1, String::from("early")),
             Err(Error::BadInput),
             "before the first resume, no id has been issued"
         );
-        assert_eq!(
-            m.resume().expect("the first resume begins it").effects(),
-            [View::Ask(1)]
-        );
-        assert!(
-            m.resume().expect("resume").is_empty(),
-            "nothing new: harmless"
-        );
+        assert_eq!(m.resume()?.effects(), [View::Ask(1)]);
+        assert!(m.resume()?.is_empty(), "nothing new: harmless");
         assert_eq!(m.status(), Status::Awaiting, "still awaiting its reply");
-        drop(m.reply(1, String::from("hi")).expect("reply"));
+        drop(m.reply(1, String::from("hi"))?);
         assert_eq!(m.resume(), Err(Error::Finished));
+        Ok(())
     }
 }

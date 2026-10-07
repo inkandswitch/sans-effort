@@ -2,8 +2,6 @@
 //! reify an effect trait its own crate adds — here, one the stdlib knows
 //! nothing about.
 
-#![expect(clippy::panic, reason = "let-else arms name the batch they expected")]
-
 use core::{future::Future, ops::ControlFlow, time::Duration};
 use sans_effort_core::{
     driver::{Driver, status::Status},
@@ -15,6 +13,7 @@ use sans_effort_effects::{
     ctx::{AsCtx, Ctx},
     time::{Sleep, SleepEffect},
 };
+use testresult::TestResult;
 
 /// An effect trait the stdlib does not have.
 trait Locate {
@@ -81,11 +80,11 @@ impl<C: Locate + Sleep + WriteLine> Step for Postcard<C> {
 }
 
 #[test]
-fn a_newtype_gets_the_stdlib_and_adds_its_own() {
+fn a_newtype_gets_the_stdlib_and_adds_its_own() -> TestResult {
     let mut driver = Driver::<Effect>::new(|outbox| Postcard(HostCtx(Ctx::new(outbox))).run());
 
     let Some(Effect::Where(Asked { reply, .. })) = driver.resume().into_iter().next() else {
-        panic!("the routine locates first");
+        return Err("the routine locates first")?;
     };
     let Some(Effect::Sleep(Asked {
         request,
@@ -95,7 +94,7 @@ fn a_newtype_gets_the_stdlib_and_adds_its_own() {
         .into_iter()
         .next()
     else {
-        panic!("then sleeps");
+        return Err("then sleeps")?;
     };
     assert_eq!(request, SleepEffect(Duration::from_millis(5)));
 
@@ -109,6 +108,7 @@ fn a_newtype_gets_the_stdlib_and_adds_its_own() {
         .collect();
     assert_eq!(written, ["greetings from Nantes"]);
     assert_eq!(driver.status(), Status::Complete);
+    Ok(())
 }
 
 /// Effect traits follow through references and smart pointers to any

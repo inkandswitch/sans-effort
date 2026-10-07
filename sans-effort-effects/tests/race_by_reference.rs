@@ -3,12 +3,6 @@
 //! read's request is never closed. Only the sleep the routine stopped needing
 //! is; the read is answered late, and nothing is lost.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "tests assert their preconditions; let-else arms name the batch they expected"
-)]
-
 use core::{pin::pin, time::Duration};
 use sans_effort_core::{
     driver::{Driver, status::Status},
@@ -20,6 +14,7 @@ use sans_effort_effects::{
     ctx::Ctx,
     time::{Sleep, SleepEffect},
 };
+use testresult::TestResult;
 
 enum Effect {
     ReadLine(Asked<ReadLineEffect>),
@@ -58,7 +53,7 @@ async fn patiently<C: ReadLine + Sleep + WriteLine>(ctx: &C) -> Result<String, R
 }
 
 #[test]
-fn a_read_raced_by_reference_outlives_its_deadlines() {
+fn a_read_raced_by_reference_outlives_its_deadlines() -> TestResult {
     let mut driver = Driver::new(|outbox| async move {
         let ctx = Ctx::<Effect>::new(outbox);
         let line = patiently(&ctx).await;
@@ -69,11 +64,9 @@ fn a_read_raced_by_reference_outlives_its_deadlines() {
     let [
         Effect::ReadLine(Asked { reply: read, .. }),
         Effect::Sleep(Asked { reply: sleep, .. }),
-    ] = <[Effect; 2]>::try_from(first)
-        .ok()
-        .expect("a read and a deadline")
+    ] = <[Effect; 2]>::try_from(first).map_err(|_| "a read and a deadline")?
     else {
-        panic!("first batch: read, then sleep");
+        return Err("first batch: read, then sleep")?;
     };
     assert!(closed.is_empty());
 
@@ -85,11 +78,9 @@ fn a_read_raced_by_reference_outlives_its_deadlines() {
         let [
             Effect::WriteLine(WriteLineEffect(reminder)),
             Effect::Sleep(Asked { reply: next, .. }),
-        ] = <[Effect; 2]>::try_from(batch)
-            .ok()
-            .expect("a reminder and a deadline")
+        ] = <[Effect; 2]>::try_from(batch).map_err(|_| "a reminder and a deadline")?
         else {
-            panic!("after a deadline: remind, then sleep again");
+            return Err("after a deadline: remind, then sleep again")?;
         };
         assert_eq!(reminder, "Still waiting…");
         assert!(closed.is_empty(), "the read was not abandoned");
@@ -100,13 +91,13 @@ fn a_read_raced_by_reference_outlives_its_deadlines() {
     // deadline — the one the routine no longer needs — closes.
     let pending = sleep.id();
     let (last, closed) = driver.reply(read, Ok("alice".into())).into_parts();
-    let [Effect::WriteLine(WriteLineEffect(got))] = <[Effect; 1]>::try_from(last)
-        .ok()
-        .expect("the line, written")
+    let [Effect::WriteLine(WriteLineEffect(got))] =
+        <[Effect; 1]>::try_from(last).map_err(|_| "the line, written")?
     else {
-        panic!("last batch: the line");
+        return Err("last batch: the line")?;
     };
     assert_eq!(got, r#"got Ok("alice")"#);
     assert_eq!(closed, [pending]);
     assert_eq!(driver.status(), Status::Complete);
+    Ok(())
 }

@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 bolero = { workspace = true }
 sans-effort-core = { workspace = true, features = ["std"] }
+testresult = { workspace = true }
 
 [features]
 default = ["std"]

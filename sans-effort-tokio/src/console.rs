@@ -155,11 +155,10 @@ impl<W> core::fmt::Debug for TokioOutput<W> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
     use core::time::Duration;
     use std::sync::atomic::AtomicUsize;
+    use testresult::TestResult;
     use tokio::{io::AsyncWriteExt, time::timeout};
 
     #[tokio::test]
@@ -208,17 +207,19 @@ mod tests {
                 let (head, tail) = bytes.split_at(at);
                 let ending: &[u8] = if *crlf { b"\r\n" } else { b"\n" };
 
-                paused().block_on(async {
+                let Ok(runtime) = paused();
+                let Ok(()) = runtime.block_on(async {
                     let (reader, mut writer) = tokio::io::duplex(4096);
                     let input = TokioInput::new(tokio::io::BufReader::new(reader));
 
-                    writer.write_all(head).await.expect("written");
+                    writer.write_all(head).await?;
                     let dropped = timeout(Duration::from_millis(1), input.read_line()).await;
                     assert!(dropped.is_err(), "no line yet: the read was dropped");
 
-                    writer.write_all(tail).await.expect("written");
-                    writer.write_all(ending).await.expect("written");
+                    writer.write_all(tail).await?;
+                    writer.write_all(ending).await?;
                     assert_eq!(input.read_line().await, Ok(text.clone()));
+                    TestResult::Ok(())
                 });
             });
     }
@@ -226,24 +227,24 @@ mod tests {
     /// The line in progress is ended by the end of input, not a newline: it
     /// is still a line, and only then is the input closed.
     #[tokio::test(start_paused = true)]
-    async fn a_held_line_ended_by_the_end_of_input_is_a_line() {
+    async fn a_held_line_ended_by_the_end_of_input_is_a_line() -> TestResult {
         let (reader, mut writer) = tokio::io::duplex(64);
         let input = TokioInput::new(tokio::io::BufReader::new(reader));
-        writer.write_all(b"bye").await.expect("written");
+        writer.write_all(b"bye").await?;
         let dropped = timeout(Duration::from_millis(1), input.read_line()).await;
         assert!(dropped.is_err());
         drop(writer);
         assert_eq!(input.read_line().await, Ok(String::from("bye")));
         assert_eq!(input.read_line().await, Err(ReadLineError::Closed));
+        Ok(())
     }
 
     /// A current-thread runtime on a paused clock, for a property test.
-    fn paused() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
+    fn paused() -> TestResult<tokio::runtime::Runtime> {
+        Ok(tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .start_paused(true)
-            .build()
-            .expect("a runtime")
+            .build()?)
     }
 
     #[test]

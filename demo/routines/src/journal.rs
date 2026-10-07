@@ -92,8 +92,6 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
     use alloc::{collections::BTreeMap, sync::Arc, vec};
     use core::{
@@ -101,7 +99,8 @@ mod tests {
         time::Duration,
     };
     use sans_effort::{testing::run_now, time::UnixTime};
-    use std::sync::Mutex;
+    use std::sync::{Mutex, PoisonError};
+    use testresult::TestResult;
 
     /// The demo hosts' fixtures, in Rust: a fixed variable, files in memory,
     /// a clock that moves a second per reading, counting random bytes, and a
@@ -127,7 +126,7 @@ mod tests {
 
     impl ReadFile for Desk {
         fn read_file(&self, path: String) -> impl Future<Output = Result<Vec<u8>, FsError>> + Send {
-            let files = self.0.files.lock().expect("unpoisoned");
+            let files = self.0.files.lock().unwrap_or_else(PoisonError::into_inner);
             ready(files.get(&path).cloned().ok_or(FsError::NotFound))
         }
     }
@@ -141,14 +140,22 @@ mod tests {
             if self.0.refuse_writes {
                 return ready(Err(FsError::PermissionDenied));
             }
-            self.0.files.lock().expect("unpoisoned").insert(path, bytes);
+            self.0
+                .files
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(path, bytes);
             ready(Ok(()))
         }
     }
 
     impl Now for Desk {
         fn now(&self) -> impl Future<Output = UnixTime> + Send {
-            let mut readings = self.0.readings.lock().expect("unpoisoned");
+            let mut readings = self
+                .0
+                .readings
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let millis = 1_700_000_000_000 + 1_000 * *readings;
             *readings += 1;
             ready(UnixTime::from_since_epoch(Duration::from_millis(millis)))
@@ -157,7 +164,11 @@ mod tests {
 
     impl Random for Desk {
         fn random_bytes(&self, len: u32) -> impl Future<Output = Vec<u8>> + Send {
-            let mut next = self.0.next_byte.lock().expect("unpoisoned");
+            let mut next = self
+                .0
+                .next_byte
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let bytes = (0..len)
                 .map(|_| {
                     let b = *next;
@@ -171,7 +182,11 @@ mod tests {
 
     impl WriteLine for Desk {
         fn write_line(&self, line: String) {
-            self.0.written.lock().expect("unpoisoned").push(line);
+            self.0
+                .written
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(line);
         }
     }
 
@@ -193,7 +208,10 @@ mod tests {
                 let path = var.as_deref().unwrap_or(DEFAULT_PATH);
                 let entries: Vec<String> = (0..u64::from(*n))
                     .map(|k| {
-                        let byte = |b: u64| u8::try_from((4 * k + b) % 256).expect("a byte");
+                        let byte = |b: u64| {
+                            let [low, ..] = (4 * k + b).to_le_bytes();
+                            low
+                        };
                         let id = u32::from_be_bytes([byte(0), byte(1), byte(2), byte(3)]);
                         format!("{} {id:08x}", 1_700_000_000_000 + 1_000 * k)
                     })
@@ -205,24 +223,37 @@ mod tests {
                     .collect();
                 let file = format!("{}\n", entries.join("\n"));
 
-                assert_eq!(*desk.0.written.lock().expect("unpoisoned"), announced);
                 assert_eq!(
-                    desk.0.files.lock().expect("unpoisoned").get(path).cloned(),
+                    *desk
+                        .0
+                        .written
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner),
+                    announced
+                );
+                assert_eq!(
+                    desk.0
+                        .files
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get(path)
+                        .cloned(),
                     (*n > 0).then(|| file.into_bytes())
                 );
             });
     }
 
     #[test]
-    fn a_refused_write_is_reported_and_ends_the_journal() {
+    fn a_refused_write_is_reported_and_ends_the_journal() -> TestResult {
         let desk = Desk(Arc::new(State {
             refuse_writes: true,
             ..State::default()
         }));
         run_now(Journal::new(desk.clone(), 3).run());
         assert_eq!(
-            *desk.0.written.lock().expect("unpoisoned"),
+            *desk.0.written.lock()?,
             vec!["cannot write journal.txt: permission denied"]
         );
+        Ok(())
     }
 }

@@ -377,12 +377,6 @@ impl<A> core::fmt::Debug for Refused<A> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::expect_used,
-        clippy::panic,
-        reason = "tests assert their preconditions; let-else arms name the effect they expected"
-    )]
-
     use super::*;
     use crate::{
         boundary::{codec::DecodeError, pending::Pending},
@@ -395,6 +389,8 @@ mod tests {
         ops::ControlFlow,
         task::{Context, Poll, Waker},
     };
+    use std::sync::PoisonError;
+    use testresult::TestResult;
 
     #[derive(Debug)]
     enum Effect {
@@ -441,9 +437,11 @@ mod tests {
         (said, handles)
     }
 
-    fn one(mut handles: Vec<ReplyHandle<String>>) -> ReplyHandle<String> {
-        assert_eq!(handles.len(), 1, "exactly one request in the batch");
-        handles.pop().expect("one")
+    fn one(handles: Vec<ReplyHandle<String>>) -> TestResult<ReplyHandle<String>> {
+        let [handle] = handles.try_into().map_err(|handles: Vec<_>| {
+            format!("exactly one request in the batch, not {}", handles.len())
+        })?;
+        Ok(handle)
     }
 
     /// Whatever it holds, a yield gives it back as it was: emptiness is
@@ -471,7 +469,7 @@ mod tests {
     /// message, `select` takes the message (it polls first), and the ask is
     /// dropped unread. It was answered, not abandoned: not closed.
     #[test]
-    fn an_answered_request_dropped_unread_is_not_closed() -> testresult::TestResult {
+    fn an_answered_request_dropped_unread_is_not_closed() -> TestResult {
         let (tx, rx) = async_channel::unbounded::<()>();
         let mut driver = Driver::new(move |outbox: Outbox<Effect>| async move {
             let won = crate::select::select(rx.recv(), outbox.ask(Effect::Ask)).await;
@@ -483,7 +481,7 @@ mod tests {
             outbox.tell(Effect::Say(String::from(said)));
         });
         let (_, handles) = split(driver.resume());
-        let ask = one(handles);
+        let ask = one(handles)?;
 
         tx.try_send(())?;
         let (effects, closed) = driver.reply(ask, String::from("late")).into_parts();
@@ -549,18 +547,19 @@ mod tests {
     }
 
     /// The only effect of a yield that must hold exactly one.
-    fn only(effects: Yield<Typed>) -> Typed {
-        let mut effects = effects.into_iter();
-        let effect = effects.next().expect("an effect");
-        assert!(effects.next().is_none(), "only one");
-        effect
+    fn only(effects: Yield<Typed>) -> TestResult<Typed> {
+        let effects: Vec<_> = effects.into_iter().collect();
+        let [effect] = effects
+            .try_into()
+            .map_err(|effects: Vec<_>| format!("exactly one effect, not {}", effects.len()))?;
+        Ok(effect)
     }
 
     /// A host replying on the wire: a value that does not decode as the
     /// answer is refused, the request staying open; one that does is
     /// delivered. For a string, a number, and bytes alike.
     #[test]
-    fn try_reply_delivers_what_decodes_and_refuses_the_rest() {
+    fn try_reply_delivers_what_decodes_and_refuses_the_rest() -> TestResult {
         let mut driver = Driver::new(|outbox: Outbox<Typed>| async move {
             let text = outbox.ask(Typed::Text).await;
             let number = outbox.ask(Typed::Number).await;
@@ -573,61 +572,65 @@ mod tests {
         });
         assert!(!driver.is_finished());
 
-        let Typed::Text(text) = only(driver.resume()) else {
-            panic!("asks for text first");
+        let Typed::Text(text) = only(driver.resume())? else {
+            return Err("asks for text first")?;
         };
         let Pending::Str(wire) = NonEmpty::pending(text) else {
             unreachable!("text crosses as a string");
         };
         let (wire, _) = driver
             .try_reply(wire, String::new())
-            .expect_err("empty is not a NonEmpty")
+            .err()
+            .ok_or("empty is not a NonEmpty")?
             .into_parts();
         assert_eq!(driver.status(), Status::Awaiting);
 
-        let Ok(Typed::Number(number)) = driver.try_reply(wire, String::from("hi")).map(only) else {
-            panic!("a good string is delivered, and the routine asks for a number");
+        let Typed::Number(number) = only(driver.try_reply(wire, String::from("hi"))?)? else {
+            return Err("a good string is delivered, and the routine asks for a number")?;
         };
         let Pending::U64(wire) = Positive::pending(number) else {
             unreachable!("a number crosses as a u64");
         };
         let (wire, _) = driver
             .try_reply(wire, 0)
-            .expect_err("0 is not a Positive")
+            .err()
+            .ok_or("0 is not a Positive")?
             .into_parts();
 
-        let Ok(Typed::Either(either)) = driver.try_reply(wire, 7).map(only) else {
-            panic!("a good number is delivered, and the routine asks for a result");
+        let Typed::Either(either) = only(driver.try_reply(wire, 7)?)? else {
+            return Err("a good number is delivered, and the routine asks for a result")?;
         };
         let Pending::Bytes(wire) = <Result<String, u64>>::pending(either) else {
             unreachable!("a result crosses as bytes");
         };
         let (wire, _) = driver
             .try_reply(wire, alloc::vec![9])
-            .expect_err("9 is not an encoded result")
+            .err()
+            .ok_or("9 is not an encoded result")?
             .into_parts();
 
         let good = Ok::<String, u64>(String::from("x")).into_wire();
-        let Ok(Typed::Said(said)) = driver.try_reply(wire, good).map(only) else {
-            panic!("good bytes are delivered, and the routine says what it got");
+        let Typed::Said(said) = only(driver.try_reply(wire, good)?)? else {
+            return Err("good bytes are delivered, and the routine says what it got")?;
         };
         assert_eq!(said, r#"hi 7 Ok("x")"#);
         assert!(driver.is_finished());
+        Ok(())
     }
 
     #[test]
-    fn resume_reply_reply_finished() {
+    fn resume_reply_reply_finished() -> TestResult {
         let mut driver = echo();
 
         let (said, handles) = split(driver.resume());
         assert_eq!(said, ["?"]);
         assert_eq!(driver.status(), Status::Awaiting);
 
-        let (said, handles) = split(driver.reply(one(handles), String::from("a")));
+        let (said, handles) = split(driver.reply(one(handles)?, String::from("a")));
         assert_eq!(said, ["a", "?"]);
         assert_eq!(driver.status(), Status::Awaiting);
 
-        let (said, _) = split(driver.reply(one(handles), String::from("b")));
+        let (said, _) = split(driver.reply(one(handles)?, String::from("b")));
         assert_eq!(said, ["b"]);
         assert_eq!(driver.status(), Status::Complete);
         assert!(driver.is_finished());
@@ -635,17 +638,18 @@ mod tests {
             driver.resume().is_empty(),
             "resume after completion is a no-op"
         );
+        Ok(())
     }
 
     #[test]
-    fn driver_is_send_and_migrates() {
+    fn driver_is_send_and_migrates() -> TestResult {
         fn assert_send<T: Send>(_: &T) {}
 
         let mut driver = echo();
         assert_send(&driver);
 
         let (_, handles) = split(driver.resume());
-        let handle = one(handles);
+        let handle = one(handles)?;
 
         // Reply on another thread: the outbox's lock is the happens-before edge.
         let (driver, said) = std::thread::spawn(move || {
@@ -653,10 +657,11 @@ mod tests {
             (driver, said)
         })
         .join()
-        .expect("thread");
+        .map_err(|_| "the replying thread panicked")?;
 
         assert_eq!(said, ["far", "?"]);
         assert_eq!(driver.status(), Status::Awaiting);
+        Ok(())
     }
 
     /// Three requests: one never polled (nothing recorded), one polled then
@@ -678,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn unpolled_requests_emit_nothing_and_abandoned_ones_discard_late_replies() {
+    fn unpolled_requests_emit_nothing_and_abandoned_ones_discard_late_replies() -> TestResult {
         let mut driver = Driver::new(|outbox| Impatient(outbox).run());
 
         let step = driver.resume();
@@ -690,7 +695,7 @@ mod tests {
         let (_, handles) = split(step);
         let [abandoned, live]: [ReplyHandle<String>; 2] = handles
             .try_into()
-            .expect("the polled-then-dropped and the live request were recorded; the never-polled one was not");
+            .map_err(|_| "the polled-then-dropped and the live request were recorded; the never-polled one was not")?;
         assert_eq!(
             (abandoned.id(), live.id()),
             (1, 2),
@@ -707,6 +712,7 @@ mod tests {
         let (said, _) = split(driver.reply(live, String::from("kept")));
         assert_eq!(said, ["kept"]);
         assert!(driver.is_finished());
+        Ok(())
     }
 
     /// Asked one way round, polled the other: ids follow the polls, so the
@@ -754,26 +760,33 @@ mod tests {
         bolero::check!()
             .with_type::<bool>()
             .for_each(|first_first| {
-                let mut driver = Driver::new(|outbox| FanOut(outbox).run());
-                let (_, handles) = split(driver.resume());
-                let [a, b]: [ReplyHandle<String>; 2] = handles.try_into().expect("two");
-
-                // Each handle keeps its own value; only the order of delivery varies.
-                let replies = if *first_first {
-                    [(a, "a"), (b, "b")]
-                } else {
-                    [(b, "b"), (a, "a")]
-                };
-                let [(one, one_value), (other, other_value)] = replies;
-
-                let (said, _) = split(driver.reply(one, String::from(one_value)));
-                assert!(said.is_empty(), "one of two replied: nothing to say yet");
-                assert_eq!(driver.status(), Status::Awaiting);
-
-                let (said, _) = split(driver.reply(other, String::from(other_value)));
-                assert_eq!(said, ["a+b"]);
-                assert_eq!(driver.status(), Status::Complete);
+                let Ok(()) = fan_out_replied(*first_first);
             });
+    }
+
+    fn fan_out_replied(first_first: bool) -> TestResult {
+        let mut driver = Driver::new(|outbox| FanOut(outbox).run());
+        let (_, handles) = split(driver.resume());
+        let [a, b]: [ReplyHandle<String>; 2] = handles
+            .try_into()
+            .map_err(|_| "both requests in the first batch")?;
+
+        // Each handle keeps its own value; only the order of delivery varies.
+        let replies = if first_first {
+            [(a, "a"), (b, "b")]
+        } else {
+            [(b, "b"), (a, "a")]
+        };
+        let [(one, one_value), (other, other_value)] = replies;
+
+        let (said, _) = split(driver.reply(one, String::from(one_value)));
+        assert!(said.is_empty(), "one of two replied: nothing to say yet");
+        assert_eq!(driver.status(), Status::Awaiting);
+
+        let (said, _) = split(driver.reply(other, String::from(other_value)));
+        assert_eq!(said, ["a+b"]);
+        assert_eq!(driver.status(), Status::Complete);
+        Ok(())
     }
 
     /// A handle names the driver that minted it. Replying to another driver
@@ -788,7 +801,8 @@ mod tests {
         drop(b.resume());
 
         // Both drivers minted id 1; the handle knows whose it is.
-        drop(b.reply(one(handles), String::from("misrouted")));
+        let Ok(handle) = one(handles);
+        drop(b.reply(handle, String::from("misrouted")));
     }
 
     #[test]
@@ -816,7 +830,7 @@ mod tests {
         core::future::poll_fn(|_| {
             queue
                 .lock()
-                .expect("queue")
+                .unwrap_or_else(PoisonError::into_inner)
                 .pop_front()
                 .map_or(Poll::Pending, Poll::Ready)
         })
@@ -845,13 +859,16 @@ mod tests {
     impl Step for Relay {
         async fn step(&mut self) -> ControlFlow<()> {
             let message = self.outbox.ask(Effect::Ask).await;
-            self.queue.lock().expect("queue").push_back(message);
+            self.queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push_back(message);
             ControlFlow::Break(())
         }
     }
 
     #[test]
-    fn an_idle_machine_resumes_once_another_has_sent() {
+    fn an_idle_machine_resumes_once_another_has_sent() -> TestResult {
         let queue = Queue::default();
         let mut listener = Driver::new({
             let queue = Queue::clone(&queue);
@@ -871,12 +888,13 @@ mod tests {
         assert_eq!(listener.status(), Status::Idle);
 
         let (_, handles) = split(relay.resume());
-        assert!(relay.reply(one(handles), String::from("hi")).is_empty());
+        assert!(relay.reply(one(handles)?, String::from("hi")).is_empty());
         assert!(relay.is_finished());
 
         let (said, _) = split(listener.resume());
         assert_eq!(said, ["hi"]);
         assert!(listener.is_finished());
+        Ok(())
     }
 
     /// Holds an `Rc` across an `.await`, so its future is not `Send`: only a
@@ -898,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn a_local_driver_steps_a_future_that_is_not_send() {
+    fn a_local_driver_steps_a_future_that_is_not_send() -> TestResult {
         let seen = alloc::rc::Rc::new(core::cell::Cell::new(0));
         let mut driver = Driver::local({
             let seen = alloc::rc::Rc::clone(&seen);
@@ -906,10 +924,11 @@ mod tests {
         });
 
         let (_, handles) = split(driver.resume());
-        let (said, _) = split(driver.reply(one(handles), String::from("hi")));
+        let (said, _) = split(driver.reply(one(handles)?, String::from("hi")));
         assert_eq!(said, ["hi 1"]);
         assert!(driver.is_finished());
         assert_eq!(seen.get(), 1);
+        Ok(())
     }
 
     /// A queue that stores the waiter's waker when empty and calls it on the
@@ -922,7 +941,7 @@ mod tests {
     impl Signal {
         fn send(&self, message: &str) {
             let waiter = {
-                let mut inner = self.0.lock().expect("signal");
+                let mut inner = self.0.lock().unwrap_or_else(PoisonError::into_inner);
                 inner.0.push_back(String::from(message));
                 inner.1.take()
             };
@@ -932,12 +951,16 @@ mod tests {
         }
 
         fn waiter(&self) -> Option<Waker> {
-            self.0.lock().expect("signal").1.clone()
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .1
+                .clone()
         }
 
         fn recv(&self) -> impl Future<Output = String> + '_ {
             core::future::poll_fn(|cx| {
-                let mut inner = self.0.lock().expect("signal");
+                let mut inner = self.0.lock().unwrap_or_else(PoisonError::into_inner);
                 inner.0.pop_front().map_or_else(
                     || {
                         inner.1 = Some(cx.waker().clone());
@@ -988,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wake_is_reported_once_per_wait() {
+    fn a_wake_is_reported_once_per_wait() -> TestResult {
         let signal = Signal::default();
         let mut hearer = Driver::new({
             let signal = signal.clone();
@@ -1006,7 +1029,7 @@ mod tests {
 
         assert!(hearer.resume().is_empty());
         assert_eq!(hearer.status(), Status::Idle);
-        let waker = signal.waiter().expect("the hearer is waiting");
+        let waker = signal.waiter().ok_or("the hearer is waiting")?;
         waker.wake_by_ref();
         waker.wake_by_ref();
         assert_eq!(
@@ -1023,6 +1046,7 @@ mod tests {
         assert_eq!(woken(&count), 2, "after a poll, a wake is news again");
         let (said, _) = split(hearer.resume());
         assert_eq!(said, ["once"]);
+        Ok(())
     }
 
     /// Relays what the host tells it to `signal`, during its own poll.
@@ -1040,7 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn a_send_during_another_machines_poll_wakes_the_receiver() {
+    fn a_send_during_another_machines_poll_wakes_the_receiver() -> TestResult {
         let signal = Signal::default();
         let mut hearer = Driver::new({
             let signal = signal.clone();
@@ -1063,12 +1087,13 @@ mod tests {
         assert!(hearer.resume().is_empty());
         let (_, handles) = split(teller.resume());
         assert_eq!(woken(&count), 0);
-        drop(teller.reply(one(handles), String::from("hi")));
+        drop(teller.reply(one(handles)?, String::from("hi")));
         assert_eq!(woken(&count), 1, "woken inside the teller's poll");
 
         let (said, _) = split(hearer.resume());
         assert_eq!(said, ["hi"]);
         assert!(hearer.is_finished());
+        Ok(())
     }
 
     /// Wakes itself once and suspends — a yield — then finishes.

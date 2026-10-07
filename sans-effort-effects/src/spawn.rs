@@ -238,11 +238,6 @@ impl<E> fmt::Debug for PinnedChild<E> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::panic,
-        reason = "let-else arms name the effect the test expected"
-    )]
-
     use super::*;
     use crate::console::{WriteLine, WriteLineEffect as Written};
     use alloc::{rc::Rc, string::String, vec::Vec};
@@ -251,6 +246,7 @@ mod tests {
         driver::{Driver, Yield, status::Status},
         step::Step,
     };
+    use testresult::TestResult;
 
     enum Effect {
         Spawn(SpawnEffect<Effect>),
@@ -314,39 +310,42 @@ mod tests {
         }
     }
 
-    fn written(step: Yield<Effect>) -> Vec<String> {
-        step.into_iter()
-            .map(|e| match e {
-                Effect::WriteLine(Written(line)) => line,
-                Effect::Spawn(_) | Effect::SpawnPinned(_) => panic!("not a write"),
-            })
-            .collect()
+    fn written(step: Yield<Effect>) -> TestResult<Vec<String>> {
+        let mut lines = Vec::new();
+        for effect in step {
+            match effect {
+                Effect::WriteLine(Written(line)) => lines.push(line),
+                Effect::Spawn(_) | Effect::SpawnPinned(_) => return Err("not a write")?,
+            }
+        }
+        Ok(lines)
     }
 
     #[test]
-    fn children_run_as_machines_of_their_own() {
+    fn children_run_as_machines_of_their_own() -> TestResult {
         let mut parent = Driver::<Effect>::new(|outbox| Parent(Ctx::new(outbox)).run());
         let mut effects = parent.resume().into_iter();
         assert_eq!(parent.status(), Status::Complete);
 
         let Some(Effect::Spawn(SpawnEffect(child))) = effects.next() else {
-            panic!("the migrating child first");
+            return Err("the migrating child first")?;
         };
         let Some(Effect::SpawnPinned(SpawnPinnedEffect(pinned))) = effects.next() else {
-            panic!("then the pinned one");
+            return Err("then the pinned one")?;
         };
         let Some(Effect::WriteLine(Written(line))) = effects.next() else {
-            panic!("then the parent's own write");
+            return Err("then the parent's own write")?;
         };
         assert_eq!(line, "spawned", "nothing ran yet: spawning only records");
         assert!(effects.next().is_none());
 
         let mut child = Driver::from_boxed(|outbox| child.start(outbox));
-        assert_eq!(written(child.resume()), ["migrating"]);
+        assert_eq!(written(child.resume())?, ["migrating"]);
         assert!(child.is_finished());
 
         let mut pinned = Driver::local_boxed(|outbox| pinned.start(outbox));
-        assert_eq!(written(pinned.resume()), ["pinned"]);
+        assert_eq!(written(pinned.resume())?, ["pinned"]);
         assert!(pinned.is_finished());
+        Ok(())
     }
 }

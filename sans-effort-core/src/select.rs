@@ -93,8 +93,6 @@ pub enum Either<A, B> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
     use crate::{
         driver::{Driver, outbox::Outbox},
@@ -103,6 +101,7 @@ mod tests {
     };
     use alloc::{string::String, vec::Vec};
     use core::ops::ControlFlow;
+    use testresult::TestResult;
 
     enum Effect {
         Ask(ReplyHandle<String>),
@@ -120,7 +119,7 @@ mod tests {
         }
     }
 
-    fn race() -> (Driver<Effect>, ReplyHandle<String>, ReplyHandle<String>) {
+    fn race() -> TestResult<(Driver<Effect>, ReplyHandle<String>, ReplyHandle<String>)> {
         let mut driver = Driver::new(|outbox| Race(outbox).run());
         let step = driver.resume();
         assert!(step.closed().is_empty(), "both requests are outstanding");
@@ -132,8 +131,8 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .try_into()
-            .expect("both branches recorded a request in the first batch");
-        (driver, a, b)
+            .map_err(|_| "both branches recorded a request in the first batch")?;
+        Ok((driver, a, b))
     }
 
     fn won(effects: &[Effect]) -> Option<&Either<String, String>> {
@@ -144,9 +143,9 @@ mod tests {
     }
 
     #[test]
-    fn whichever_is_answered_first_wins_and_the_loser_closes() {
+    fn whichever_is_answered_first_wins_and_the_loser_closes() -> TestResult {
         for answer_left in [true, false] {
-            let (mut driver, a, b) = race();
+            let (mut driver, a, b) = race()?;
 
             let (winner, late) = if answer_left { (a, b) } else { (b, a) };
             let loser = late.id();
@@ -166,6 +165,7 @@ mod tests {
                 "a late reply to the loser is discarded"
             );
         }
+        Ok(())
     }
 
     #[test]

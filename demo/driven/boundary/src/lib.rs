@@ -503,12 +503,6 @@ mod tests {
     //! mock recorded, these assert on the effects a host would see — the
     //! thing the wire exists to carry.
 
-    #![expect(
-        clippy::expect_used,
-        clippy::panic,
-        reason = "tests assert their preconditions; let-else arms name the batch they expected"
-    )]
-
     extern crate std;
 
     use super::*;
@@ -520,6 +514,7 @@ mod tests {
         step::Step,
     };
     use sans_effort_effects::{console::ReadLineError, ctx::Ctx};
+    use testresult::TestResult;
 
     fn greeter(outbox: Outbox<Full>) -> impl Future<Output = ()> {
         Greeter::new(Ctx::new(outbox)).run()
@@ -531,7 +526,10 @@ mod tests {
 
     /// A scripted host: answers every request at once, records what it was
     /// shown, and returns what the routine wrote.
-    fn transcript(mut driver: Driver<Full>, script: &[&str]) -> (Vec<View>, Vec<String>) {
+    fn transcript(
+        mut driver: Driver<Full>,
+        script: &[&str],
+    ) -> TestResult<(Vec<View>, Vec<String>)> {
         let mut lines = script.iter().copied();
         let mut seen = Vec::new();
         let mut written = Vec::new();
@@ -565,7 +563,7 @@ mod tests {
                     reply,
                 }) => {
                     seen.push(View::Sleep {
-                        millis: u64::try_from(after.as_millis()).expect("a demo pause fits in u64"),
+                        millis: u64::try_from(after.as_millis())?,
                         id: reply.id(),
                     });
                     driver.reply(reply, ())
@@ -579,15 +577,15 @@ mod tests {
                 | Full::Random(_)
                 | Full::Var(_)
                 | Full::ReadFile(_)
-                | Full::WriteFile(_) => panic!("the greeter never keeps a journal"),
+                | Full::WriteFile(_) => return Err("the greeter never keeps a journal")?,
                 #[cfg(feature = "table")]
-                Full::Spawn(_) | Full::SpawnPinned(_) => panic!("the greeter never spawns"),
+                Full::Spawn(_) | Full::SpawnPinned(_) => return Err("the greeter never spawns")?,
             };
             queue.extend(more);
         }
 
         assert_eq!(driver.status(), Status::Complete);
-        (seen, written)
+        Ok((seen, written))
     }
 
     /// What the greeter should write for `script`, stated without running it.
@@ -614,7 +612,7 @@ mod tests {
             .with_type::<Vec<String>>()
             .for_each(|names| {
                 let script: Vec<&str> = names.iter().map(String::as_str).collect();
-                let (seen, written) = transcript(Driver::new(greeter), &script);
+                let Ok((seen, written)) = transcript(Driver::new(greeter), &script);
                 assert_eq!(written, expected(&script));
 
                 let ids: Vec<u64> = seen
@@ -643,23 +641,19 @@ mod tests {
     /// read stays open, and a good reply is accepted after.
     #[cfg(feature = "table")]
     #[test]
-    fn a_malformed_read_reply_is_refused_and_can_be_retried() {
+    fn a_malformed_read_reply_is_refused_and_can_be_retried() -> TestResult {
         use sans_effort_core::boundary::codec::Encode;
         use sans_effort_host::{error::Error, machine::Machine};
 
         let mut machine = Machine::<Full>::from_routine(greeter);
-        let read = machine
-            .resume()
-            .expect("begins")
-            .into_iter()
-            .find_map(|view| {
-                if let View::ReadLine { id } = view {
-                    Some(id)
-                } else {
-                    None
-                }
-            })
-            .expect("the greeter prompts, then reads");
+        let read = machine.resume()?.into_iter().find_map(|view| {
+            if let View::ReadLine { id } = view {
+                Some(id)
+            } else {
+                None
+            }
+        });
+        let read = read.ok_or("the greeter prompts, then reads")?;
 
         assert!(matches!(
             machine.reply_bytes(read, vec![7]),
@@ -667,14 +661,13 @@ mod tests {
         ));
 
         let good = Ok::<String, ReadLineError>("bob".into()).to_bytes();
-        let next = machine
-            .reply_bytes(read, good)
-            .expect("a good reply is accepted");
+        let next = machine.reply_bytes(read, good)?;
         assert!(
             next.into_iter()
                 .any(|view| matches!(view, View::Lookup { ref name, .. } if name == "bob")),
             "the greeter looks bob up"
         );
+        Ok(())
     }
 
     /// A `Quiet` host runs the ticker, and only ever sees tags 4 and 5.
@@ -723,6 +716,10 @@ mod tests {
         /// What the routine and its children wrote, in order, and how the
         /// run ended — unless some machine stalled. Sleeps take their length
         /// on the runner's virtual clock.
+        #[expect(
+            clippy::panic,
+            reason = "the runner's handler cannot return an error; a journal effect from these routines is a bug"
+        )]
         fn run<S: Schedule>(
             root: Driver<Full>,
             script: &[&str],
@@ -869,9 +866,11 @@ mod tests {
         #[test]
         fn a_deadlock_is_reported_under_every_schedule_and_a_kill_breaks_it() {
             bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
-                let stalled = run(deadlock(), &[], Choices::new(bytes.iter().copied()))
-                    .expect_err("neither can go first");
-                assert_eq!(stalled.machines(), [0, 1]);
+                let stalled = run(deadlock(), &[], Choices::new(bytes.iter().copied()));
+                assert!(
+                    matches!(stalled, Err(ref stalled) if stalled.machines() == [0, 1]),
+                    "neither can go first: {stalled:?}"
+                );
 
                 let crashing = Choices::new(bytes.iter().copied()).crashing();
                 match run(deadlock(), &[], crashing) {
@@ -930,20 +929,25 @@ mod tests {
         #[test]
         fn survivors_complete_whatever_is_killed() {
             bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
-                let crashing = || Choices::new(bytes.iter().copied()).crashing();
-                let runs = [
-                    (run(ping_pong(), &[], crashing()), PING_PONG.as_slice()),
-                    (run(front_desk(), &NAMES, crashing()), FRONT_DESK.as_slice()),
-                    (run(ring(), &[], crashing()), RING.as_slice()),
-                    (run(deadline(), &[], crashing()), DEADLINE.as_slice()),
-                ];
-                for (ran, expected) in runs {
-                    let (written, completed) = ran.expect("no survivor stalls");
-                    if completed.killed().is_empty() {
-                        assert_eq!(written, expected);
-                    }
-                }
+                let Ok(()) = survivors_complete(bytes);
             });
+        }
+
+        fn survivors_complete(bytes: &[u8]) -> TestResult {
+            let crashing = || Choices::new(bytes.iter().copied()).crashing();
+            let runs = [
+                (run(ping_pong(), &[], crashing()), PING_PONG.as_slice()),
+                (run(front_desk(), &NAMES, crashing()), FRONT_DESK.as_slice()),
+                (run(ring(), &[], crashing()), RING.as_slice()),
+                (run(deadline(), &[], crashing()), DEADLINE.as_slice()),
+            ];
+            for (ran, expected) in runs {
+                let (written, completed) = ran?;
+                if completed.killed().is_empty() {
+                    assert_eq!(written, expected);
+                }
+            }
+            Ok(())
         }
     }
 
@@ -960,45 +964,46 @@ mod tests {
 
         /// Perform each effect and reply; resume each child to begin it and
         /// each machine a `woke` frame names; free each as it completes.
-        fn host(root: u64, script: &[&str]) {
+        fn host(root: u64, script: &[&str]) -> TestResult {
             let mut lines = script.iter().copied();
             let mut done = HashSet::new();
-            let mut queue = VecDeque::from([(root, table::resume(root).expect("begins"))]);
+            let mut queue = VecDeque::from([(root, table::resume(root)?)]);
 
             while let Some((handle, (bytes, status))) = queue.pop_front() {
                 if status == Status::Complete {
-                    table::free(handle).expect("freed once");
+                    table::free(handle)?;
                     done.insert(handle);
                 }
                 let mut frames = Reader::new(&bytes);
                 while let (Ok(kind), Ok(payload)) = (frames.u8(), frames.bytes()) {
                     let mut r = Reader::new(payload);
                     if kind == FRAME_WOKE {
-                        let woken = r.u64().expect("a handle");
+                        let woken = r.u64()?;
                         if !done.contains(&woken) {
-                            queue.push_back((woken, table::resume(woken).expect("resumed")));
+                            queue.push_back((woken, table::resume(woken)?));
                         }
                     } else if kind == FRAME_TELL && matches!(r.u8(), Ok(6 | 7)) {
-                        let child = r.u64().expect("a handle");
-                        queue.push_back((child, table::resume(child).expect("begun")));
+                        let child = r.u64()?;
+                        queue.push_back((child, table::resume(child)?));
                     } else if kind == FRAME_ASK {
-                        let record = match r.u8().expect("a tag") {
+                        let record = match r.u8()? {
                             2 => {
-                                let name = r.str().expect("a name");
+                                let name = r.str()?;
                                 let greeting = if name == "alice" { "Hello" } else { "Hi" };
-                                reply(r.u64().expect("an id"), 1, &String::from(greeting))
+                                reply(r.u64()?, 1, &String::from(greeting))
                             }
                             3 => {
                                 let line =
                                     lines.next().map(String::from).ok_or(ReadLineError::Closed);
-                                reply(r.u64().expect("an id"), 4, &line.to_bytes())
+                                reply(r.u64()?, 4, &line.to_bytes())
                             }
-                            tag => panic!("no answer for tag {tag}"),
+                            tag => return Err(format!("no answer for tag {tag}"))?,
                         };
-                        queue.push_back((handle, table::reply(handle, &record).expect("replied")));
+                        queue.push_back((handle, table::reply(handle, &record)?));
                     }
                 }
             }
+            Ok(())
         }
 
         /// A reply record: `kind · id · payload`, the payload already encoded.
@@ -1019,27 +1024,29 @@ mod tests {
         }
 
         #[test]
-        fn a_ping_pong_run_replays_byte_for_byte() {
+        fn a_ping_pong_run_replays_byte_for_byte() -> TestResult {
             let root = ping_pong();
             let recorder = record(root);
-            host(root, &[]);
+            host(root, &[])?;
             let log = recorder.finish();
             assert_eq!(log.handles().len(), 2, "the parent and its child");
-            replay(&log, ping_pong).expect("the same calls, the same outcomes");
+            replay(&log, ping_pong)?;
+            Ok(())
         }
 
         #[test]
-        fn a_front_desk_run_replays_byte_for_byte() {
+        fn a_front_desk_run_replays_byte_for_byte() -> TestResult {
             let root = front_desk();
             let recorder = record(root);
-            host(root, &["alice", "bob", "carol"]);
+            host(root, &["alice", "bob", "carol"])?;
             let log = recorder.finish();
             assert_eq!(
                 log.handles().len(),
                 4,
                 "the desk and a pinned clerk per name"
             );
-            replay(&log, front_desk).expect("the same calls, the same outcomes");
+            replay(&log, front_desk)?;
+            Ok(())
         }
     }
 }

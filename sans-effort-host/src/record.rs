@@ -355,9 +355,8 @@ pub(crate) fn outcome(result: &Result<(Vec<u8>, Status), Error>) -> Outcome {
 #[cfg(test)]
 mod tests {
     #![expect(
-        clippy::expect_used,
         clippy::panic,
-        reason = "tests assert their preconditions"
+        reason = "some routines panic on purpose, to test what the table does about it"
     )]
 
     use super::*;
@@ -367,6 +366,7 @@ mod tests {
     };
     use sans_effort_core::driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox};
     use sans_effort_core::step::Step;
+    use testresult::TestResult;
 
     fn echo() -> u64 {
         table::new(|outbox| Echo(outbox).run())
@@ -382,26 +382,27 @@ mod tests {
     }
 
     /// Record an echo answered with `answer`: resume, reply, free.
-    fn recorded_echo(answer: &str) -> Log {
+    fn recorded_echo(answer: &str) -> TestResult<Log> {
         let root = echo();
         let recorder = record(root);
-        table::resume(root).expect("begins, asking id 1");
-        table::reply(root, &str_reply(1, answer)).expect("answered");
-        table::free(root).expect("freed");
-        recorder.finish()
+        table::resume(root)?;
+        table::reply(root, &str_reply(1, answer))?;
+        table::free(root)?;
+        Ok(recorder.finish())
     }
 
     #[test]
-    fn a_run_replays_exactly() {
-        let log = recorded_echo("hi");
+    fn a_run_replays_exactly() -> TestResult {
+        let log = recorded_echo("hi")?;
         assert_eq!(log.events().len(), 3, "resume, reply, free");
         assert_eq!(log.handles().len(), 1, "just the root");
-        replay(&log, echo).expect("the same calls, the same outcomes");
+        replay(&log, echo)?;
+        Ok(())
     }
 
     #[test]
-    fn a_changed_reply_diverges_where_it_was_made() {
-        let mut log = recorded_echo("hi");
+    fn a_changed_reply_diverges_where_it_was_made() -> TestResult {
+        let mut log = recorded_echo("hi")?;
         let Some(Event::Reply { record, .. }) = log.events.get_mut(1) else {
             unreachable!("the second call is the reply");
         };
@@ -410,16 +411,18 @@ mod tests {
             replay(&log, echo),
             Err(Divergence::Outcome { at: 1, .. })
         ));
+        Ok(())
     }
 
     #[test]
-    fn another_routine_diverges_at_its_first_call() {
-        let log = recorded_echo("hi");
+    fn another_routine_diverges_at_its_first_call() -> TestResult {
+        let log = recorded_echo("hi")?;
         let both = || table::new(|outbox| Both(outbox).run());
         assert!(matches!(
             replay(&log, both),
             Err(Divergence::Outcome { at: 0, .. })
         ));
+        Ok(())
     }
 
     /// Asks once, then panics on the answer.
@@ -434,10 +437,10 @@ mod tests {
     /// the reply's outcome, the calls after it as what the table said once the
     /// machine was gone, and replaying panics at the same call.
     #[test]
-    fn a_panicking_run_replays_exactly() {
+    fn a_panicking_run_replays_exactly() -> TestResult {
         let root = panics_when_answered();
         let recorder = record(root);
-        table::resume(root).expect("begins, asking id 1");
+        table::resume(root)?;
         assert_eq!(
             quietly(|| table::reply(root, &str_reply(1, "now"))),
             Err(Error::Panicked)
@@ -456,7 +459,8 @@ mod tests {
             .collect();
         assert_eq!(codes, [status_code(Status::Awaiting), PANICKED, BAD_HANDLE]);
 
-        quietly(|| replay(&log, panics_when_answered)).expect("the same calls, the same outcomes");
+        quietly(|| replay(&log, panics_when_answered))?;
+        Ok(())
     }
 
     /// Creates a child mid-poll, as a binding's `split` does when a
@@ -470,11 +474,11 @@ mod tests {
     }
 
     /// Record a spawner and its child to the end, both freed.
-    fn recorded_spawn() -> Log {
+    fn recorded_spawn() -> TestResult<Log> {
         let root = spawner();
         let recorder = record(root);
-        table::resume(root).expect("spawns and completes");
-        table::free(root).expect("freed");
+        table::resume(root)?;
+        table::free(root)?;
         let log = recorder.finish();
         let [_, child] = log.handles() else {
             unreachable!("the root and its child: {:?}", log.handles());
@@ -482,24 +486,24 @@ mod tests {
         // The child was created during a recorded call, so it is in the
         // session too — though the recorder has finished, its calls are not.
         let child = *child;
-        table::resume(child).expect("asks");
-        table::free(child).expect("freed");
-        log
+        table::resume(child)?;
+        table::free(child)?;
+        Ok(log)
     }
 
     /// A child joins its parent's session, its calls are logged as its
     /// own machine's, and replay issues the recorded handles again — the
     /// parent's output names the child, so only the same handle replays it.
     #[test]
-    fn a_spawning_run_replays_with_the_same_handles() {
+    fn a_spawning_run_replays_with_the_same_handles() -> TestResult {
         let root = spawner();
         let recorder = record(root);
-        table::resume(root).expect("spawns and completes");
-        let child = recorder_child(&recorder);
-        table::resume(child).expect("asks");
-        table::reply(child, &str_reply(1, "hi")).expect("answered");
-        table::free(child).expect("freed");
-        table::free(root).expect("freed");
+        table::resume(root)?;
+        let child = recorder_child(&recorder)?;
+        table::resume(child)?;
+        table::reply(child, &str_reply(1, "hi"))?;
+        table::free(child)?;
+        table::free(root)?;
         let log = recorder.finish();
 
         assert_eq!(log.handles(), [root, child]);
@@ -509,20 +513,21 @@ mod tests {
             [0, 1, 1, 1, 0],
             "resume, then the child's three calls, then free"
         );
-        replay(&log, spawner).expect("the same calls, the same outcomes");
+        replay(&log, spawner)?;
+        Ok(())
     }
 
     /// The child a session's root has created so far.
-    fn recorder_child(recorder: &Recorder) -> u64 {
-        let session = recorder.session.expect("recording");
-        table::recorded_handle(session, 1).expect("adopted")
+    fn recorder_child(recorder: &Recorder) -> TestResult<u64> {
+        let session = recorder.session.ok_or("recording")?;
+        Ok(table::recorded_handle(session, 1).ok_or("the child was adopted")?)
     }
 
     /// A replay that stops early leaves recorded handles unissued; once it
     /// returns, this thread gets fresh handles again, not those.
     #[test]
-    fn after_a_replay_handles_are_fresh_again() {
-        let log = recorded_spawn();
+    fn after_a_replay_handles_are_fresh_again() -> TestResult {
+        let log = recorded_spawn()?;
         let [_, child] = log.handles() else {
             unreachable!("two handles");
         };
@@ -532,12 +537,13 @@ mod tests {
         );
         let fresh = echo();
         assert_ne!(fresh, *child, "the unissued recorded handle is not reused");
-        table::free(fresh).expect("freed");
+        table::free(fresh)?;
+        Ok(())
     }
 
     /// Replay a log of `handles` and no calls; the handle its root got (and
     /// replay freed).
-    fn replayed_root(handles: Vec<u64>) -> u64 {
+    fn replayed_root(handles: Vec<u64>) -> TestResult<u64> {
         let root = core::cell::Cell::new(0);
         let log = Log {
             handles,
@@ -547,68 +553,71 @@ mod tests {
             let h = echo();
             root.set(h);
             h
-        })
-        .expect("no calls, nothing to diverge");
-        root.get()
+        })?;
+        Ok(root.get())
     }
 
     /// A log from another process may name handles this one has not reached:
     /// re-issuing one moves the counter past it, so no fresh handle repeats it.
     #[test]
-    fn a_handle_replayed_from_ahead_moves_the_counter_past_it() {
+    fn a_handle_replayed_from_ahead_moves_the_counter_past_it() -> TestResult {
         let probe = echo();
-        table::free(probe).expect("freed");
+        table::free(probe)?;
         let ahead = probe + 1_000;
 
-        assert_eq!(replayed_root(vec![ahead]), ahead, "free, so issued again");
+        assert_eq!(replayed_root(vec![ahead])?, ahead, "free, so issued again");
         let fresh = echo();
         assert!(fresh > ahead, "{fresh} after {ahead}");
-        table::free(fresh).expect("freed");
+        table::free(fresh)?;
+        Ok(())
     }
 
     /// A recorded handle whose machine still lives — migrating, parked, or
     /// pinned and started — is not issued again; replay gets a fresh one.
     #[test]
-    fn a_recorded_handle_still_in_use_is_not_issued_again() {
+    fn a_recorded_handle_still_in_use_is_not_issued_again() -> TestResult {
         let pinned = || {
             table::park_pinned(|outbox: Outbox<Effect>| -> LocalBoxedRoutine {
                 Box::pin(Echo(outbox).run())
             })
         };
         let started = pinned();
-        table::resume(started).expect("started here, so pinned to this thread");
+        table::resume(started)?;
 
         for live in [echo(), pinned(), started] {
-            let root = replayed_root(vec![live]);
+            let root = replayed_root(vec![live])?;
             assert_ne!(root, live);
-            table::free(live).expect("freed");
+            table::free(live)?;
         }
+        Ok(())
     }
 
     /// Dropping a recorder without finishing ends its session.
     #[test]
-    fn a_dropped_recorder_ends_its_session() {
+    fn a_dropped_recorder_ends_its_session() -> TestResult {
         let root = echo();
         let recorder = record(root);
-        let session = recorder.session.expect("recording");
+        let session = recorder.session.ok_or("recording")?;
         assert_eq!(table::recorded_handle(session, 0), Some(root));
         drop(recorder);
         assert_eq!(table::recorded_handle(session, 0), None);
-        table::free(root).expect("freed");
+        table::free(root)?;
+        Ok(())
     }
 
     #[test]
-    fn machines_outside_the_session_are_not_recorded() {
+    fn machines_outside_the_session_are_not_recorded() -> TestResult {
         let root = echo();
         let other = echo();
         let recorder = record(root);
-        table::resume(other).expect("another machine");
-        table::resume(root).expect("the root");
+        table::resume(other)?;
+        table::resume(root)?;
         let log = recorder.finish();
-        table::free(other).expect("freed");
-        table::free(root).expect("freed");
+        table::free(other)?;
+        table::free(root)?;
         assert_eq!(log.events().len(), 1);
         assert_eq!(log.handles(), [root]);
+        Ok(())
     }
 
     /// Any log survives the trip through bytes: handles, and every kind of

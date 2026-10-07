@@ -1,12 +1,6 @@
 //! Each reifying effect-trait impl asks for exactly its request and returns
 //! exactly the host's answer, whatever both are.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "tests assert their preconditions; let-else arms name the effect they expected"
-)]
-
 use core::{future::Future, time::Duration};
 use sans_effort_core::driver::{Driver, status::Status};
 use sans_effort_effects::{
@@ -17,7 +11,8 @@ use sans_effort_effects::{
     random::{Random, RandomEffect},
     time::{Now, NowEffect, UnixTime},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
+use testresult::TestResult;
 
 enum Effect {
     Now(Asked<NowEffect>),
@@ -64,17 +59,18 @@ type Got<T> = Arc<Mutex<Option<T>>>;
 /// keeps what it got; its one effect; and where the result will be.
 fn one_call<T: Send + 'static, Fut: Future<Output = T> + Send + 'static>(
     call: impl FnOnce(Ctx<Effect>) -> Fut + Send + 'static,
-) -> (Driver<Effect>, Effect, Got<T>) {
+) -> TestResult<(Driver<Effect>, Effect, Got<T>)> {
     let got = Got::default();
     let kept = Arc::clone(&got);
     let mut driver = Driver::new(move |outbox| async move {
         let value = call(Ctx::new(outbox)).await;
-        *kept.lock().expect("unpoisoned") = Some(value);
+        *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
     });
-    let mut effects = driver.resume().into_iter();
-    let effect = effects.next().expect("one ask");
-    assert!(effects.next().is_none(), "only one");
-    (driver, effect, got)
+    let effects: Vec<Effect> = driver.resume().into_iter().collect();
+    let [effect] = effects
+        .try_into()
+        .map_err(|effects: Vec<_>| format!("one ask, not {}", effects.len()))?;
+    Ok((driver, effect, got))
 }
 
 /// After the reply: the routine finished, with `expected`.
@@ -82,9 +78,10 @@ fn finished_with<T: PartialEq + core::fmt::Debug>(
     driver: &Driver<Effect>,
     got: &Got<T>,
     expected: T,
-) {
+) -> TestResult {
     assert_eq!(driver.status(), Status::Complete);
-    assert_eq!(got.lock().expect("unpoisoned").take(), Some(expected));
+    assert_eq!(got.lock()?.take(), Some(expected));
+    Ok(())
 }
 
 /// An answer for a file request, from a generated choice.
@@ -102,20 +99,23 @@ fn var_asks_for_its_name_and_returns_the_answer() {
     bolero::check!()
         .with_type::<(String, Option<String>)>()
         .for_each(|(name, value)| {
-            let asked = name.clone();
-            let (mut driver, effect, got) =
-                one_call(move |ctx| async move { ctx.var(asked).await });
-            let Effect::Var(Asked {
-                request: VarEffect(requested),
-                reply,
-            }) = effect
-            else {
-                panic!("a Var");
-            };
-            assert_eq!(&requested, name);
-            drop(driver.reply(reply, value.clone()));
-            finished_with(&driver, &got, value.clone());
+            let Ok(()) = var_round_trip(name, value.as_deref());
         });
+}
+
+fn var_round_trip(name: &str, value: Option<&str>) -> TestResult {
+    let asked = name.to_owned();
+    let (mut driver, effect, got) = one_call(move |ctx| async move { ctx.var(asked).await })?;
+    let Effect::Var(Asked {
+        request: VarEffect(requested),
+        reply,
+    }) = effect
+    else {
+        return Err("a Var")?;
+    };
+    assert_eq!(requested, name);
+    drop(driver.reply(reply, value.map(str::to_owned)));
+    finished_with(&driver, &got, value.map(str::to_owned))
 }
 
 #[test]
@@ -123,21 +123,24 @@ fn read_file_asks_for_its_path_and_returns_the_answer() {
     bolero::check!()
         .with_type::<(String, Vec<u8>, u8)>()
         .for_each(|(path, bytes, choice)| {
-            let asked = path.clone();
-            let (mut driver, effect, got) =
-                one_call(move |ctx| async move { ctx.read_file(asked).await });
-            let Effect::ReadFile(Asked {
-                request: ReadFileEffect(requested),
-                reply,
-            }) = effect
-            else {
-                panic!("a ReadFile");
-            };
-            assert_eq!(&requested, path);
-            let answer = fs_result(*choice, bytes.clone());
-            drop(driver.reply(reply, answer.clone()));
-            finished_with(&driver, &got, answer);
+            let Ok(()) = read_file_round_trip(path, bytes, *choice);
         });
+}
+
+fn read_file_round_trip(path: &str, bytes: &[u8], choice: u8) -> TestResult {
+    let asked = path.to_owned();
+    let (mut driver, effect, got) = one_call(move |ctx| async move { ctx.read_file(asked).await })?;
+    let Effect::ReadFile(Asked {
+        request: ReadFileEffect(requested),
+        reply,
+    }) = effect
+    else {
+        return Err("a ReadFile")?;
+    };
+    assert_eq!(requested, path);
+    let answer = fs_result(choice, bytes.to_vec());
+    drop(driver.reply(reply, answer.clone()));
+    finished_with(&driver, &got, answer)
 }
 
 #[test]
@@ -145,36 +148,44 @@ fn write_file_asks_with_its_path_and_bytes_and_returns_the_answer() {
     bolero::check!()
         .with_type::<(String, Vec<u8>, u8)>()
         .for_each(|(path, bytes, choice)| {
-            let (asked, written) = (path.clone(), bytes.clone());
-            let (mut driver, effect, got) =
-                one_call(move |ctx| async move { ctx.write_file(asked, written).await });
-            let Effect::WriteFile(Asked { request, reply }) = effect else {
-                panic!("a WriteFile");
-            };
-            assert_eq!(
-                request,
-                WriteFileEffect {
-                    path: path.clone(),
-                    bytes: bytes.clone()
-                }
-            );
-            let answer = fs_result(*choice, ());
-            drop(driver.reply(reply, answer));
-            finished_with(&driver, &got, answer);
+            let Ok(()) = write_file_round_trip(path, bytes, *choice);
         });
+}
+
+fn write_file_round_trip(path: &str, bytes: &[u8], choice: u8) -> TestResult {
+    let (asked, written) = (path.to_owned(), bytes.to_vec());
+    let (mut driver, effect, got) =
+        one_call(move |ctx| async move { ctx.write_file(asked, written).await })?;
+    let Effect::WriteFile(Asked { request, reply }) = effect else {
+        return Err("a WriteFile")?;
+    };
+    assert_eq!(
+        request,
+        WriteFileEffect {
+            path: path.to_owned(),
+            bytes: bytes.to_vec()
+        }
+    );
+    let answer = fs_result(choice, ());
+    drop(driver.reply(reply, answer));
+    finished_with(&driver, &got, answer)
 }
 
 #[test]
 fn now_returns_the_answer() {
     bolero::check!().with_type::<u64>().for_each(|nanos| {
-        let (mut driver, effect, got) = one_call(|ctx| async move { ctx.now().await });
-        let Effect::Now(Asked { reply, .. }) = effect else {
-            panic!("a Now");
-        };
-        let time = UnixTime::from_since_epoch(Duration::from_nanos(*nanos));
-        drop(driver.reply(reply, time));
-        finished_with(&driver, &got, time);
+        let Ok(()) = now_round_trip(*nanos);
     });
+}
+
+fn now_round_trip(nanos: u64) -> TestResult {
+    let (mut driver, effect, got) = one_call(|ctx| async move { ctx.now().await })?;
+    let Effect::Now(Asked { reply, .. }) = effect else {
+        return Err("a Now")?;
+    };
+    let time = UnixTime::from_since_epoch(Duration::from_nanos(nanos));
+    drop(driver.reply(reply, time));
+    finished_with(&driver, &got, time)
 }
 
 #[test]
@@ -182,18 +193,21 @@ fn random_asks_for_its_length_and_returns_the_answer() {
     bolero::check!()
         .with_type::<(u32, Vec<u8>)>()
         .for_each(|(len, bytes)| {
-            let asked = *len;
-            let (mut driver, effect, got) =
-                one_call(move |ctx| async move { ctx.random_bytes(asked).await });
-            let Effect::Random(Asked {
-                request: RandomEffect(requested),
-                reply,
-            }) = effect
-            else {
-                panic!("a Random");
-            };
-            assert_eq!(requested, *len);
-            drop(driver.reply(reply, bytes.clone()));
-            finished_with(&driver, &got, bytes.clone());
+            let Ok(()) = random_round_trip(*len, bytes);
         });
+}
+
+fn random_round_trip(len: u32, bytes: &[u8]) -> TestResult {
+    let (mut driver, effect, got) =
+        one_call(move |ctx| async move { ctx.random_bytes(len).await })?;
+    let Effect::Random(Asked {
+        request: RandomEffect(requested),
+        reply,
+    }) = effect
+    else {
+        return Err("a Random")?;
+    };
+    assert_eq!(requested, len);
+    drop(driver.reply(reply, bytes.to_vec()));
+    finished_with(&driver, &got, bytes.to_vec())
 }

@@ -157,12 +157,6 @@ impl Decode for ReadLineError {
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::expect_used,
-        clippy::panic,
-        reason = "tests assert their preconditions; let-else arms name the outcome they expected"
-    )]
-
     use super::*;
     use crate::ctx::Ctx;
     use alloc::vec::Vec;
@@ -172,6 +166,7 @@ mod tests {
         reply::{Answer, Reply},
         step::Step,
     };
+    use testresult::TestResult;
 
     enum Effect {
         ReadLine(Asked<ReadLineEffect>),
@@ -205,7 +200,7 @@ mod tests {
     }
 
     /// What the routine wrote when the host answered its one read with `reply`.
-    fn written(reply: Result<String, ReadLineError>) -> String {
+    fn written(reply: Result<String, ReadLineError>) -> TestResult<String> {
         let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
         let Some(Effect::ReadLine(Asked { reply: handle, .. })) =
             driver.resume().into_iter().next()
@@ -219,9 +214,9 @@ mod tests {
                 Effect::WriteLine(WriteLineEffect(line)) => Some(line),
                 Effect::ReadLine(_) => None,
             })
-            .expect("the routine writes once");
+            .ok_or("the routine writes once")?;
         assert_eq!(driver.status(), Status::Complete);
-        out
+        Ok(out)
     }
 
     /// What `ReadOnce` writes for an answer: the line, or the error.
@@ -247,7 +242,8 @@ mod tests {
             .with_type::<(u8, String)>()
             .for_each(|(kind, line)| {
                 let reply = answer(*kind, line);
-                assert_eq!(written(reply.clone()), shown(&reply));
+                let Ok(written) = written(reply.clone());
+                assert_eq!(written, shown(&reply));
             });
     }
 
@@ -258,41 +254,44 @@ mod tests {
     #[test]
     fn any_bytes_are_delivered_if_they_decode_and_refused_otherwise() {
         bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
-            let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
-            let Some(Effect::ReadLine(Asked { reply, .. })) = driver.resume().into_iter().next()
-            else {
-                unreachable!("the routine reads first");
-            };
-            let Ok(wire) = Vec::<u8>::from_pending(Answer::pending(reply)) else {
-                unreachable!("a fallible read crosses as bytes");
-            };
-
-            let decoded = Result::<String, ReadLineError>::from_bytes(bytes);
-            let (outcome, expected) = if let Ok(decoded) = decoded {
-                (driver.try_reply(wire, bytes.clone()), shown(&decoded))
-            } else {
-                let Err(refused) = driver.try_reply(wire, bytes.clone()) else {
-                    panic!("undecodable bytes were delivered");
-                };
-                assert_eq!(driver.status(), Status::Awaiting, "still waiting");
-                let (wire, _) = refused.into_parts();
-                let good = Ok::<String, ReadLineError>("hi".into()).to_bytes();
-                (driver.try_reply(wire, good), String::from("hi"))
-            };
-
-            let Ok(written) = outcome else {
-                panic!("an encoded result is accepted");
-            };
-            let lines: Vec<String> = written
-                .into_iter()
-                .filter_map(|e| match e {
-                    Effect::WriteLine(WriteLineEffect(line)) => Some(line),
-                    Effect::ReadLine(_) => None,
-                })
-                .collect();
-            assert_eq!(lines, [expected]);
-            assert_eq!(driver.status(), Status::Complete);
+            let Ok(()) = delivered_or_refused(bytes);
         });
+    }
+
+    fn delivered_or_refused(bytes: &[u8]) -> TestResult {
+        let mut driver = Driver::<Effect>::new(|outbox| ReadOnce(Ctx::new(outbox)).run());
+        let Some(Effect::ReadLine(Asked { reply, .. })) = driver.resume().into_iter().next() else {
+            unreachable!("the routine reads first");
+        };
+        let Ok(wire) = Vec::<u8>::from_pending(Answer::pending(reply)) else {
+            unreachable!("a fallible read crosses as bytes");
+        };
+
+        let decoded = Result::<String, ReadLineError>::from_bytes(bytes);
+        let (outcome, expected) = if let Ok(decoded) = decoded {
+            (driver.try_reply(wire, bytes.to_vec()), shown(&decoded))
+        } else {
+            let Err(refused) = driver.try_reply(wire, bytes.to_vec()) else {
+                return Err("undecodable bytes were delivered")?;
+            };
+            assert_eq!(driver.status(), Status::Awaiting, "still waiting");
+            let (wire, _) = refused.into_parts();
+            let good = Ok::<String, ReadLineError>("hi".into()).to_bytes();
+            (driver.try_reply(wire, good), String::from("hi"))
+        };
+
+        let written =
+            outcome.map_err(|refused| format!("an encoded result is accepted: {refused}"))?;
+        let lines: Vec<String> = written
+            .into_iter()
+            .filter_map(|e| match e {
+                Effect::WriteLine(WriteLineEffect(line)) => Some(line),
+                Effect::ReadLine(_) => None,
+            })
+            .collect();
+        assert_eq!(lines, [expected]);
+        assert_eq!(driver.status(), Status::Complete);
+        Ok(())
     }
 
     #[test]

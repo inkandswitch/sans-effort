@@ -443,8 +443,6 @@ pub enum DecodeError {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
     use core::fmt::Debug;
 
@@ -493,7 +491,7 @@ mod tests {
                 let take = take % (bytes.len() + 1);
                 let mut r = Reader::new(bytes);
                 for _ in 0..take {
-                    r.u8().expect("a byte left");
+                    assert!(r.u8().is_ok(), "a byte left");
                 }
                 assert_eq!(r.is_empty(), take == bytes.len());
             });

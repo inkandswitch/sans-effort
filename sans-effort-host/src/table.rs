@@ -616,36 +616,37 @@ fn guarded<T>(
 #[cfg(test)]
 mod tests {
     #![expect(
-        clippy::expect_used,
         clippy::panic,
-        reason = "tests assert their preconditions"
+        reason = "some routines panic on purpose, to test what the table does about it"
     )]
 
     use super::*;
     use crate::fixtures::{Echo, Effect, View, framed, quietly, reply_str_record};
     use sans_effort_core::step::Step;
     use std::sync::OnceLock;
+    use testresult::TestResult;
 
     #[test]
-    fn round_trip_across_threads() {
+    fn round_trip_across_threads() -> TestResult {
         let h = new(|outbox| Echo(outbox).run());
 
-        let (bytes, status) = resume(h).expect("resume");
+        let (bytes, status) = resume(h)?;
         assert_eq!(status, Status::Awaiting);
         assert_eq!(bytes, framed(&[View::Ask(1)]));
 
         let record = reply_str_record(1, "far");
         let elsewhere = std::thread::spawn(move || reply(h, &record))
             .join()
-            .expect("thread");
-        let (bytes, status) = elsewhere.expect("replied on another thread");
+            .map_err(|_| "the replying thread panicked")?;
+        let (bytes, status) = elsewhere?;
         assert_eq!(status, Status::Complete);
         assert_eq!(bytes, framed(&[View::Say(String::from("far"))]));
 
-        free(h).expect("free");
+        free(h)?;
         assert_eq!(free(h), Err(Error::BadHandle));
         assert_eq!(resume(h), Err(Error::BadHandle));
         assert_eq!(reply(h, &reply_str_record(1, "x")), Err(Error::BadHandle));
+        Ok(())
     }
 
     #[test]
@@ -667,14 +668,14 @@ mod tests {
         std::future::poll_fn(|_| {
             queue
                 .lock()
-                .expect("queue")
+                .unwrap_or_else(PoisonError::into_inner)
                 .pop_front()
                 .map_or(std::task::Poll::Pending, std::task::Poll::Ready)
         })
     }
 
     #[test]
-    fn two_machines_exchange_a_message_through_resume() {
+    fn two_machines_exchange_a_message_through_resume() -> TestResult {
         let queue = Queue::default();
         let listener = new({
             let queue = Queue::clone(&queue);
@@ -687,12 +688,15 @@ mod tests {
             let queue = Queue::clone(&queue);
             move |outbox: Outbox<Effect>| async move {
                 let message = outbox.ask(Effect::Ask).await;
-                queue.lock().expect("queue").push_back(message);
+                queue
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push_back(message);
             }
         });
 
         assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
-        assert_eq!(resume(relay).expect("resume").1, Status::Awaiting);
+        assert_eq!(resume(relay)?.1, Status::Awaiting);
         assert_eq!(
             reply(relay, &reply_str_record(1, "hi")),
             Ok((Vec::new(), Status::Complete))
@@ -702,8 +706,9 @@ mod tests {
             Ok((framed(&[View::Say(String::from("hi"))]), Status::Complete))
         );
 
-        free(listener).expect("free");
-        free(relay).expect("free");
+        free(listener)?;
+        free(relay)?;
+        Ok(())
     }
 
     /// Echo, holding an `Rc` across its wait: its future is not `Send`, so
@@ -718,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pinned_machine_stays_on_the_thread_that_started_it() {
+    fn a_pinned_machine_stays_on_the_thread_that_started_it() -> TestResult {
         let h = park_pinned(pinned_echo);
         assert_eq!(
             reply(h, &reply_str_record(1, "early")),
@@ -730,20 +735,23 @@ mod tests {
             thread::spawn(move || resume(h)),
             reply_str_record(1, "from afar"),
         );
-        let (bytes, status) = owner_start.join().expect("thread").expect("resume");
+        let (bytes, status) = owner_start
+            .join()
+            .map_err(|_| "the owner's thread panicked")??;
         assert_eq!((bytes, status), (framed(&[View::Ask(1)]), Status::Awaiting));
 
         assert_eq!(reply(h, &record), Err(Error::WrongThread));
         assert_eq!(resume(h), Err(Error::WrongThread));
         assert_eq!(free(h), Err(Error::WrongThread), "only its owner frees it");
         assert_eq!(resume(h), Err(Error::WrongThread));
+        Ok(())
     }
 
     #[test]
-    fn a_pinned_machine_runs_and_frees_on_its_own_thread() {
+    fn a_pinned_machine_runs_and_frees_on_its_own_thread() -> TestResult {
         let h = park_pinned(pinned_echo);
-        thread::spawn(move || {
-            assert_eq!(resume(h).expect("resume").1, Status::Awaiting);
+        thread::spawn(move || -> TestResult {
+            assert_eq!(resume(h)?.1, Status::Awaiting);
             assert_eq!(
                 resume(h),
                 Ok((Vec::new(), Status::Awaiting)),
@@ -753,21 +761,23 @@ mod tests {
                 reply(h, &reply_str_record(1, "near")),
                 Ok((framed(&[View::Say(String::from("near"))]), Status::Complete))
             );
-            free(h).expect("free");
+            free(h)?;
             assert_eq!(free(h), Err(Error::BadHandle));
+            Ok(())
         })
         .join()
-        .expect("thread");
+        .map_err(|_| "the owner's thread panicked")??;
+        Ok(())
     }
 
     #[test]
-    fn a_parked_machine_frees_from_any_thread() {
+    fn a_parked_machine_frees_from_any_thread() -> TestResult {
         let h = park_pinned(pinned_echo);
         thread::spawn(move || free(h))
             .join()
-            .expect("thread")
-            .expect("free");
+            .map_err(|_| "the freeing thread panicked")??;
         assert_eq!(resume(h), Err(Error::BadHandle));
+        Ok(())
     }
 
     #[test]
@@ -783,26 +793,27 @@ mod tests {
         assert_eq!(resume(h), Err(Error::BadHandle), "removed from both tables");
     }
 
-    fn frames_of(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    fn frames_of(bytes: &[u8]) -> TestResult<Vec<(u8, Vec<u8>)>> {
         let mut r = sans_effort_core::boundary::codec::Reader::new(bytes);
         let mut out = Vec::new();
         while !r.is_empty() {
-            let kind = r.u8().expect("kind");
-            out.push((kind, r.bytes().expect("payload").to_vec()));
+            out.push((r.u8()?, r.bytes()?.to_vec()));
         }
-        out
+        Ok(out)
     }
 
-    fn woken_in(bytes: &[u8]) -> Vec<u64> {
-        frames_of(bytes)
-            .into_iter()
-            .filter(|(kind, _)| *kind == FRAME_WOKE)
-            .map(|(_, payload)| u64::from_le_bytes(payload.try_into().expect("a u64")))
-            .collect()
+    fn woken_in(bytes: &[u8]) -> TestResult<Vec<u64>> {
+        let mut woken = Vec::new();
+        for (kind, payload) in frames_of(bytes)? {
+            if kind == FRAME_WOKE {
+                woken.push(u64::from_le_bytes(payload.as_slice().try_into()?));
+            }
+        }
+        Ok(woken)
     }
 
     #[test]
-    fn the_sender_s_output_names_the_machine_it_woke() {
+    fn the_sender_s_output_names_the_machine_it_woke() -> TestResult {
         let (tx, rx) = async_channel::unbounded::<String>();
         let listener = new(move |outbox: Outbox<Effect>| async move {
             if let Ok(message) = rx.recv().await {
@@ -815,11 +826,11 @@ mod tests {
         });
 
         assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
-        drop(resume(relay).expect("resume"));
-        let (bytes, status) = reply(relay, &reply_str_record(1, "hi")).expect("reply");
+        drop(resume(relay)?);
+        let (bytes, status) = reply(relay, &reply_str_record(1, "hi"))?;
         assert_eq!(status, Status::Complete);
         assert_eq!(
-            woken_in(&bytes),
+            woken_in(&bytes)?,
             [listener],
             "the relay's own output says who it woke"
         );
@@ -828,8 +839,9 @@ mod tests {
             resume(listener),
             Ok((framed(&[View::Say(String::from("hi"))]), Status::Complete))
         );
-        free(listener).expect("free");
-        free(relay).expect("free");
+        free(listener)?;
+        free(relay)?;
+        Ok(())
     }
 
     /// `wakes` drains one process-wide list, and tests run in parallel: a
@@ -846,8 +858,8 @@ mod tests {
     }
 
     #[test]
-    fn a_wake_outside_any_call_is_reported_by_wakes() {
-        let _drains = DRAINS_WAKES.lock().expect("unpoisoned");
+    fn a_wake_outside_any_call_is_reported_by_wakes() -> TestResult {
+        let _drains = DRAINS_WAKES.lock()?;
         let (tx, rx) = async_channel::unbounded::<String>();
         let listener = listener(rx);
         // Holds the sender while it waits for a reply that never comes.
@@ -857,10 +869,10 @@ mod tests {
         });
 
         assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
-        drop(resume(holder).expect("resume"));
-        free(holder).expect("free: drops the sender, which wakes the listener");
+        drop(resume(holder)?);
+        free(holder)?;
         assert!(
-            woken_in(&wakes()).contains(&listener),
+            woken_in(&wakes())?.contains(&listener),
             "no call was running, so the wake waited for `wakes`"
         );
 
@@ -871,7 +883,8 @@ mod tests {
                 Status::Complete
             ))
         );
-        free(listener).expect("free");
+        free(listener)?;
+        Ok(())
     }
 
     /// A machine that panics while holding a sender: the call reports
@@ -879,8 +892,8 @@ mod tests {
     /// no output to carry a `woke` frame — `wakes` names the receiver, which
     /// sees the channel closed and completes. Migrating and pinned alike.
     #[test]
-    fn a_machine_that_panics_holding_a_sender_wakes_the_receiver() {
-        let _drains = DRAINS_WAKES.lock().expect("unpoisoned");
+    fn a_machine_that_panics_holding_a_sender_wakes_the_receiver() -> TestResult {
+        let _drains = DRAINS_WAKES.lock()?;
 
         let migrating = |tx: async_channel::Sender<String>| {
             new(move |outbox: Outbox<Effect>| async move {
@@ -906,14 +919,14 @@ mod tests {
             let holder = holder(tx);
 
             assert_eq!(resume(listener), Ok((Vec::new(), Status::Idle)));
-            assert_eq!(resume(holder).expect("resume").1, Status::Awaiting);
+            assert_eq!(resume(holder)?.1, Status::Awaiting);
             assert_eq!(
                 quietly(|| reply(holder, &reply_str_record(1, "now panic"))),
                 Err(Error::Panicked)
             );
             assert_eq!(resume(holder), Err(Error::BadHandle), "removed");
             assert!(
-                woken_in(&wakes()).contains(&listener),
+                woken_in(&wakes())?.contains(&listener),
                 "the failed call had no output, so the wake waited for `wakes`"
             );
 
@@ -924,8 +937,9 @@ mod tests {
                     Status::Complete
                 ))
             );
-            free(listener).expect("free");
+            free(listener)?;
         }
+        Ok(())
     }
 
     /// A routine that calls into the table for its own handle while it is
@@ -935,7 +949,11 @@ mod tests {
     /// table has issued it. Migrating (its lock is held) and pinned (its
     /// `RefCell` is borrowed) alike.
     #[test]
-    fn a_call_into_a_machine_it_is_already_running_is_busy() {
+    fn a_call_into_a_machine_it_is_already_running_is_busy() -> TestResult {
+        #[expect(
+            clippy::expect_used,
+            reason = "a routine cannot return an error; a panic fails the test"
+        )]
         fn says(own: Arc<OnceLock<u64>>) -> impl FnOnce(Outbox<Effect>) -> BoxedRoutine {
             move |outbox| {
                 Box::pin(async move {
@@ -950,18 +968,19 @@ mod tests {
 
         let own = Arc::new(OnceLock::new());
         let migrating = new(says(Arc::clone(&own)));
-        own.set(migrating).expect("set once");
+        own.set(migrating)?;
         assert_eq!(resume(migrating), Ok((busy.clone(), Status::Complete)));
-        free(migrating).expect("free");
+        free(migrating)?;
 
         let own = Arc::new(OnceLock::new());
         let pinned = park_pinned({
             let own = Arc::clone(&own);
             move |outbox: Outbox<Effect>| -> LocalBoxedRoutine { says(own)(outbox) }
         });
-        own.set(pinned).expect("set once");
+        own.set(pinned)?;
         assert_eq!(resume(pinned), Ok((busy, Status::Complete)));
-        free(pinned).expect("free");
+        free(pinned)?;
+        Ok(())
     }
 
     /// Re-issuing a handle from ahead — a log from another process — moves
@@ -994,11 +1013,11 @@ mod tests {
                     assert!(issued.insert(h), "handle {h} issued twice");
                     live.push_back(h);
                 } else if let Some(h) = live.pop_front() {
-                    free(h).expect("live");
+                    assert_eq!(free(h), Ok(()), "live");
                 }
             }
             for h in live {
-                free(h).expect("live");
+                assert_eq!(free(h), Ok(()), "live");
             }
         });
     }

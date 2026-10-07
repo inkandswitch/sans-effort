@@ -238,9 +238,8 @@ impl<R: Send + 'static, W: Send + 'static> SpawnPinned for TokioCtx<R, W> {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
+    use testresult::TestResult;
 
     use std::time::SystemTime;
     use tokio::sync::oneshot;
@@ -249,7 +248,7 @@ mod tests {
     /// clone of the context: its lines land in the parent's output, and once
     /// every child has let go, the parts come back.
     #[tokio::test(start_paused = true)]
-    async fn every_effect_trait_through_one_value() {
+    async fn every_effect_trait_through_one_value() -> TestResult {
         let ctx = TokioCtx::new(&b"hi\n"[..], Vec::new(), LocalPoolHandle::new(1));
         let start = tokio::time::Instant::now();
 
@@ -258,9 +257,7 @@ mod tests {
         ctx.write_line(format!("{line:?}"));
         assert_eq!(start.elapsed(), Duration::from_millis(10));
 
-        let wall = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("a clock set after 1970");
+        let wall = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
         assert!(ctx.now().await.since_epoch() >= wall);
 
         assert_eq!(
@@ -270,50 +267,53 @@ mod tests {
         assert_eq!(ctx.random_bytes(8).await.len(), 8);
 
         let dir = std::env::temp_dir().join(format!("sans-effort-ctx-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        std::fs::create_dir_all(&dir)?;
         let path = dir.join("file").to_string_lossy().into_owned();
-        ctx.write_file(path.clone(), b"kept".to_vec())
-            .await
-            .expect("written");
+        ctx.write_file(path.clone(), b"kept".to_vec()).await?;
         assert_eq!(ctx.read_file(path).await, Ok(b"kept".to_vec()));
-        std::fs::remove_dir_all(dir).expect("cleaned up");
+        std::fs::remove_dir_all(dir)?;
 
         let (done, finished) = oneshot::channel();
         ctx.spawn(|child| async move {
             child.write_line("from a child".into());
             drop(child);
-            done.send(()).expect("the parent waits");
+            assert!(done.send(()).is_ok(), "the parent waits");
         });
-        finished.await.expect("the child ran");
+        finished.await?;
 
         let (done, finished) = oneshot::channel();
         ctx.spawn_pinned(|child| async move {
             child.write_line("from a pinned child".into());
             drop(child);
-            done.send(()).expect("the parent waits");
+            assert!(done.send(()).is_ok(), "the parent waits");
         });
-        finished.await.expect("the pinned child ran");
+        finished.await?;
 
-        let (unread, written) = ctx.into_parts().expect("every child let go");
+        let (unread, written) = ctx.into_parts().map_err(|_| "every child let go")?;
         assert!(unread.is_empty());
         assert_eq!(
-            String::from_utf8(written).expect("lines"),
+            String::from_utf8(written)?,
             "Ok(\"hi\")\nfrom a child\nfrom a pinned child\n"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn a_context_shared_with_a_child_gives_its_parts_back_only_after() {
+    async fn a_context_shared_with_a_child_gives_its_parts_back_only_after() -> TestResult {
         let ctx = TokioCtx::new(&b"unread\n"[..], Vec::<u8>::new(), LocalPoolHandle::new(1));
         let child = ctx.clone();
-        let ctx = ctx.into_parts().expect_err("the child still shares them");
+        let ctx = ctx
+            .into_parts()
+            .err()
+            .ok_or("the child still shares them")?;
         child.write_line("from the child".into());
         drop(child);
 
-        let (unread, written) = ctx.into_parts().expect("the child let go");
+        let (unread, written) = ctx.into_parts().map_err(|_| "the child let go")?;
         assert_eq!(
             (unread, written.as_slice()),
             (&b"unread\n"[..], &b"from the child\n"[..])
         );
+        Ok(())
     }
 }

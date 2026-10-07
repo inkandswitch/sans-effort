@@ -30,9 +30,8 @@ impl Now for TokioClock {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
     use super::*;
+    use testresult::TestResult;
 
     #[tokio::test(start_paused = true)]
     async fn a_sleep_advances_virtual_time() {
@@ -42,18 +41,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn now_is_the_system_time() {
-        let since_epoch = || {
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .expect("a clock set after 1970")
-        };
-        let before = since_epoch();
+    async fn now_is_the_system_time() -> TestResult {
+        let since_epoch = || SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+        let before = since_epoch()?;
         let now = TokioClock.now().await.since_epoch();
-        let after = since_epoch();
+        let after = since_epoch()?;
         assert!(
             before <= now && now <= after,
             "{before:?} <= {now:?} <= {after:?}"
         );
+        Ok(())
     }
 }

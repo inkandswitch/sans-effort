@@ -562,8 +562,6 @@ mod tests {
     }
 
     mod driving {
-        #![expect(clippy::expect_used, reason = "tests assert their preconditions")]
-
         use super::super::{schedule::Choices, *};
         use crate::{
             join::join,
@@ -572,6 +570,7 @@ mod tests {
         };
         use alloc::vec::Vec;
         use core::ops::ControlFlow;
+        use testresult::TestResult;
 
         enum Effect {
             Ask(ReplyHandle<u64>),
@@ -641,10 +640,10 @@ mod tests {
         }
 
         /// What is said, in a run that must complete.
-        fn said<S: Schedule>(root: Driver<Effect>, schedule: S) -> Vec<u64> {
+        fn said<S: Schedule>(root: Driver<Effect>, schedule: S) -> TestResult<Vec<u64>> {
             let (said, ran) = run(root, schedule, None);
-            ran.expect("completes");
-            said.into_iter().map(|(n, _)| n).collect()
+            ran?;
+            Ok(said.into_iter().map(|(n, _)| n).collect())
         }
 
         const fn ms(millis: u64) -> Duration {
@@ -655,24 +654,27 @@ mod tests {
         fn a_join_says_the_same_under_every_schedule() {
             bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
                 let root = Driver::new(|outbox| Pair(outbox).run());
-                assert_eq!(said(root, Choices::new(bytes.iter().copied())), [1, 2]);
+                let Ok(said) = said(root, Choices::new(bytes.iter().copied()));
+                assert_eq!(said, [1, 2]);
             });
         }
 
         /// The schedule does reorder replies: a routine that reports
         /// arrival order says something else under some choices.
         #[test]
-        fn a_race_shows_the_schedule() {
-            let fifo = said(Driver::new(|outbox| Racer(outbox).run()), Fifo);
+        fn a_race_shows_the_schedule() -> TestResult {
+            let fifo = said(Driver::new(|outbox| Racer(outbox).run()), Fifo)?;
             assert_eq!(fifo, [1, 2]);
             // Every ten-byte sequence of 1s and 2s: neither ever stutters, and
             // with two actions ready they pick the newer or the older.
             let reordered = (0..1_u32 << 10).any(|bits| {
                 let bytes = (0..10).map(move |i| if bits >> i & 1 == 1 { 1 } else { 2 });
                 let root = Driver::new(|outbox| Racer(outbox).run());
-                said(root, Choices::new(bytes)) == [2, 1]
+                let Ok(said) = said(root, Choices::new(bytes));
+                said == [2, 1]
             });
             assert!(reordered, "some choice delivers the second reply first");
+            Ok(())
         }
 
         /// Sleeps for both lengths at once, saying each as it wakes.
@@ -799,13 +801,14 @@ mod tests {
         /// Killing the child drops the sender it held: the parent's receive
         /// sees the channel closed, and the run completes, naming the kill.
         #[test]
-        fn a_killed_machine_closes_its_channels() {
+        fn a_killed_machine_closes_its_channels() -> TestResult {
             let parent = || Driver::new(|outbox| Parent(outbox).run());
-            assert_eq!(said(parent(), Fifo), [1]);
+            assert_eq!(said(parent(), Fifo)?, [1]);
 
             let (said, ran) = run(parent(), KillsOnce::new(1), None);
             assert_eq!(said, [(0, Duration::ZERO)]);
-            assert_eq!(ran.expect("the parent completes").killed(), [1]);
+            assert_eq!(ran?.killed(), [1], "the parent completes, naming the kill");
+            Ok(())
         }
 
         /// Whatever is killed, and whenever, no survivor stalls; with no
@@ -813,14 +816,18 @@ mod tests {
         #[test]
         fn survivors_complete_whatever_is_killed() {
             bolero::check!().with_type::<Vec<u8>>().for_each(|bytes| {
-                let root = Driver::new(|outbox| Parent(outbox).run());
-                let schedule = Choices::new(bytes.iter().copied()).crashing();
-                let (said, ran) = run(root, schedule, None);
-                let completed = ran.expect("no survivor stalls");
-                if completed.killed().is_empty() {
-                    assert_eq!(said, [(1, Duration::ZERO)]);
-                }
+                let Ok(()) = survivors_complete(bytes);
             });
+        }
+
+        fn survivors_complete(bytes: &[u8]) -> TestResult {
+            let root = Driver::new(|outbox| Parent(outbox).run());
+            let schedule = Choices::new(bytes.iter().copied()).crashing();
+            let (said, ran) = run(root, schedule, None);
+            if ran?.killed().is_empty() {
+                assert_eq!(said, [(1, Duration::ZERO)]);
+            }
+            Ok(())
         }
 
         /// Spawns a child, and a pinned child holding an `Rc` (so its future
@@ -845,7 +852,7 @@ mod tests {
         }
 
         /// What each machine said, by machine, under `schedule`.
-        fn family<S: Schedule>(schedule: S) -> (Vec<(usize, u64)>, Completed) {
+        fn family<S: Schedule>(schedule: S) -> TestResult<(Vec<(usize, u64)>, Completed)> {
             let mut said = Vec::new();
             let ran = drive_with(
                 Driver::new(|outbox| Family(outbox).run()),
@@ -856,26 +863,27 @@ mod tests {
                     Effect::SpawnPinned(make) => host.spawn_pinned(make),
                     Effect::Ask(_) | Effect::Sleep(..) => unreachable!("the family only tells"),
                 },
-            )
-            .expect("completes");
+            )?;
             said.sort_unstable();
-            (said, ran)
+            Ok((said, ran))
         }
 
         /// The root is machine 0, then each child in the order spawned; a
         /// pinned child runs as a local machine.
         #[test]
-        fn children_are_numbered_in_spawn_order_and_pinned_ones_run() {
-            let (said, ran) = family(Fifo);
+        fn children_are_numbered_in_spawn_order_and_pinned_ones_run() -> TestResult {
+            let (said, ran) = family(Fifo)?;
             assert_eq!(said, [(0, 0), (1, 10), (2, 20)]);
             assert_eq!(ran.killed(), []);
+            Ok(())
         }
 
         #[test]
-        fn a_kill_is_reported_by_the_machine_it_named() {
-            let (said, ran) = family(KillsOnce::new(2));
+        fn a_kill_is_reported_by_the_machine_it_named() -> TestResult {
+            let (said, ran) = family(KillsOnce::new(2))?;
             assert_eq!(said, [(0, 0), (1, 10)], "the pinned child never ran");
             assert_eq!(ran.killed(), [2]);
+            Ok(())
         }
 
         /// Takes the newest action, by naming one past the end.
@@ -905,15 +913,16 @@ mod tests {
         }
 
         #[test]
-        fn a_choice_past_the_end_means_the_newest() {
+        fn a_choice_past_the_end_means_the_newest() -> TestResult {
             let racer = || Driver::new(|outbox| Racer(outbox).run());
-            assert_eq!(said(racer(), PastTheEnd), said(racer(), Newest));
+            assert_eq!(said(racer(), PastTheEnd)?, said(racer(), Newest)?);
+            Ok(())
         }
 
         /// Killing drops the machine's timers and no others, and says
         /// whether it was still running.
         #[test]
-        fn a_kill_drops_only_its_own_timers() {
+        fn a_kill_drops_only_its_own_timers() -> TestResult {
             let mut world: World<Effect> = World {
                 machines: Vec::new(),
                 ready: Vec::new(),
@@ -927,7 +936,7 @@ mod tests {
             world.adopt(Machine::Migrating(
                 Driver::new(|_: Outbox<Effect>| async {}),
             ));
-            drop(world.machine(1).expect("alive").resume());
+            drop(world.machine(1).ok_or("machine 1 is alive")?.resume());
             for at in [0, 1] {
                 world.timers.push(Timer {
                     due: ms(5),
@@ -941,12 +950,13 @@ mod tests {
             assert_eq!(timers, [1], "only its own timer went");
             assert!(!world.kill(1), "it had completed");
             assert!(!world.kill(0), "already gone");
+            Ok(())
         }
 
         /// The root completes; its child waits on a channel it holds the
         /// sender of, forever — and is named.
         #[test]
-        fn a_stalled_child_is_named() {
+        fn a_stalled_child_is_named() -> TestResult {
             let root = Driver::new(|outbox: Outbox<Effect>| async move {
                 outbox.tell(Effect::Spawn(Box::new(|_: Outbox<Effect>| {
                     Box::pin(async move {
@@ -961,8 +971,10 @@ mod tests {
                     host.spawn(make);
                 }
             })
-            .expect_err("the child waits forever");
+            .err()
+            .ok_or("the child waits forever")?;
             assert_eq!(stalled.machines(), [1]);
+            Ok(())
         }
 
         /// Waits on a channel whose sender it keeps and never uses.
@@ -979,7 +991,7 @@ mod tests {
         }
 
         #[test]
-        fn a_deadlock_is_reported_not_hung_on() {
+        fn a_deadlock_is_reported_not_hung_on() -> TestResult {
             let (sender, receiver) = async_channel::unbounded();
             let root = Driver::new(move |_: Outbox<Effect>| {
                 Stuck {
@@ -988,8 +1000,9 @@ mod tests {
                 }
                 .run()
             });
-            let stalled = drive(root, |_, _| {}).expect_err("nothing can wake it");
+            let stalled = drive(root, |_, _| {}).err().ok_or("nothing can wake it")?;
             assert_eq!(stalled.machines(), [0]);
+            Ok(())
         }
     }
 }

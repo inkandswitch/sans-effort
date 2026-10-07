@@ -461,6 +461,7 @@ dependencies = [
  "sans-effort-core",
  "sans-effort-effects",
  "sans-effort-host",
+ "testresult",
 ]
 
 [[package]]
@@ -480,6 +481,7 @@ version = "0.1.0"
 dependencies = [
  "routines",
  "sans-effort",
+ "testresult",
  "tokio",
  "tokio-util",
 ]
@@ -899,6 +901,7 @@ dependencies = [
  "async-channel",
  "bolero",
  "sans-effort",
+ "testresult",
  "trybuild",
 ]
 
@@ -959,6 +962,7 @@ version = "0.1.0"
 dependencies = [
  "bolero",
  "sans-effort-core",
+ "testresult",
  "thiserror",
 ]
 
@@ -983,6 +987,7 @@ dependencies = [
  "getrandom",
  "sans-effort-core",
  "sans-effort-effects",
+ "testresult",
  "tokio",
  "tokio-util",
  "tracing",
