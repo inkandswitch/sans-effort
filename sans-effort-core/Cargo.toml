@@ -20,6 +20,10 @@ portable-atomic-util = { workspace = true, optional = true }
 spin = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
+# The loom models (`tests/loom.rs`, `test:loom`): built only with `--cfg sans_effort_loom`.
+[target.'cfg(sans_effort_loom)'.dependencies]
+loom = { workspace = true }
+
 [dev-dependencies]
 # This crate, with `testing` on: its own doctests use the module.
 sans-effort-core = { path = ".", features = ["testing"] }
@@ -27,6 +31,7 @@ async-channel = { workspace = true, features = ["std"] }
 bolero = { workspace = true }
 criterion = { workspace = true }
 gungraun = { workspace = true }
+testresult = { workspace = true }
 
 # `benches/workloads.rs` is a module both harnesses share, not a target.
 [[bench]]

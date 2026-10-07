@@ -30,3 +30,15 @@ jobs:
       # Default features, all features, and doc tests. The flake's toolchain is
       # the MSRV (msrv.yml checks the pins agree), so this tests at the MSRV.
       - run: nix develop .#ci --command test:host
+
+  # The driver's waker and outbox under every interleaving loom finds.
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/nix
+        with:
+          cargo-cache: loom
+
+      - run: nix develop .#ci --command test:loom

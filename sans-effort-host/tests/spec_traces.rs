@@ -10,12 +10,6 @@
 //! spawned, the ids asked and closed, and the status. So must what `wakes`
 //! reports when the host is quiet.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "a test: a broken fixture or a divergence fails it"
-)]
-
 use async_channel::{Receiver, Sender};
 use sans_effort_core::{
     boundary::{
@@ -37,6 +31,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex, Once, PoisonError},
 };
+use testresult::TestResult;
 
 // ---- The spec's instances --------------------------------------------------
 
@@ -61,29 +56,30 @@ struct Instance {
 }
 
 impl Instance {
-    fn program(&self, name: &str) -> &'static [Instr] {
+    fn program(&self, name: &str) -> Option<&'static [Instr]> {
         self.programs
             .iter()
             .find(|(n, _)| *n == name)
             .map(|(_, p)| *p)
-            .expect("a program of this instance")
     }
 
-    fn holds(&self, name: &str) -> &'static [&'static str] {
+    fn holds(&self, name: &str) -> Result<&'static [&'static str], String> {
         self.holds
             .iter()
             .find(|(n, _)| *n == name)
             .map(|(_, h)| *h)
-            .expect("a program of this instance")
+            .ok_or_else(|| format!("no program {name} in this instance"))
     }
 
-    fn of(name: &str) -> &'static Self {
+    fn of(name: &str) -> Result<&'static Self, String> {
         match name {
-            "ping_pong" | "ping_pong_sequential" | "mistaken_ignores_woke" => &PING_PONG,
-            "deadline" | "mistaken_ignores_closed" => &DEADLINE,
-            "panic_wakes" => &PANIC_WAKES,
-            "deadlock" => &DEADLOCK,
-            other => panic!("no instance {other}: add it here as in spec/host_protocol.qnt"),
+            "ping_pong" | "ping_pong_sequential" | "mistaken_ignores_woke" => Ok(&PING_PONG),
+            "deadline" | "mistaken_ignores_closed" => Ok(&DEADLINE),
+            "panic_wakes" => Ok(&PANIC_WAKES),
+            "deadlock" => Ok(&DEADLOCK),
+            other => Err(format!(
+                "no instance {other}: add it here as in spec/host_protocol.qnt"
+            )),
         }
     }
 }
@@ -203,7 +199,7 @@ struct World {
 
 impl World {
     /// A world for `instance`, and the senders its root holds.
-    fn new(instance: &'static Instance) -> (Arc<Self>, Held) {
+    fn new(instance: &'static Instance) -> Result<(Arc<Self>, Held), String> {
         let mut senders = HashMap::new();
         let mut receivers = HashMap::new();
         for &c in instance.channels {
@@ -211,19 +207,22 @@ impl World {
             senders.insert(c, tx);
             receivers.insert(c, rx);
         }
-        let bundle = |program: &str| -> Held {
+        let bundle = |program: &str| -> Result<Held, String> {
             instance
-                .holds(program)
+                .holds(program)?
                 .iter()
-                .map(|&c| (c, senders.get(c).expect("a channel").clone()))
+                .map(|&c| {
+                    let tx = senders.get(c).ok_or_else(|| format!("no channel {c}"))?;
+                    Ok((c, tx.clone()))
+                })
                 .collect()
         };
-        let root = bundle(instance.root);
+        let root = bundle(instance.root)?;
         let mut kit: HashMap<&'static str, Vec<Held>> = HashMap::new();
         for (_, program) in instance.programs {
             for instr in *program {
                 if let Instr::Spawn(child) = *instr {
-                    kit.entry(child).or_default().push(bundle(child));
+                    kit.entry(child).or_default().push(bundle(child)?);
                 }
             }
         }
@@ -232,11 +231,11 @@ impl World {
             receivers,
             kit: Mutex::new(kit),
         };
-        (Arc::new(world), root)
+        Ok((Arc::new(world), root))
     }
 
-    fn receiver(&self, c: &str) -> &Receiver<()> {
-        self.receivers.get(c).expect("a channel of this instance")
+    fn receiver(&self, c: &str) -> Option<&Receiver<()>> {
+        self.receivers.get(c)
     }
 }
 
@@ -244,6 +243,11 @@ impl World {
 const PANIC: &str = "a spec program panics, as it says";
 
 /// A routine running `name`'s program, holding `held` until it ends.
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a routine cannot return an error: a broken fixture panics the machine, which the replay reports as a divergence, and a program's `Panic` panics on purpose"
+)]
 fn program(
     world: Arc<World>,
     name: &'static str,
@@ -251,7 +255,11 @@ fn program(
 ) -> impl FnOnce(Outbox<Effect>) -> BoxedRoutine + Send {
     move |outbox| {
         Box::pin(async move {
-            for instr in world.instance.program(name) {
+            let steps = world
+                .instance
+                .program(name)
+                .expect("a program of this instance");
+            for instr in steps {
                 match *instr {
                     Instr::Send(c) => {
                         let (_, tx) = held
@@ -261,7 +269,8 @@ fn program(
                         tx.try_send(()).expect("unbounded, and open while held");
                     }
                     Instr::Recv(c) => {
-                        if world.receiver(c).recv().await.is_err() {
+                        let rx = world.receiver(c).expect("a channel of this instance");
+                        if rx.recv().await.is_err() {
                             return;
                         }
                     }
@@ -278,7 +287,8 @@ fn program(
                     }
                     Instr::Ask => outbox.ask(Effect::Ask).await,
                     Instr::Race(c) => {
-                        select(world.receiver(c).recv(), outbox.ask(Effect::Ask)).await;
+                        let rx = world.receiver(c).expect("a channel of this instance");
+                        select(rx.recv(), outbox.ask(Effect::Ask)).await;
                     }
                     Instr::Panic => panic!("{PANIC}"),
                 }
@@ -313,45 +323,55 @@ fn at<'a>(v: &'a Value, key: &str) -> &'a Value {
 }
 
 /// The two elements of an ITF pair (a map entry, a tuple).
-fn pair(v: &Value) -> (&Value, &Value) {
+fn pair(v: &Value) -> Result<(&Value, &Value), String> {
     match v.as_array().map(Vec::as_slice) {
-        Some([first, second]) => (first, second),
-        _ => panic!("an ITF pair: {v}"),
+        Some([first, second]) => Ok((first, second)),
+        _ => Err(format!("an ITF pair: {v}")),
     }
 }
 
-fn int(v: &Value) -> u64 {
+fn int(v: &Value) -> Result<u64, String> {
     at(v, "#bigint")
         .as_str()
         .and_then(|s| s.parse().ok())
-        .expect("an ITF integer")
+        .ok_or_else(|| format!("an ITF integer: {v}"))
 }
 
-fn set(v: &Value) -> BTreeSet<u64> {
+fn set(v: &Value) -> Result<BTreeSet<u64>, String> {
     at(v, "#set")
         .as_array()
-        .expect("an ITF set")
+        .ok_or_else(|| format!("an ITF set: {v}"))?
         .iter()
         .map(int)
         .collect()
 }
 
-fn tag(v: &Value) -> &str {
-    at(v, "tag").as_str().expect("an ITF variant")
+fn tag(v: &Value) -> Result<&str, String> {
+    at(v, "tag")
+        .as_str()
+        .ok_or_else(|| format!("an ITF variant: {v}"))
 }
 
-fn some(v: &Value) -> Option<&Value> {
-    (tag(v) == "Some").then(|| at(v, "value"))
+/// An ITF `Option`'s value, which `what` says must be there.
+fn some<'a>(v: &'a Value, what: &str) -> Result<&'a Value, String> {
+    match tag(v)? {
+        "Some" => Ok(at(v, "value")),
+        _ => Err(format!("{what}: {v}")),
+    }
 }
 
-fn lookup(map: &Value, key: u64) -> Option<&Value> {
-    at(map, "#map")
+/// The value at `key` in an ITF map, which `what` says must be there.
+fn lookup<'a>(map: &'a Value, key: u64, what: &str) -> Result<&'a Value, String> {
+    for entry in at(map, "#map")
         .as_array()
-        .expect("an ITF map")
-        .iter()
-        .map(pair)
-        .find(|(k, _)| int(k) == key)
-        .map(|(_, v)| v)
+        .ok_or_else(|| format!("an ITF map: {map}"))?
+    {
+        let (k, v) = pair(entry)?;
+        if int(k)? == key {
+            return Ok(v);
+        }
+    }
+    Err(format!("{what}: {key}"))
 }
 
 // ---- The replay ----------------------------------------------------------------
@@ -367,14 +387,14 @@ struct Output {
 }
 
 impl Output {
-    fn from_spec(v: &Value) -> Self {
-        Self {
-            woke: set(at(v, "woke")),
-            spawned: set(at(v, "spawned")),
-            asked: set(at(v, "asked")),
-            closed: set(at(v, "closed")),
-            status: tag(at(v, "status")).to_owned(),
-        }
+    fn from_spec(v: &Value) -> Result<Self, String> {
+        Ok(Self {
+            woke: set(at(v, "woke"))?,
+            spawned: set(at(v, "spawned"))?,
+            asked: set(at(v, "asked"))?,
+            closed: set(at(v, "closed"))?,
+            status: tag(at(v, "status"))?.to_owned(),
+        })
     }
 }
 
@@ -390,14 +410,15 @@ impl Replay {
             .iter()
             .position(|&h| h == handle)
             .ok_or_else(|| format!("handle {handle} names no machine of this run"))?;
-        Ok(u64::try_from(at).expect("few machines"))
+        u64::try_from(at).map_err(|e| e.to_string())
     }
 
-    fn real(&self, machine: u64) -> u64 {
-        *self
-            .handles
-            .get(usize::try_from(machine).expect("few machines"))
-            .expect("a machine the spec has created")
+    fn real(&self, machine: u64) -> Result<u64, String> {
+        usize::try_from(machine)
+            .ok()
+            .and_then(|at| self.handles.get(at))
+            .copied()
+            .ok_or_else(|| format!("machine {machine} has not been created"))
     }
 
     /// The output of a real call, in the spec's terms; children it spawned
@@ -439,8 +460,9 @@ impl Replay {
                             out.asked.insert(value);
                         }
                         (FRAME_TELL, 2) => {
-                            out.spawned
-                                .insert(u64::try_from(self.handles.len()).expect("few machines"));
+                            out.spawned.insert(
+                                u64::try_from(self.handles.len()).map_err(|e| e.to_string())?,
+                            );
                             self.handles.push(value);
                         }
                         other => return Err(format!("an unknown record {other:?}")),
@@ -479,7 +501,7 @@ fn unit_reply(id: u64) -> Vec<u8> {
 /// Replay one trace; `Err` describes the first step where the table and the
 /// spec disagree.
 fn replay(instance: &'static Instance, trace: &[Value]) -> Result<usize, String> {
-    let (world, root_senders) = World::new(instance);
+    let (world, root_senders) = World::new(instance)?;
     let root = table::new(program(Arc::clone(&world), instance.root, root_senders));
     let mut run = Replay {
         handles: vec![root],
@@ -493,26 +515,31 @@ fn replay(instance: &'static Instance, trace: &[Value]) -> Result<usize, String>
         };
         let step = index + 1;
         let picks = at(after, "picks");
-        match at(after, "action").as_str().expect("an action") {
+        let action = at(after, "action")
+            .as_str()
+            .ok_or_else(|| format!("step {step}: no action"))?;
+        match action {
             "call" => {
-                let event = some(at(picks, "e")).expect("a call picks an event");
-                let (machine, result) = match tag(event) {
+                let event = some(at(picks, "e"), "a call picks an event")?;
+                let (machine, result) = match tag(event)? {
                     "Resume" => {
-                        let machine = int(at(event, "value"));
-                        (machine, table::resume(run.real(machine)))
+                        let machine = int(at(event, "value"))?;
+                        (machine, table::resume(run.real(machine)?))
                     }
                     "Reply" => {
-                        let (machine, id) = pair(at(at(event, "value"), "#tup"));
-                        let (machine, id) = (int(machine), int(id));
-                        (machine, table::reply(run.real(machine), &unit_reply(id)))
+                        let (machine, id) = pair(at(at(event, "value"), "#tup"))?;
+                        let (machine, id) = (int(machine)?, int(id)?);
+                        (machine, table::reply(run.real(machine)?, &unit_reply(id)))
                     }
                     other => return Err(format!("step {step}: an unknown event {other}")),
                 };
                 calls += 1;
-                let expected = Output::from_spec(
-                    lookup(at(after, "in_flight"), machine).expect("the call is in flight"),
-                );
-                let stale = int(at(after, "stale")) > int(at(before, "stale"));
+                let expected = Output::from_spec(lookup(
+                    at(after, "in_flight"),
+                    machine,
+                    "the call is in flight",
+                )?)?;
+                let stale = int(at(after, "stale"))? > int(at(before, "stale"))?;
                 let actual = match result {
                     // A reply to a closed request, or to a machine gone: the
                     // spec delivers nothing, and the table refuses it.
@@ -539,18 +566,20 @@ fn replay(instance: &'static Instance, trace: &[Value]) -> Result<usize, String>
                 }
             }
             "ret" => {
-                let machine = int(some(at(picks, "h")).expect("a return picks a machine"));
-                let out = Output::from_spec(
-                    lookup(at(before, "in_flight"), machine).expect("the call was in flight"),
-                );
+                let machine = int(some(at(picks, "h"), "a return picks a machine")?)?;
+                let out = Output::from_spec(lookup(
+                    at(before, "in_flight"),
+                    machine,
+                    "the call was in flight",
+                )?)?;
                 if out.status == "Complete" {
-                    table::free(run.real(machine))
+                    table::free(run.real(machine)?)
                         .map_err(|e| format!("step {step}: freeing machine {machine}: {e}"))?;
                     live.remove(&machine);
                 }
             }
             "quiet" => {
-                let expected = set(at(before, "wakes"));
+                let expected = set(at(before, "wakes"))?;
                 let actual = run.wakes()?;
                 if actual != expected {
                     return Err(format!(
@@ -565,40 +594,42 @@ fn replay(instance: &'static Instance, trace: &[Value]) -> Result<usize, String>
 
     // A stall leaves machines behind; the table is process-wide.
     for machine in live {
-        table::free(run.real(machine)).unwrap_or_default();
+        table::free(run.real(machine)?).unwrap_or_default();
     }
     drop(table::wakes());
     Ok(calls)
 }
 
 #[test]
-fn the_table_does_what_the_spec_says() {
+fn the_table_does_what_the_spec_says() -> TestResult {
     quiet_panics();
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../spec/traces");
-    let mut files: Vec<_> = std::fs::read_dir(dir)
-        .expect("spec/traces: run `spec:traces`")
-        .map(|entry| entry.expect("a fixture").path())
-        .filter(|path| path.extension().is_some_and(|e| e == "json"))
-        .collect();
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            files.push(path);
+        }
+    }
     files.sort();
 
     let (mut traces, mut calls) = (0, 0);
     for path in files {
-        let file: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).expect("readable")).expect("JSON");
-        let name = at(&file, "instance").as_str().expect("an instance");
-        let instance = Instance::of(name);
-        for (n, trace) in at(&file, "traces")
+        let file: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        let name = at(&file, "instance")
+            .as_str()
+            .ok_or("a fixture names its instance")?;
+        let instance = Instance::of(name)?;
+        let drawn = at(&file, "traces")
             .as_array()
-            .expect("traces")
-            .iter()
-            .enumerate()
-        {
-            let steps = trace.as_array().expect("a trace");
-            calls += replay(instance, steps).unwrap_or_else(|e| panic!("{name}, trace {n}: {e}"));
+            .ok_or("a fixture holds traces")?;
+        for (n, trace) in drawn.iter().enumerate() {
+            let steps = trace.as_array().ok_or("a trace is a list of steps")?;
+            calls += replay(instance, steps).map_err(|e| format!("{name}, trace {n}: {e}"))?;
             traces += 1;
         }
     }
     assert!(traces >= 30, "the fixtures are there: {traces} traces");
     assert!(calls >= traces, "every trace makes calls: {calls}");
+    Ok(())
 }

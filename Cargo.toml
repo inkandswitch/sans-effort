@@ -39,6 +39,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
 getrandom = { version = "0.3.4", default-features = false }
 # Its runner, `gungraun-runner`, must be the same version: `nix/gungraun-runner.nix`.
 gungraun = "=0.20.0"
+loom = "0.7.2"
 portable-atomic = { version = "1.15", default-features = false, features = [
   "fallback",
 ] }
@@ -52,6 +53,7 @@ spin = { version = "0.12.3", default-features = false, features = [
   "mutex",
   "spin_mutex",
 ] }
+testresult = "0.4.2"
 thiserror = { version = "2.0", default-features = false }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 trybuild = "1.0"
@@ -77,6 +79,9 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 unreachable_pub = "deny"
 unsafe_code = "forbid"
 unused_extern_crates = "deny"
+
+# `--cfg sans_effort_loom`: sans-effort-core's loom models (`test:loom`).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(sans_effort_loom)"] }
 
 [workspace.lints.clippy]
 dbg_macro = "warn"

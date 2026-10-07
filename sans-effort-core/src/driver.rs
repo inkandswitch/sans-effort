@@ -471,7 +471,7 @@ mod tests {
     /// message, `select` takes the message (it polls first), and the ask is
     /// dropped unread. It was answered, not abandoned: not closed.
     #[test]
-    fn an_answered_request_dropped_unread_is_not_closed() {
+    fn an_answered_request_dropped_unread_is_not_closed() -> testresult::TestResult {
         let (tx, rx) = async_channel::unbounded::<()>();
         let mut driver = Driver::new(move |outbox: Outbox<Effect>| async move {
             let won = crate::select::select(rx.recv(), outbox.ask(Effect::Ask)).await;
@@ -485,7 +485,7 @@ mod tests {
         let (_, handles) = split(driver.resume());
         let ask = one(handles);
 
-        tx.try_send(()).expect("unbounded");
+        tx.try_send(())?;
         let (effects, closed) = driver.reply(ask, String::from("late")).into_parts();
         let said: Vec<String> = effects
             .into_iter()
@@ -497,6 +497,7 @@ mod tests {
         assert_eq!(said, ["message"], "the receive is polled first, and wins");
         assert!(closed.is_empty(), "the ask had its reply: nothing to close");
         assert_eq!(driver.status(), Status::Complete);
+        Ok(())
     }
 
     /// Answers whose decoding can fail, one per wire kind, so that what a

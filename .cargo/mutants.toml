@@ -13,6 +13,9 @@ exclude_re = [
   "replace > with >= in note",
   # `Decode for ()` is `Ok(())`, which is what `Ok(Default::default())` is.
   "replace <impl Decode for \\(\\)>::decode -> Result<Self, DecodeError> with Ok\\(Default::default\\(\\)\\)",
+  # The loom lock is built only with `--cfg sans_effort_loom`, which the tests
+  # do not set; `test:loom` runs the models that use it.
+  "-> loom::sync::MutexGuard",
 ]
 
 exclude_globs = [

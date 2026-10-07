@@ -147,6 +147,17 @@ in {
     echo "Done"
   '';
 
+  # loom models of the driver's waker and outbox (sans-effort-core/tests/
+  # loom.rs): every interleaving of a wake with a poll, of wakes with each
+  # other, and of a tell from another thread with a drain. `--cfg
+  # sans_effort_loom` swaps the driver's lock and wake flag for loom's; its
+  # own target directory keeps that from rebuilding everything else.
+  "test:loom" = cmd "Model-check the waker and outbox of the driver under every interleaving (loom)" ''
+    set -e
+    RUSTFLAGS="--cfg sans_effort_loom" CARGO_TARGET_DIR=target/loom \
+      ${cargo} test --release -p sans-effort-core --test loom "$@"
+  '';
+
   "test:props" = cmd "Run property tests with many iterations" ''
     set -e
     export BOLERO_RANDOM_ITERATIONS=100000
@@ -447,7 +458,7 @@ in {
     echo "Done"
   '';
 
-  "ci:full" = cmd "Run what CI runs, but mutation testing and benchmarks (lint, tests, no_std, typos, deny, demo, host checks, spec)" ''
+  "ci:full" = cmd "Run what CI runs, but mutation testing and benchmarks (lint, tests, loom, no_std, typos, deny, demo, host checks, spec)" ''
     set -e
 
     echo "===> [1/7] Linting..."
@@ -455,6 +466,7 @@ in {
 
     echo "===> [2/7] Testing..."
     test:host
+    test:loom
 
     echo "===> [3/7] Checking no_std..."
     test:no_std
