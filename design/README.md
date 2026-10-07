@@ -8,6 +8,7 @@ Some documents describe what exists and some describe what is planned. Each one 
 
 | Document                          | Status            | Purpose                                                                        |
 |-----------------------------------|-------------------|--------------------------------------------------------------------------------|
+| [`concepts`](concepts.md)         | current           | The terms, and how they connect: start here                                    |
 | [`assumptions`](assumptions.md)   | current           | What the design assumes about hosts, routines, and targets                     |
 | [`effects`](effects.md)           | current           | A standard library of effect traits: `sans-effort-effects`, `sans-effort-tokio` |
 | [`channels`](channels.md)         | current           | Plain channels between machines, spawning, and the host as the scheduler       |

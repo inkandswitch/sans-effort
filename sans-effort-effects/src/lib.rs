@@ -2,7 +2,8 @@
 //!
 //! ## Your Own Effect Traits
 //!
-//! An application implements its own effect traits the same way,
+//! [`guide`] writes one from start to finish. An application implements its
+//! own effect traits the same way,
 //! through [`Ctx::ask`](ctx::Ctx::ask) and
 //! [`Ctx::tell`](ctx::Ctx::tell). Every impl in this crate is
 //! written over [`AsCtx`](ctx::AsCtx), which `Ctx<E>` implements: `Ctx<E>`
@@ -50,6 +51,7 @@ pub mod console;
 pub mod ctx;
 pub mod env;
 pub mod fs;
+pub mod guide;
 pub mod random;
 pub mod spawn;
 pub mod time;

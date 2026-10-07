@@ -9,7 +9,7 @@ pub use sans_effort_core::{boundary, driver, join, reply, select, step};
 pub use sans_effort_core::testing;
 
 #[doc(inline)]
-pub use sans_effort_effects::{ask, console, ctx, env, fs, random, spawn, time};
+pub use sans_effort_effects::{ask, console, ctx, env, fs, guide, random, spawn, time};
 
 #[cfg(feature = "host")]
 #[doc(inline)]

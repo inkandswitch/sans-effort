@@ -65,9 +65,39 @@ And therefore lives with each routine:
 - _Constructors beyond `new`_ — their names, and any arguments: none, or an in-buffer encoded as the binding documents, the way it documents its tags. A root routine a host creates may want configuration there; a child a routine spawns never needs a constructor, because it is built by value, its arguments captured as Rust values. `demo/driven/cdylib` exports `greeter_new_fanout`, `_ticker`, `_ping_pong`, `_front_desk`, `_ring`, `_journal`, `_deadline`, and `_deadlock`, all without arguments.
 - _Anything else a binding chooses to export_ — `demo/driven/cdylib`'s `greeter_record(handle) → u32` and `greeter_record_finish(recording, out, out_len) → code`, say, which hand a host the log of its own run (`sans_effort_host::record`) to replay in Rust.
 - _The world_ — what performing an effect means: where `WriteLine` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
-- _The host loop_ — the host's own. `demo/driven/python/main.py` is the smallest: it performs each effect, replies, resumes each spawned child to begin it, and resumes each machine a woke frame names; its time is virtual — a sleep is a timer, fired only when nothing else can happen — and a closed frame drops a pending timer, or an ask still queued behind the call that closed it. `demo/driven/java/Main.java` is shaped like a production host, and parallel: a pool of driver threads polls different machines at once, each machine taking one event at a time from its own inbox (so no two threads call one handle), pinned machines only on the worker that started them; each ask runs on its own virtual thread, and closed frames cancel it.
+- _The host loop_ — the host's own; [Writing a Host](#writing-a-host) recommends one. `demo/driven/python/main.py` is the smallest: it performs each effect, replies, resumes each spawned child to begin it, and resumes each machine a woke frame names; its time is virtual — a sleep is a timer, fired only when nothing else can happen — and a closed frame drops a pending timer, or an ask still queued behind the call that closed it. `demo/driven/java/Main.java` is shaped like a production host, and parallel: a pool of driver threads polls different machines at once, each machine taking one event at a time from its own inbox (so no two threads call one handle), pinned machines only on the worker that started them; each ask runs on its own virtual thread, and closed frames cancel it.
 
-  Two consequences of a host loop's shape are worth knowing. A host that performs asks one at a time on one thread blocks every machine — and every timer — while one ask waits: an ask that can block indefinitely, such as a read from a terminal, belongs on a thread or task of its own if a routine's deadlines are to fire meanwhile. And a host may decide that a run ends when its root completes, and free what remains — a child blocked on a read, say — rather than wait for it.
+## Writing a Host
+
+None of this section is contract: a host that keeps the contract above may be shaped however it likes. It is what the demo's hosts learned, and what [`spec/host_protocol.qnt`](spec/host_protocol.qnt) proves sound.
+
+### The Loop
+
+The spec is the state machine a host implements. Its host has three actions, and a host that does the same inherits what the model checker proved: no wake is lost, and "finished" and "stalled" are reported only when true.
+
+- _`call`:_ take the next event for some machine not already in a call — begin it, resume it, or reply to it — and make that call.
+- _`ret`:_ when the call returns, act on its output. Perform each ask, and queue its reply as the machine's next event when the answer comes. Begin each machine a spawn effect names. Queue a `resume` for each machine a woke frame names. Note each closed id: drop that id's pending work, and any reply to it still queued. Free the machine if it completed.
+- _`quiet`:_ when nothing is queued and no call or ask is in flight, call `wakes`, and queue a `resume` for each machine it names.
+
+When `quiet` finds nothing, the run is over: every machine completed, or the rest can never progress — a stall, which a host should report rather than wait on.
+
+### One Event at a Time per Machine
+
+Give each machine an inbox, and let it take one event at a time. Then no two threads ever call one handle, so `BUSY` cannot happen; send a pinned machine's events only to the thread that started it, and `WRONG_THREAD` cannot happen either. A parallel host polls _different_ machines at once — that is where its parallelism is — and replies to one machine's asks in whatever order they finish.
+
+Two consequences of a loop's shape are worth knowing. A host that performs asks one at a time on one thread blocks every machine — and every timer — while one ask waits: an ask that can block indefinitely, such as a read from a terminal, belongs on a thread or task of its own if a routine's deadlines are to fire meanwhile. And a host may decide that a run ends when its root completes, and free what remains — a child blocked on a read, say — rather than wait for it.
+
+### What `quiet` Assumes
+
+The end-or-stall verdict is sound because every wake reaches the host: a machine woken during a call is named in that call's output, and one woken by `free` or a panic is named by `wakes`. That holds as long as wakes happen only during calls into the binding. A routine that wakes machines from a thread or timer of its own — outside any call — would be reported only by `wakes`, and only once the host asks; such a routine needs a host that polls `wakes` from time to time rather than only when quiet. No routine in `demo/` does this.
+
+### FFI Pitfalls
+
+From the parallel Java host:
+
+- _Load the library for every thread._ The symbols are called from every driver thread, so whatever owns the loaded library must be shareable across threads. Panama's confined arenas are not: the demo uses `Arena.ofShared()`.
+- _Keep each call's status with its call._ A status code written to a field that several threads share is a race; return it with the call's bytes.
+- _Drive pinned machines from OS threads._ A pinned machine is bound to the operating-system thread that first resumed it. A virtual or green thread can move between OS threads from one call to the next, so a pinned machine driven from one would see `WRONG_THREAD`. The demo's driver threads are platform threads; virtual threads only perform asks, which make no call into the library.
 
 ## A Conversation
 

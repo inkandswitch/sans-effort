@@ -43,7 +43,7 @@ flowchart TB
     foreign --> reify_ctx --> greeter
 ```
 
-The routine is the foundation and depends on nothing above it. The native path is why you write it this way: the routine is also an ordinary library function. The driven path is what these crates provide.
+The routine is the foundation and depends on nothing above it. The native path is why you write it this way: the routine is also an ordinary library function. The driven path is what these crates provide. [`design/concepts.md`](design/concepts.md) names every piece and how they connect.
 
 ## The Routine
 

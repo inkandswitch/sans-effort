@@ -223,6 +223,38 @@ impl From<WriteLineEffect> for Full {
     }
 }
 
+/// The tag table: the first byte of each effect's record (see the crate
+/// docs for what follows it). Numbered here, once, so two effects given one
+/// tag do not compile (E0081).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tag {
+    /// `Count · id`.
+    Count = 1,
+    /// `Lookup(str) · id`.
+    Lookup = 2,
+    /// `ReadLine · id`.
+    ReadLine = 3,
+    /// `Sleep(u64 millis) · id`.
+    Sleep = 4,
+    /// `WriteLine(str)`.
+    WriteLine = 5,
+    /// `Spawned(u64 handle)`.
+    Spawned = 6,
+    /// `SpawnedPinned(u64 handle)`.
+    SpawnedPinned = 7,
+    /// `Now · id`.
+    Now = 8,
+    /// `Random(u32 len) · id`.
+    Random = 9,
+    /// `Var(str name) · id`.
+    Var = 10,
+    /// `ReadFile(str path) · id`.
+    ReadFile = 11,
+    /// `WriteFile(str path, bytes) · id`.
+    WriteFile = 12,
+}
+
 /// A [`Full`] effect as a host sees it: handles replaced by request ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum View {
@@ -402,58 +434,58 @@ impl Encode for View {
     fn encode(&self, w: &mut Writer) {
         match self {
             View::Count { id } => {
-                w.u8(1);
+                w.u8(Tag::Count as u8);
                 w.u64(*id);
             }
             View::Lookup { name, id } => {
-                w.u8(2);
+                w.u8(Tag::Lookup as u8);
                 w.str(name);
                 w.u64(*id);
             }
             View::ReadLine { id } => {
-                w.u8(3);
+                w.u8(Tag::ReadLine as u8);
                 w.u64(*id);
             }
             View::Sleep { millis, id } => {
-                w.u8(4);
+                w.u8(Tag::Sleep as u8);
                 w.u64(*millis);
                 w.u64(*id);
             }
             View::WriteLine { text } => {
-                w.u8(5);
+                w.u8(Tag::WriteLine as u8);
                 w.str(text);
             }
             View::Now { id } => {
-                w.u8(8);
+                w.u8(Tag::Now as u8);
                 w.u64(*id);
             }
             View::Random { len, id } => {
-                w.u8(9);
+                w.u8(Tag::Random as u8);
                 w.u32(*len);
                 w.u64(*id);
             }
             View::Var { name, id } => {
-                w.u8(10);
+                w.u8(Tag::Var as u8);
                 w.str(name);
                 w.u64(*id);
             }
             View::ReadFile { path, id } => {
-                w.u8(11);
+                w.u8(Tag::ReadFile as u8);
                 w.str(path);
                 w.u64(*id);
             }
             View::WriteFile { path, bytes, id } => {
-                w.u8(12);
+                w.u8(Tag::WriteFile as u8);
                 w.str(path);
                 w.bytes(bytes);
                 w.u64(*id);
             }
             View::Spawned { handle } => {
-                w.u8(6);
+                w.u8(Tag::Spawned as u8);
                 w.u64(*handle);
             }
             View::SpawnedPinned { handle } => {
-                w.u8(7);
+                w.u8(Tag::SpawnedPinned as u8);
                 w.u64(*handle);
             }
         }
