@@ -84,14 +84,15 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
 
         self.wakeup.clear();
         let poll = future.as_mut().poll(&mut Context::from_waker(&self.waker));
-        let (effects, outstanding) = self.outbox.drain();
-
-        self.status = Status::classify(poll, outstanding);
 
         if poll.is_ready() {
-            // Anything the routine still held is dropped with it, and closes.
+            // Dropped before the drain: anything the routine still held
+            // closes, and whatever a destructor tells joins this yield.
             self.future = None;
         }
+
+        let (effects, outstanding) = self.outbox.drain();
+        self.status = Status::classify(poll, outstanding);
 
         Yield::new(effects, self.outbox.take_closed())
     }

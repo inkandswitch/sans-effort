@@ -128,13 +128,42 @@ pub(crate) fn reply_str_record(id: u64, s: &str) -> Vec<u8> {
     w.finish()
 }
 
-/// Run `f` with the panic hook silenced, so a routine's deliberate panic
-/// prints nothing.
+/// Run `f` with panics on this thread silenced, so a routine's deliberate
+/// panic prints nothing.
+///
+/// The panic hook is process-wide and tests run in parallel, so it is never
+/// swapped per call: one hook, installed once, stays quiet only for a thread
+/// inside `quietly` and passes every other panic to the default hook. The
+/// flag is reset by a guard, so an unexpected unwind out of `f` resets it
+/// too.
 #[cfg(feature = "std")]
 pub(crate) fn quietly<T>(f: impl FnOnce() -> T) -> T {
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(alloc::boxed::Box::new(|_| {}));
-    let result = f();
-    std::panic::set_hook(hook);
-    result
+    use core::cell::Cell;
+    use std::sync::Once;
+
+    std::thread_local! {
+        static QUIET: Cell<bool> = const { Cell::new(false) };
+    }
+
+    struct Loud;
+
+    impl Drop for Loud {
+        fn drop(&mut self) {
+            QUIET.with(|quiet| quiet.set(false));
+        }
+    }
+
+    static FILTER: Once = Once::new();
+    FILTER.call_once(|| {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(alloc::boxed::Box::new(move |info| {
+            if !QUIET.with(Cell::get) {
+                default(info);
+            }
+        }));
+    });
+
+    QUIET.with(|quiet| quiet.set(true));
+    let _loud = Loud;
+    f()
 }

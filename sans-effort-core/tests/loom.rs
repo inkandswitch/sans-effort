@@ -17,7 +17,10 @@ use loom::{
     },
     thread,
 };
-use sans_effort_core::driver::{Driver, outbox::Outbox, status::Status};
+use sans_effort_core::{
+    driver::{Driver, outbox::Outbox, status::Status},
+    reply::handle::ReplyHandle,
+};
 use std::{
     future::poll_fn,
     sync::PoisonError,
@@ -228,5 +231,55 @@ fn effect_told_from_another_thread() -> TestResult {
 
     told.sort_unstable();
     assert_eq!(told, [0, 1]);
+    Ok(())
+}
+
+/// A request: just the handle, whose id the host reads.
+struct Request(ReplyHandle<()>);
+
+/// Two threads each record a request on a clone of one outbox, while the
+/// driver drains it. Whatever the interleaving, the host sees the ids in the
+/// order they were minted: 1, then 2.
+#[test]
+fn requests_built_at_once_leave_in_the_order_they_were_numbered() {
+    loom::model(|| {
+        let Ok(()) = builders_at_once();
+    });
+}
+
+fn builders_at_once() -> TestResult {
+    let handed: Arc<Mutex<Option<Outbox<Request>>>> = Arc::default();
+    let mut driver = Driver::new({
+        let handed = Arc::clone(&handed);
+        move |outbox: Outbox<Request>| async move {
+            *handed.lock().unwrap_or_else(PoisonError::into_inner) = Some(outbox);
+            core::future::pending::<()>().await;
+        }
+    });
+    drop(driver.resume());
+    let outbox = handed
+        .lock()?
+        .take()
+        .ok_or("the routine handed its outbox over")?;
+
+    let builders: Vec<_> = (0..2)
+        .map(|_| {
+            let outbox = outbox.clone();
+            thread::spawn(move || outbox.ask(Request).into_future())
+        })
+        .collect();
+    let mut seen: Vec<u64> = driver
+        .resume()
+        .into_iter()
+        .map(|Request(reply)| reply.id())
+        .collect();
+    let mut kept = Vec::new();
+    for builder in builders {
+        kept.push(builder.join().map_err(|_| "a builder panicked")?);
+    }
+    seen.extend(driver.resume().into_iter().map(|Request(reply)| reply.id()));
+
+    assert_eq!(seen, [1, 2]);
+    drop(kept);
     Ok(())
 }

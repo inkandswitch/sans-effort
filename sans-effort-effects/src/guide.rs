@@ -98,7 +98,9 @@
 //!
 //! # Native Impls
 //!
-//! A native context implements the trait with a real future, directly. For
+//! A native context implements the trait with a real future, directly, and
+//! does nothing until that future is polled — `async fn` sees to it — so a
+//! routine behaves the same under it as under a reifying context. For
 //! one built on `sans-effort-tokio`, that is a type of the application's
 //! own, wrapping a `TokioCtx` and forwarding the standard traits — the
 //! orphan rule requires the impls to live on a type the application owns:

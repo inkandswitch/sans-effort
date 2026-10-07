@@ -40,12 +40,31 @@ impl<E, A: Answer, F: FnOnce(ReplyHandle<A>) -> E> IntoFuture for Asking<E, A, F
     type IntoFuture = Awaiting<E, A>;
 
     fn into_future(self) -> Awaiting<E, A> {
-        let reply: ReplyHandle<A> = self.outbox.mint();
+        let Self { make, outbox, .. } = self;
+        let reply: ReplyHandle<A> = outbox.mint();
         let id = reply.id();
-        // Built with no lock held: `make` is the caller's closure.
-        let effect = (self.make)(reply);
-        self.outbox.open(id, effect, reply::check::<A>);
-        Awaiting::new(id, self.outbox)
+        // Built with no lock held: `make` is the caller's closure. If it
+        // panics, the guard gives up the request's reserved place.
+        let unbuilt = Unbuilt {
+            outbox: &outbox,
+            id,
+        };
+        let effect = make(reply);
+        core::mem::forget(unbuilt);
+        outbox.open(id, effect, reply::check::<A>);
+        Awaiting::new(id, outbox)
+    }
+}
+
+/// A request whose effect is being built. Dropped only if building panics.
+struct Unbuilt<'a, E> {
+    outbox: &'a Outbox<E>,
+    id: u64,
+}
+
+impl<E> Drop for Unbuilt<'_, E> {
+    fn drop(&mut self) {
+        self.outbox.unreserve(self.id);
     }
 }
 

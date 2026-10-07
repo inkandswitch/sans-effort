@@ -465,6 +465,120 @@ mod tests {
             });
     }
 
+    /// A yield, as the host reads it: each request by id, each saying by
+    /// what was said.
+    fn seen(effects: Yield<Effect>) -> Vec<String> {
+        effects
+            .into_iter()
+            .map(|effect| match effect {
+                Effect::Ask(reply) => format!("ask {}", reply.id()),
+                Effect::Say(said) => format!("say {said}"),
+            })
+            .collect()
+    }
+
+    /// Requests kept alive past the call that built them, so none closes.
+    type Kept = std::sync::Arc<std::sync::Mutex<Vec<awaiting::Awaiting<Effect, String>>>>;
+
+    /// A request's effect built by code that records more of its own — two
+    /// requests and a saying. Everything leaves in the order it was
+    /// recorded, and the outer request was recorded first, when its id was
+    /// minted.
+    #[test]
+    fn what_is_recorded_while_a_request_is_built_follows_it() {
+        let kept = Kept::default();
+        let mut driver = Driver::new({
+            let kept = Kept::clone(&kept);
+            move |outbox: Outbox<Effect>| async move {
+                let inner = outbox.clone();
+                outbox
+                    .ask(move |reply| {
+                        let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
+                        kept.push(inner.ask(Effect::Ask).into_future());
+                        inner.tell(Effect::Say(String::from("inside")));
+                        kept.push(inner.ask(Effect::Ask).into_future());
+                        Effect::Ask(reply)
+                    })
+                    .await;
+            }
+        });
+        assert_eq!(
+            seen(driver.resume()),
+            ["ask 1", "ask 2", "say inside", "ask 3"]
+        );
+    }
+
+    /// A request whose effect cannot be built — its constructor panics, and
+    /// the routine catches it — leaves no hole that later effects wait
+    /// behind, whether it was the only one being built or another was
+    /// waiting ahead of it. Its id is never seen.
+    #[test]
+    #[expect(clippy::panic, reason = "the effect's constructor panics on purpose")]
+    fn a_request_whose_effect_panics_holds_nothing_up() {
+        fn unbuildable(outbox: &Outbox<Effect>) {
+            let failed = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+                outbox
+                    .ask(|_: ReplyHandle<String>| -> Effect { panic!("no effect") })
+                    .into_future()
+            }));
+            assert!(failed.is_err(), "the constructor panicked");
+        }
+
+        let mut alone = Driver::new(|outbox: Outbox<Effect>| async move {
+            unbuildable(&outbox);
+            outbox.tell(Effect::Say(String::from("after")));
+            outbox.ask(Effect::Ask).await;
+        });
+        assert_eq!(seen(alone.resume()), ["say after", "ask 2"]);
+
+        let mut nested = Driver::new(|outbox: Outbox<Effect>| async move {
+            let inner = outbox.clone();
+            outbox
+                .ask(move |reply| {
+                    unbuildable(&inner);
+                    inner.tell(Effect::Say(String::from("after")));
+                    Effect::Ask(reply)
+                })
+                .await;
+        });
+        assert_eq!(seen(nested.resume()), ["ask 1", "say after"]);
+    }
+
+    /// Says goodbye through the outbox when dropped.
+    struct Farewell(Outbox<Effect>);
+
+    impl Drop for Farewell {
+        fn drop(&mut self) {
+            self.0.tell(Effect::Say(String::from("goodbye")));
+        }
+    }
+
+    /// A future that completes on its first poll, holding a [`Farewell`]
+    /// until it is dropped — as an `async move` block holds what it captured.
+    struct Holding {
+        _farewell: Farewell,
+    }
+
+    impl Future for Holding {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Ready(())
+        }
+    }
+
+    /// What a completed routine's destructors tell is part of its last
+    /// yield: the future is dropped before the outbox is drained.
+    #[test]
+    fn what_a_completed_routine_tells_as_it_is_dropped_is_delivered() {
+        let mut driver = Driver::new(|outbox| Holding {
+            _farewell: Farewell(outbox),
+        });
+        let (said, _) = split(driver.resume());
+        assert_eq!(said, ["goodbye"]);
+        assert_eq!(driver.status(), Status::Complete);
+    }
+
     /// Raced against a message: the reply arrives on the same poll as the
     /// message, `select` takes the message (it polls first), and the ask is
     /// dropped unread. It was answered, not abandoned: not closed.

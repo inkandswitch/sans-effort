@@ -33,6 +33,12 @@
 //! `JsValue`, an `Rc` — keeps that value behind a task of its own and talks
 //! to it over a channel.
 //!
+//! Nothing happens until the future is polled. The reifying context records
+//! a request only when it is awaited, so a native context must not start a
+//! timer, draw bytes, or write a file when the method is called either —
+//! otherwise a routine that makes a future and awaits it later behaves
+//! differently on each. Writing the method as `async fn` gets this for free.
+//!
 //! ## Cancellation
 //!
 //! The table's last column is each trait's _Cancellation_ section in brief:

@@ -112,12 +112,11 @@ impl<R, W> Var for DemoCtx<R, W> {
 
 impl<R: Sync, W: Sync> ReadFile for DemoCtx<R, W> {
     fn read_file(&self, path: String) -> impl Future<Output = Result<Vec<u8>, FsError>> + Send {
-        let files = self
-            .world
-            .files
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        core::future::ready(files.get(&path).cloned().ok_or(FsError::NotFound))
+        let world = Arc::clone(&self.world);
+        async move {
+            let files = world.files.lock().unwrap_or_else(PoisonError::into_inner);
+            files.get(&path).cloned().ok_or(FsError::NotFound)
+        }
     }
 }
 
@@ -127,29 +126,37 @@ impl<R: Sync, W: Sync> WriteFile for DemoCtx<R, W> {
         path: String,
         bytes: Vec<u8>,
     ) -> impl Future<Output = Result<(), FsError>> + Send {
-        self.world
-            .files
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(path, bytes);
-        core::future::ready(Ok(()))
+        let world = Arc::clone(&self.world);
+        async move {
+            world
+                .files
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(path, bytes);
+            Ok(())
+        }
     }
 }
 
 impl<R, W> Now for DemoCtx<R, W> {
     fn now(&self) -> impl Future<Output = UnixTime> + Send {
-        let reading = self.world.readings.fetch_add(1, Ordering::Relaxed);
-        let millis = EPOCH_MILLIS + 1_000 * reading;
-        core::future::ready(UnixTime::from_since_epoch(Duration::from_millis(millis)))
+        let world = Arc::clone(&self.world);
+        async move {
+            let reading = world.readings.fetch_add(1, Ordering::Relaxed);
+            let millis = EPOCH_MILLIS + 1_000 * reading;
+            UnixTime::from_since_epoch(Duration::from_millis(millis))
+        }
     }
 }
 
 impl<R, W> Random for DemoCtx<R, W> {
     fn random_bytes(&self, len: u32) -> impl Future<Output = Vec<u8>> + Send {
-        let bytes = (0..len)
-            .map(|_| self.world.next_byte.fetch_add(1, Ordering::Relaxed))
-            .collect();
-        core::future::ready(bytes)
+        let world = Arc::clone(&self.world);
+        async move {
+            (0..len)
+                .map(|_| world.next_byte.fetch_add(1, Ordering::Relaxed))
+                .collect()
+        }
     }
 }
 

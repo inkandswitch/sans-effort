@@ -41,9 +41,61 @@ pub struct Outbox<E> {
     inner: Arc<Mutex<Inner<E>>>,
 }
 
+/// Effects leave in the order they were recorded, and a request is recorded
+/// when its id is minted — before its effect is built, which runs the
+/// caller's code with no lock held. So minting reserves the request's place;
+/// anything recorded meanwhile, by that code or another thread, waits behind
+/// it in `held`; and once the effect is built, the ready front of `held`
+/// moves to `effects`, which the driver drains.
+///
+/// Almost always nothing is recorded while an effect is built, so the one
+/// request being built is kept in `building`, not `held`, which then stays
+/// empty and unallocated. Invariant: `building` is set only while `held` is
+/// empty; the first thing that must wait moves it into `held`.
 struct Inner<E> {
     effects: Vec<E>,
+    building: Option<u64>,
+    held: Vec<Held<E>>,
     mail: Mail,
+}
+
+/// A place in the order: an effect, or the request whose effect is being
+/// built.
+enum Held<E> {
+    Ready(E),
+    Reserved(u64),
+}
+
+impl<E> Inner<E> {
+    /// Record `held` after everything already recorded: at once if nothing
+    /// is being built, otherwise behind it.
+    fn record(&mut self, held: Held<E>) {
+        if let Some(id) = self.building.take() {
+            self.held.push(Held::Reserved(id));
+        }
+        if !self.held.is_empty() {
+            self.held.push(held);
+            return;
+        }
+        match held {
+            Held::Ready(effect) => self.effects.push(effect),
+            Held::Reserved(id) => self.building = Some(id),
+        }
+    }
+
+    /// Move the ready front of `held` to `effects`.
+    fn release(&mut self) {
+        let ready = self
+            .held
+            .iter()
+            .position(|held| matches!(held, Held::Reserved(_)))
+            .unwrap_or(self.held.len());
+        self.effects
+            .extend(self.held.drain(..ready).filter_map(|held| match held {
+                Held::Ready(effect) => Some(effect),
+                Held::Reserved(_) => None,
+            }));
+    }
 }
 
 impl<E> Outbox<E> {
@@ -51,6 +103,8 @@ impl<E> Outbox<E> {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 effects: Vec::new(),
+                building: None,
+                held: Vec::new(),
                 mail: Mail::new(),
             })),
         }
@@ -58,7 +112,7 @@ impl<E> Outbox<E> {
 
     /// Record a fire-and-forget effect.
     pub fn tell(&self, effect: E) {
-        self.inner.lock().effects.push(effect);
+        self.inner.lock().record(Held::Ready(effect));
     }
 
     /// Asking for a `T`: an [`Asking`] that, when awaited, mints a
@@ -71,17 +125,46 @@ impl<E> Outbox<E> {
 
     // -- the driver's and the awaiting future's side ------------------------
 
-    /// Recording a request: the next id, as a handle for its reply.
+    /// Recording a request: the next id, as a handle for its reply, with
+    /// its place in the order reserved until [`open`](Self::open) or
+    /// [`unreserve`](Self::unreserve).
     pub(super) fn mint<T>(&self) -> ReplyHandle<T> {
-        self.inner.lock().mail.mint()
+        let mut inner = self.inner.lock();
+        let reply: ReplyHandle<T> = inner.mail.mint();
+        inner.record(Held::Reserved(reply.id()));
+        reply
     }
 
-    /// Recording a request: open its slot and record its effect, under one
-    /// lock.
+    /// Recording a request: open its slot and put its effect in its place,
+    /// under one lock.
     pub(super) fn open(&self, id: u64, effect: E, check: Check) {
         let mut inner = self.inner.lock();
         inner.mail.open(id, check);
-        inner.effects.push(effect);
+        if inner.building == Some(id) {
+            inner.building = None;
+            inner.effects.push(effect);
+        } else if let Some(place) = inner
+            .held
+            .iter_mut()
+            .find(|held| matches!(held, Held::Reserved(r) if *r == id))
+        {
+            *place = Held::Ready(effect);
+            inner.release();
+        }
+    }
+
+    /// The request's effect could not be built: give up its place, so
+    /// nothing waits behind it. Its id is never seen.
+    pub(super) fn unreserve(&self, id: u64) {
+        let mut inner = self.inner.lock();
+        if inner.building == Some(id) {
+            inner.building = None;
+        } else {
+            inner
+                .held
+                .retain(|held| !matches!(held, Held::Reserved(r) if *r == id));
+            inner.release();
+        }
     }
 
     /// A later poll of a request: its reply, if the host has delivered one.
