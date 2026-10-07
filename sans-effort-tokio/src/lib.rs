@@ -1,40 +1,6 @@
-//! Native tokio contexts for `sans-effort` routines.
+#![doc = include_str!("../README.md")]
 //!
-//! A routine names the effect traits it needs; a context decides
-//! what each call does. This crate is the native side: every effect trait in
-//! `sans-effort-effects` as a real tokio future, so a routine runs as an
-//! ordinary task — `tokio::spawn(routine.run())` — with no driver and no
-//! host.
-//!
-//! | Type                                 | Implements         |
-//! |--------------------------------------|--------------------|
-//! | [`TokioClock`](clock::TokioClock)    | `Sleep`, `Now`     |
-//! | [`TokioInput`](console::TokioInput)  | `ReadLine`         |
-//! | [`TokioOutput`](console::TokioOutput) | `WriteLine`       |
-//! | [`TokioFs`](fs::TokioFs)             | `ReadFile`, `WriteFile` |
-//! | [`TokioEnv`](env::TokioEnv)          | `Var`              |
-//! | [`TokioRandom`](random::TokioRandom) | `Random`           |
-//! | [`TokioSpawner`](spawn::TokioSpawner) | `Spawn`, `SpawnPinned`, for the contexts built on it |
-//! | [`TokioCtx`](ctx::TokioCtx)          | all of the above   |
-//!
-//! [`TokioCtx`](ctx::TokioCtx) is the ready-made context: one value with
-//! every effect trait, built from the components — one component per
-//! effect trait. The components are there to compose differently, and to
-//! grant no more than a routine needs: a clock and output for a routine that
-//! never reads, or a paused clock with an in-memory output in a test.
-//!
-//! ```
-//! use sans_effort_effects::console::WriteLine;
-//! use sans_effort_tokio::ctx::TokioCtx;
-//! use tokio_util::task::LocalPoolHandle;
-//!
-//! let ctx = TokioCtx::new(&b""[..], Vec::new(), LocalPoolHandle::new(1));
-//! ctx.write_line("hello".into());
-//! let Ok((_, written)) = ctx.into_parts() else { unreachable!("no child shares it") };
-//! assert_eq!(written, b"hello\n");
-//! ```
-//!
-//! # Your Own Effect Traits
+//! ## Your Own Effect Traits
 //!
 //! A routine takes one context, which must provide every effect trait it
 //! names. An application with effect traits of its own wraps a `TokioCtx` in

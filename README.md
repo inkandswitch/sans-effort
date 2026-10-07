@@ -9,7 +9,7 @@
 1. Call it from Rust as normal: on `tokio` it is a plain future at native speed, with no driver.
 2. Drive it from a FFI host language through a sans-io interface: every wait becomes a typed effect that the host answers by id, so the host owns I/O, time, and scheduling — which routine resumes, in what order replies arrive, whether the clock is real or virtual — and the output is typically byte-identical to the native run.
 
-The routine asks for traits, not effects, and cannot tell which way it is running. The compiler writes the state machine; the only `Pin` is one `Box::pin` at any FFI boundary (if and when it exists).
+The routine asks for traits, not effects, and cannot tell which way it is running. It may spawn children and talk to them over ordinary channels; whichever host runs them is the scheduler. The compiler writes the state machine; the only `Pin` is one `Box::pin` at any FFI boundary (if and when it exists).
 
 This repo contains the library. The research exploration including alternatives built out and measured live in [`effect-routines-exploration`][exploration]:
 
@@ -50,7 +50,9 @@ The routine is the foundation and depends on nothing above it. The native path i
 ```rust
 use sans_effort::{console::{ReadLine, WriteLine}, time::Sleep};  // the standard library
 
-pub trait Lookup { async fn lookup(&self, name: String) -> String; }      // the application's own
+pub trait Lookup {                                                       // the application's own
+    fn lookup(&self, name: String) -> impl Future<Output = String> + Send;
+}
 
 impl<C: Sleep + Lookup + ReadLine + WriteLine> Step for Greeter<C> {
     async fn step(&mut self) -> ControlFlow<()> {
@@ -71,17 +73,19 @@ impl<C: Sleep + Lookup + ReadLine + WriteLine> Step for Greeter<C> {
 Natively, on tokio — no driver, no effects, tokio polls the task:
 
 ```rust
-impl Sleep for TokioCtx {
-    async fn sleep(&self, d: Duration) { tokio::time::sleep(d).await }
+// in sans-effort-tokio: one component per trait, composed into TokioCtx
+impl Sleep for TokioClock {
+    fn sleep(&self, d: Duration) -> impl Future<Output = ()> + Send { tokio::time::sleep(d) }
 }
 // …
-tokio::spawn(Greeter::new(TokioCtx::new(stdin)).run());
+let pool = LocalPoolHandle::new(1);  // where pinned children run: the application's, not the library's
+tokio::spawn(Greeter::new(DemoCtx::new(TokioCtx::stdio(pool))).run());  // DemoCtx adds Lookup
 ```
 
 Behind a host — each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
 
 ```rust
-// in sans-effort-effects, written once for every application:
+// in sans-effort-effects, written once for every application (simplified):
 impl<E: From<Asked<SleepEffect>>> Sleep for Ctx<E> {
     async fn sleep(&self, d: Duration) { self.ask(SleepEffect(d)).await }
 }
@@ -91,7 +95,7 @@ Driver::<Quiet>::new(|outbox| Greeter::new(Ctx::new(outbox)).run());  // E0277: 
 Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ticker needs only Sleep + WriteLine
 ```
 
-`demo/` has all of this in full — the greeter, the ticker, both contexts, native hosts on tokio and on Node (wasm-bindgen), and a C-ABI binding driven from Python (ctypes) and Java (Panama) — and `nix develop` then `demo` runs all four and checks the transcripts are byte-identical.
+`demo/` has all of this in full: routines from a greeter to a ring of machines passing a token, both contexts, native runtimes on tokio and on Node (wasm-bindgen), and a C-ABI binding driven from Python (ctypes) and Java (Panama, with a pool of driver threads). `nix develop` then `demo` runs every routine on all four and checks the transcripts are byte-identical.
 
 ### Where This Sits
 
@@ -127,6 +131,7 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 - _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `resume`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
 - _Typed replies._ Every awaiting effect carries a `ReplyHandle<T>`: the typed, single-use capability to answer it. A Rust host replies through the handle, infallibly; a foreign host replies by id, and the host layer checks the kind.
 - _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits — or `select` the first of them — and a host may reply in any order. A request the routine abandons is reported to the host, which may stop the work.
+- _Many routines._ A routine may spawn children; each is a machine of its own, which the host starts and steps like the first. They talk over ordinary channels, inside the process: a routine waiting on one is `IDLE`, and when another machine's step may have unblocked it, that call's output names it in a `woke` frame, so the host knows whom to resume. A host can tell a finished program from a deadlock.
 - _`no_std` core._ The mechanism, the routine, and its boundary crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
 
 ## Crates
@@ -137,18 +142,23 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
 | [`sans-effort-core`](sans-effort-core/)       | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Answer`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
 | [`sans-effort-effects`](sans-effort-effects/) | A standard library of effect traits — `time`, `console`, `fs`, `env`, `random`, `spawn` — the traits, their effects, and the reifying `Ctx<E>`, written once | `no_std` + `alloc` |
 | [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per effect trait — `TokioClock`, `TokioInput`, `TokioOutput`, `TokioFs`, `TokioEnv`, `TokioRandom`, `TokioSpawner` — and `TokioCtx` with all of them — real futures, no driver | `std`              |
-| [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation. No `unsafe`                                                                       | `std`              |
+| [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation, and record/replay of a foreign host's run. No `unsafe`                                  | `std`              |
 | [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                                                                                                              | —                  |
-| [`design/`](design/)                          | How it works and why: assumptions, the effects stdlib, channels, effect traits, cancellation                                                                                                        | —                  |
-| [`demo/`](demo/)                              | The greeter and ticker; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java         | —                  |
-
-### Next
-
-Channels in the standard library (`Open`, `Post`, `Receive`, `Spawn`), with their native side in `sans-effort-tokio`; a derive for the `View`/`Encode` restatement. The demo grows routines that spawn and message each other, with each host's loop as the scheduler.
+| [`design/`](design/)                          | How it works and why: assumptions, the effects stdlib, channels and spawning, capabilities, cancellation, related work                                                                         | —                  |
+| [`spec/`](spec/)                              | The host protocol as a model-checked spec (Quint): the library's rules and the recommended host loop                                                                                            | —                  |
+| [`demo/`](demo/)                              | Routines from a greeter to a ring of machines; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java | —                  |
 
 ### Not Here, on Purpose
 
 A scheduler inside the library (the host is the scheduler, whichever host it is); supervision and linking; deadlock levels; language-side host SDKs beyond the demo; `pyo3`/`rustler` bindings. Each is a natural next layer; none is needed to use what is here.
+
+## How It Is Checked
+
+- _Four runtimes, one transcript._ Every demo routine runs natively on tokio and on Node, and driven from Python and Java; their outputs must match byte for byte.
+- _Adversarial schedules._ In Rust, a test runner replays routines under bolero-chosen schedules — replies delayed, machines interleaved, spurious resumes, machines killed — and the output must not change. Every foreign host has a seeded adversarial mode too, checked against tokio's transcript, and every seeded Python run is recorded and replayed in Rust.
+- _The protocol, model-checked._ `spec/host_protocol.qnt` states the host protocol in Quint; TLC proves no wake is lost and every verdict — finished, or stalled — is sound, and catches the mistaken hosts that ignore `woke` or closed frames. Traces drawn from the spec are replayed against the real handle table, call by call.
+- _Concurrency._ `loom` explores every interleaving of the driver's waker and outbox; a host of 2–4 uncoordinated threads drives the handle table, collisions and all.
+- _Mutation testing._ `cargo-mutants` over the library crates: every mutant is caught, or excluded with its reason.
 
 ## Development
 
@@ -157,7 +167,7 @@ nix develop   # dev shell with a command menu
 menu          # list project commands: ci:full, demo, test:no_std, …
 ```
 
-Without Nix, `rust-toolchain.toml` pins the toolchain for `rustup`; the demo's hosts need Python 3, a JDK with `java.lang.foreign` (25), Node, and `wasm-bindgen-cli` at the version pinned in `Cargo.toml`.
+CI runs the same commands in the flake's `ci` shell, so its tools are the ones `flake.lock` pins. Without Nix, `rust-toolchain.toml` pins the toolchain for `rustup`; the demo's hosts need Python 3, a JDK with `java.lang.foreign` (25), Node, and `wasm-bindgen-cli` at the version pinned in `Cargo.toml`.
 
 ## License
 

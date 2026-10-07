@@ -1,53 +1,6 @@
-//! The host side of a routine, for FFI hosts that cannot hold a Rust value —
-//! minus the C ABI itself.
+#![doc = include_str!("../README.md")]
 //!
-//! `abi_version()`, then `new(routine) → handle`, `resume(handle) → effects`
-//! to begin, `reply(handle, record) → effects` for each answer, and `resume`
-//! again for a routine waiting on something in the process, which a `woke`
-//! frame in some call's output (or `wakes()`) names — then `free(handle)`. A reply record is
-//! `kind · id · payload`, where the id came out on the wire with the effect
-//! and the kind is one of the reply menu's four
-//! ([`Kind`](sans_effort_core::reply::kind::Kind)).
-//!
-//! Everything a foreign host needs — the handle table, the type check on
-//! replies, the encoding — over owned Rust types, in two layers:
-//!
-//! - [`machine::Machine`] is _typed_: [`resume`](machine::Machine::resume) and
-//!   [`reply`](machine::Machine::reply) return a `Yield<E::View>`, the effects with their
-//!   handles replaced by ids. It owns the outstanding-request table and the
-//!   kind check. Bindings that speak the host language's own types —
-//!   wasm-bindgen, `PyO3`, Rustler — hold one directly, and reply through
-//!   its concrete `reply_str`, `reply_u64`, `reply_unit`, or `reply_bytes`.
-//! - [`encoded::Encoded`] is the _byte_ layer over it, with the same two
-//!   calls: decode one reply record, call the typed method, encode the views.
-//!   The [`table`] holds machines behind this, and a C-ABI or `erl_nif` binding
-//!   calls it. Most machines migrate between threads; a pinned one, whose
-//!   future is not `Send`, runs over a local driver
-//!   ([`Driver::local`](sans_effort_core::driver::Driver::local)) and stays on
-//!   the thread that first resumed it.
-//! - [`record`] taps the table: [`record::record`] logs every call on a root
-//!   machine and the machines it creates, whichever host makes them, and
-//!   [`record::replay`] makes the same calls again and reports the first
-//!   outcome that differs. A failing run becomes a log you can replay.
-//!
-//! The application adds the _binding_: the thin `unsafe` wrapper a foreign host
-//! actually calls — one `#[no_mangle]` wrapper per function in [`table`], each
-//! a line plus the `unsafe` needed to touch foreign memory. That keeps this
-//! crate under `unsafe_code = "forbid"`.
-//!
-//! ```text
-//!   app cdylib                                 sans-effort-host
-//!   ────────────────────────────────           ──────────────────────────────────────────
-//!   enum Effect { … }  impl HostEffect
-//!   #[no_mangle] abi_version()     ─────────▶  contract::REVISION
-//!   #[no_mangle] new()             ─────────▶  table::new(|outbox| Greeter::new(Ctx::new(outbox)).run())
-//!   #[no_mangle] reply(h, in*, out*) ───────▶  table::reply(h, &[u8])   -> Result<(Vec<u8>, Status), Error>
-//!   #[no_mangle] resume(h, out*)   ─────────▶  table::resume(h)         -> Result<(Vec<u8>, Status), Error>
-//!   #[no_mangle] wakes(out*)       ─────────▶  table::wakes()           -> Vec<u8>
-//!                                  ◀─────────  (bytes, status)   — app writes the out-pointers
-//! ```
-//!
-//! # Where the Boundary Is Split
+//! ## Where the Boundary Is Split
 //!
 //! The [`HostEffect`](sans_effort_core::boundary::host_effect::HostEffect) and
 //! [`Encode`](sans_effort_core::boundary::codec::Encode) traits,
@@ -59,13 +12,6 @@
 //! crate may implement them. This crate decodes reply records (`1 id str`;
 //! `2 id u64`; `3 id`; `4 id bytes`), checks the kind, and keeps the table.
 //! `ABI.md` at the repository root is the contract in full.
-//!
-//! # `no_std`
-//!
-//! Everything but [`table`] is `no_std` + `alloc`. The table needs a
-//! process-wide `static Mutex`, a `HashMap`, and `catch_unwind` for panic
-//! isolation, so it is behind the default `std` feature; a binding on a target
-//! without `std` holds its [`encoded::Encoded`] machines in statics of its own.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

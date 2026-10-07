@@ -1,7 +1,7 @@
 # Assumptions
 
 > [!NOTE]
-> _Status:_ the host, routine, and target assumptions hold today. The address-space assumptions, and the parts about spawning and channels, describe planned work (see [`channels`](channels.md) and [`capabilities`](capabilities.md)).
+> _Status:_ every assumption here holds today, spawning and channels included (see [`channels`](channels.md)). Untrusted, sandboxed guests are planned work; see [`capabilities`](capabilities.md).
 
 This document lists what `sans-effort` assumes about its environment. Things the implementation _enforces_ — one thread per handle at a time (`BUSY`), replies of the right kind (`WRONG_KIND`), no reply to an abandoned or answered id (`STALE`), a well-formed reply record (`MALFORMED`), `Send` checked where a routine is built — are not assumptions and are not listed. What is listed can be violated, and says what happens if it is.
 
@@ -66,7 +66,7 @@ _Consequence of violation:_ the host (and, under tokio, every task on that worke
 ### Routines Are Safe Rust
 
 > [!IMPORTANT]
-> _Assumption (planned):_ routine crates are `unsafe_code = "forbid"`.
+> _Assumption:_ routine crates are `unsafe_code = "forbid"`.
 
 A channel end is an object reference, and an effect is reached only through the context a routine was given: safe code can use only what it was given. `unsafe` code can read any memory, including the ends other routines hold.
 
@@ -77,7 +77,7 @@ _Consequence of violation:_ every guarantee between routines is void. See [`capa
 ### A Binding's Machines Share One Address Space
 
 > [!IMPORTANT]
-> _Assumption (planned):_ every machine created through one binding lives in one process, in one Rust world.
+> _Assumption:_ every machine created through one binding lives in one process, in one Rust world.
 
 Machine handles mean something only there; channel ends are memory in it; a spawned child is built in its parent's process. This costs nothing a running routine had: a routine is a pinned future and can never leave its process anyway. See [`channels`](channels.md#spawning).
 

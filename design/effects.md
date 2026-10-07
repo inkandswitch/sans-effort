@@ -1,7 +1,7 @@
 # A Standard Library of Effects
 
 > [!NOTE]
-> _Status:_ `sans-effort-effects` exists with `time`, `console`, `Ctx`, and `AsCtx`; `sans-effort-tokio` exists with `TokioClock`, `TokioInput`, `TokioOutput`, and `TokioCtx`; `Decode` and the `Result`/`Option` encoding are in core. `spawn` and its tokio side are planned.
+> _Status:_ implemented. `sans-effort-effects` has `time` (`Sleep`, `Now`), `console`, `fs`, `env`, `random`, and `spawn`, with `Ctx` and `AsCtx`; `sans-effort-tokio` has a component for each and `TokioCtx`; `Decode` and the `Result`/`Option` encoding are in core. Every trait states what abandoning its request costs (see [`cancellation`](cancellation.md#cancel-safety)).
 
 `Sleep` and console I/O are things nearly every routine wants, and messaging other routines is close behind. Today a user who wants `Sleep` writes it three times:
 

@@ -1,6 +1,6 @@
 # Design
 
-This directory explains how `sans-effort` works and why, less formally than a specification. [`ABI.md`](../ABI.md) at the repository root is the normative contract for foreign hosts; these documents are the reasoning around it.
+This directory explains how `sans-effort` works and why, less formally than a specification. [`ABI.md`](../ABI.md) at the repository root is the normative contract for foreign hosts; these documents are the reasoning around it. [`spec/host_protocol.qnt`](../spec/host_protocol.qnt) states the host protocol formally, and is model-checked.
 
 Some documents describe what exists and some describe what is planned. Each one says which at the top.
 
@@ -8,10 +8,10 @@ Some documents describe what exists and some describe what is planned. Each one 
 
 | Document                          | Status            | Purpose                                                                        |
 |-----------------------------------|-------------------|--------------------------------------------------------------------------------|
-| [`assumptions`](assumptions.md)   | current + planned | What the design assumes about hosts, routines, and targets                     |
-| [`effects`](effects.md)           | current + planned | A standard library of effect traits: `sans-effort-effects`, `sans-effort-tokio` |
-| [`channels`](channels.md)         | planned           | Plain channels between machines, spawning, and the host as the scheduler       |
-| [`capabilities`](capabilities.md) | planned           | Object-capability discipline within a process, given an honest host            |
+| [`assumptions`](assumptions.md)   | current           | What the design assumes about hosts, routines, and targets                     |
+| [`effects`](effects.md)           | current           | A standard library of effect traits: `sans-effort-effects`, `sans-effort-tokio` |
+| [`channels`](channels.md)         | current           | Plain channels between machines, spawning, and the host as the scheduler       |
+| [`capabilities`](capabilities.md) | current + planned | Object-capability discipline within a process, given an honest host            |
 | [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
 | [`related-work`](related-work.md) | current           | Where `sans-effort` sits among Rust effect libraries, and what it draws on     |
 
@@ -45,9 +45,9 @@ flowchart TB
 flowchart BT
     facade["sans-effort<br/>re-exports only · no_std"]
     core["sans-effort-core<br/>mechanism · no_std"]
-    host_crate["sans-effort-host<br/>Machine · Encoded · table · std"]
+    host_crate["sans-effort-host<br/>Machine · Encoded · table · record · std"]
     effects["sans-effort-effects<br/>traits · requests · Ctx#60;E#62; · no_std"]
-    tokio_crate["sans-effort-tokio<br/>TokioClock · TokioInput · TokioOutput · TokioCtx · std"]
+    tokio_crate["sans-effort-tokio<br/>a component per trait · TokioCtx · std"]
     binding["an application's binding<br/>extern C · the only unsafe"]
 
     facade --> core

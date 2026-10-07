@@ -1,12 +1,21 @@
 # greeter_wasm
 
-The greeter in Node or a browser, with no driver. JS is a runtime host like tokio: its event loop is an executor, and `wasm-bindgen-futures` bridges Rust wakers to microtasks. So the routine runs as a task on that loop, and the context — `JsCtx` — makes each of its five effect traits a call into a JS object the caller supplies.
+The demo's routines in Node or a browser, with no driver. JS is a runtime host like tokio: its event loop is an executor, and `wasm-bindgen-futures` bridges Rust wakers to microtasks. So each routine runs as a task on that loop, and the context — `JsCtx` — makes each effect trait a call into a JS object the caller supplies, or, for spawning, a task of its own.
 
 ```text
-  host.rs     the extern block: readLine · lookup · sleep · count · writeLine on a JS object
-  ctx.rs      JsCtx: the five traits over that object; awaits a Promise if one comes back
-  greeter.rs  class Greeter { constructor(host); run(): Promise<void> }
-  fanout.rs   class Fanout  { constructor(host); run(): Promise<void> }
+  host.rs        the extern block, on a JS object: readLine · writeLine · lookup · count ·
+                 sleep(ms, signal) · now · randomBytes · env · readFile · writeFile
+  ctx.rs         JsCtx: every trait the routines use, over that object, through a
+                 dispatcher task, so its futures are Send; awaits a Promise if one comes
+                 back; a dropped sleep aborts its signal
+  greeter.rs     class Greeter    { constructor(host); run(): Promise<void> }
+  fanout.rs      class Fanout     ⎫
+  ping_pong.rs   class PingPong   ⎪
+  front_desk.rs  class FrontDesk  ⎬ the same shape, each its routine
+  ring.rs        class Ring       ⎪
+  journal.rs     class Journal    ⎪
+  deadline.rs    class Deadline   ⎭
+  faults/        class Deadlock: a host check, not an example (demo:faults)
 ```
 
 ## Build

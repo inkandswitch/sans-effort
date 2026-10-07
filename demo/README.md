@@ -1,6 +1,6 @@
 # demo
 
-The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five effect traits, then run four ways that must agree byte for byte; and two routines that spawn children and talk to them over plain channels. Three of the greeter's traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`, as do the spawning routines' `Spawn` and `SpawnPinned`; two (`Count`, `Lookup`) are the demo's own. A journal routine uses the rest of the standard library — `Var`, `ReadFile`, `WriteFile`, `Now`, `Random` — and every host answers it from the same small world (one variable, files in memory, a clock that moves a second per reading, counting random bytes), so its transcripts agree too.
+The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five effect traits, then run four ways that must agree byte for byte; and routines that spawn children and talk to them over plain channels (ping-pong, the front desk, a ring, two deadline races). Three of the greeter's traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`, as do the spawning routines' `Spawn` and `SpawnPinned`; two (`Count`, `Lookup`) are the demo's own. A journal routine uses the rest of the standard library — `Var`, `ReadFile`, `WriteFile`, `Now`, `Random` — and every host answers it from the same small world (one variable, files in memory, a clock that moves a second per reading, counting random bytes), so its transcripts agree too.
 
 ```text
   routines/        shared by both paths. The routines, one per module: greeter (the
@@ -28,7 +28,8 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    Tests: paused clock and multithreaded runs, output captured.
     wasm/          JsCtx implements the traits over a JS object the caller supplies —
                    through a dispatcher task, so its futures are Send; the event loop
-                   is the executor. Classes Greeter, Fanout, PingPong, FrontDesk, Ring.
+                   is the executor. Classes Greeter, Fanout, PingPong, FrontDesk, Ring,
+                   Journal, Deadline, and faults::Deadlock.
     js/            a Node host: five functions and one awaited promise. pkg/ is
                    generated.
 
@@ -41,8 +42,10 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    compile_fail; a deterministic Rust router runs ping-pong and front
                    desk across machines.
     cdylib/        the C-ABI binding over sans-effort-host: abi_version/new…/resume/
-                   reply/wakes/free/buf_free, three unsafe blocks, no mechanism. The
-                   only crate allowing unsafe.
+                   reply/wakes/free/buf_free, plus record/record_finish (a binding
+                   export, not ABI); unsafe only at the pointers, no mechanism. The
+                   only crate allowing unsafe. Its replay binary replays a recorded
+                   run in Rust.
     python/        a ctypes host that speaks ABI.md with a byte buffer and no library:
                    perform each effect, then reply; resume spawned children and each
                    machine a woke frame names; ask wakes() when nothing is queued.
@@ -68,7 +71,7 @@ nix develop --command demo:faults                                       # host c
 nix develop --command demo:stress                                       # host checks: seeded schedules
 ```
 
-`--fanout` on any host runs the two-waits-per-batch variant; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
+`--fanout` on any host runs the two-waits-per-batch variant; `--journal` the journal; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
 
 `--deadline` races a receive against a sleep, twice. The quick worker beats a 30-second sleep, so that sleep is abandoned: tokio drops its timer, Node's dispatcher aborts the `AbortSignal` it gave the host's `sleep`, and the driven hosts get a closed frame — Python drops its pending timer (its time is virtual: timers fire only when nothing else can happen), Java cancels the virtual thread sleeping it. A host that fails to cancel waits the 30 seconds out, so `demo` and CI run this mode under a time limit. The slow worker cannot answer until told to, so its 50 ms deadline always passes first.
 

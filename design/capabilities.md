@@ -1,7 +1,7 @@
 # Capabilities
 
 > [!NOTE]
-> _Status:_ `ReplyHandle` and vocabulary attenuation exist today. Spawning and channels between machines are planned; see [`channels`](channels.md).
+> _Status:_ `ReplyHandle`, vocabulary attenuation, and channels between machines — plain Rust, handed to children when they are spawned — exist today; see [`channels`](channels.md). The guest adapter with a c-list, for sandboxed routines, is planned.
 
 The claim this design makes:
 
