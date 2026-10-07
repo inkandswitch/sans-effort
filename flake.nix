@@ -73,16 +73,58 @@
           cargo-criterion
           cargo-deny
           cargo-hack
+          cargo-mutants
           cargo-nextest
           cargo-semver-checks
           cargo-watch
           typos
         ];
 
+        # The runner Gungraun's harness execs under Valgrind. Not in nixpkgs;
+        # built from crates.io. Its version must equal the `gungraun` crate's
+        # exactly (the `=` pin in Cargo.toml): bump both, and both hashes.
+        gungraun-runner = pkgs.rustPlatform.buildRustPackage rec {
+          pname = "gungraun-runner";
+          version = "0.20.0";
+          src = pkgs.fetchCrate {
+            inherit pname version;
+            hash = "sha256-XZHnq0t5XI/lSAdtP0UYxcaaV/YVZOmT/E7YQWX7jOU=";
+          };
+          cargoHash = "sha256-nYOFsVAuLw13XObUO4mS4edlv5N/BSHRYPPS1N7y0Os=";
+          doCheck = false;
+          # The binary embeds the build's PATH as a string, which would keep
+          # the whole Rust toolchain that built it (~2 GB) alive at run time.
+          nativeBuildInputs = [pkgs.removeReferencesTo];
+          postFixup = ''
+            for path in $(strings $out/bin/gungraun-runner \
+              | grep -oE '/nix/store/[a-z0-9]{32}-[^/:]*(cargo|rustc)[^/:]*' | sort -u); do
+              remove-references-to -t "$path" $out/bin/gungraun-runner
+            done
+          '';
+          meta = {
+            description = "The runner for Gungraun benchmarks";
+            homepage = "https://github.com/gungraun/gungraun";
+            license = with pkgs.lib.licenses; [asl20 mit];
+            mainProgram = "gungraun-runner";
+          };
+        };
+
+        # Instruction and allocation counts (`bench:instructions`): Linux only.
+        bench-pkgs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+          pkgs.valgrind
+          gungraun-runner
+        ];
+
+        # java.lang.foreign is final from 22. Headless: nothing here draws, and
+        # the GUI libraries are most of a JDK's closure. Quint runs Apalache and
+        # TLC on it too, rather than on a JDK of its own.
+        jdk = pkgs.jdk25_headless;
+        quint = pkgs.quint.override {jre = jdk;};
+
         # The demo's foreign hosts. `wasm-bindgen-cli` must match the `=` pin on
         # the `wasm-bindgen` crate in Cargo.toml; bump both together.
         demo-pkgs = [
-          pkgs.jdk25 # java.lang.foreign is final from 22
+          jdk
           pkgs.nodejs
           pkgs.python3
           unstable.wasm-bindgen-cli
@@ -99,11 +141,14 @@
         cmd = command-utils.cmd.${system};
         asModule = command-utils.asModule.${system};
 
-        # Project-specific commands
-        projectCommands = import ./nix/commands.nix {
-          inherit pkgs system cmd;
-          wasm-bindgen-cli = unstable.wasm-bindgen-cli;
-        };
+        # Project-specific commands, built against a toolchain: the full one
+        # for the dev shell, the minimal one for CI.
+        projectCommands = toolchain:
+          import ./nix/commands.nix {
+            inherit pkgs system cmd bench-pkgs jdk quint;
+            rust-toolchain = toolchain;
+            wasm-bindgen-cli = unstable.wasm-bindgen-cli;
+          };
 
         command_menu = command-utils.commands.${system} [
           (rust.build {cargo = rust-toolchain;})
@@ -124,14 +169,15 @@
           (rust.semver {cargo-semver-checks = pkgs.cargo-semver-checks;})
           (rust.ci {cargo = rust-toolchain;})
 
-          (asModule projectCommands)
+          (asModule (projectCommands rust-toolchain))
         ];
 
-        # Minimal CI toolchain — no llvm-tools, no rust-src, fewer targets
+        # Minimal CI toolchain — no docs, no llvm-tools, no rust-src, fewer
+        # targets. The same version as the dev shell's, which is the MSRV: CI
+        # builds and tests at the MSRV.
         ci-rust-toolchain =
-          (pkgs.rust-bin.stable.${rustVersion}.default.override {
+          (pkgs.rust-bin.stable.${rustVersion}.minimal.override {
             extensions = [
-              "cargo"
               "clippy"
               "rustfmt"
             ];
@@ -161,11 +207,16 @@
         ci-cargo-installs = with pkgs; [
           cargo-deny
           cargo-hack
+          cargo-mutants
           cargo-semver-checks
           typos
         ];
 
-        ci-demo-pkgs = demo-pkgs;
+        # The project's commands, which every workflow runs: each carries the
+        # store paths of the tools it uses, so the shell needs little else.
+        ci-commands = command-utils.commands.${system} [
+          (asModule (projectCommands ci-rust-toolchain))
+        ];
       in rec {
         devShells.default = pkgs.mkShell {
           name = "sans-effort-shell";
@@ -177,10 +228,12 @@
               rust-toolchain
 
               pkgs.rust-analyzer
+              quint # spec/: the host-protocol spec (`spec:check`)
             ]
             ++ format-pkgs
             ++ cargo-installs
             ++ demo-pkgs
+            ++ bench-pkgs
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.clang
               pkgs.llvmPackages.libclang
@@ -193,16 +246,18 @@
           '';
         };
 
+        # What every workflow runs in (`nix develop .#ci --command ...`), so
+        # CI's tools are the ones flake.lock pins, not the runner's.
         devShells.ci = pkgs.mkShell {
           name = "sans-effort-ci";
 
           nativeBuildInputs =
-            [
+            ci-commands
+            ++ [
               ci-rust-toolchain
               rustup-shim
             ]
-            ++ ci-cargo-installs
-            ++ ci-demo-pkgs;
+            ++ ci-cargo-installs;
         };
 
         formatter = pkgs.alejandra;

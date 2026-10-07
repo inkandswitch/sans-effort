@@ -23,16 +23,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: ./.github/actions/nix
         with:
-          cache: true
+          cargo-cache: test
 
-      - name: Test (default features)
-        run: cargo test --workspace
+      # Default features, all features, and doc tests. The flake's toolchain is
+      # the MSRV (msrv.yml checks the pins agree), so this tests at the MSRV.
+      - run: nix develop .#ci --command test:host
 
-      - name: Test (all features)
-        run: cargo test --workspace --all-features
+  # The driver's waker and outbox under every interleaving loom finds.
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Doc tests
-        run: cargo test --workspace --doc
+      - uses: ./.github/actions/nix
+        with:
+          cargo-cache: loom
+
+      - run: nix develop .#ci --command test:loom

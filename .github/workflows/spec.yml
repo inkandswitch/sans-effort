@@ -1,0 +1,50 @@
+name: Spec
+
+# The host-protocol spec (spec/host_protocol.qnt), model-checked by TLC through
+# Quint: every real instance must pass, and every mistaken host must be caught.
+# And the traces sans-effort-host replays against the table must be the ones
+# the spec draws now: regenerate them with `spec:traces`.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - "spec/**"
+      - "ABI.md"
+      - "flake.nix"
+      - "flake.lock"
+      - "nix/**"
+      - ".github/workflows/spec.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/nix
+
+      - name: Model-check the host protocol
+        run: nix develop .#ci --command spec:check
+
+      - name: The replayed traces are current
+        run: |
+          nix develop .#ci --command spec:traces
+          if [ -n "$(git status --porcelain spec/traces)" ]; then
+            git status --short spec/traces
+            echo "spec/traces is stale: run 'nix develop --command spec:traces'"
+            exit 1
+          fi
+
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-logs
+          path: /tmp/sans-effort-spec-*.log

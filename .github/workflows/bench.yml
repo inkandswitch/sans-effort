@@ -1,0 +1,28 @@
+name: Benchmarks (Instruction Counts)
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  instructions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/nix
+        with:
+          cargo-cache: bench
+
+      # Deterministic counts under Valgrind: the hard limits on heap blocks fail
+      # the job if an allocation is added to the ask path.
+      - run: nix develop .#ci --command bench:instructions

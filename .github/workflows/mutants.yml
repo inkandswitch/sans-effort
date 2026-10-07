@@ -1,0 +1,63 @@
+name: Mutation Testing
+
+# Too slow for every push (~8 minutes for the four library crates on four
+# cores). Weekly in full, and on a pull request only for the lines it changes.
+# Exit code 3 (some mutants only timed out) counts as caught; see
+# `test:mutants` in nix/commands.nix.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  MUTANTS_JOBS: "2"
+
+jobs:
+  changed-lines:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/nix
+        with:
+          cargo-cache: mutants
+
+      - name: Mutants in the changed lines
+        run: nix develop .#ci --command test:mutants:diff "origin/${{ github.base_ref }}..."
+
+      - name: Survivors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants
+          path: target/mutants/mutants.out
+
+  full:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/nix
+        with:
+          cargo-cache: mutants
+
+      - name: Every mutant in the library crates
+        run: nix develop .#ci --command test:mutants
+
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants
+          path: target/mutants/mutants.out
