@@ -1,7 +1,7 @@
 //! Time: waiting, and telling the time.
 //!
-//! Both are asks, so a host decides what time it is: the real clock, or —
-//! for a test or a replay — a virtual one that makes a run repeatable.
+//! Both are asks, so a host decides what time it is: the real clock, or
+//! (for a test or a replay) a virtual one that makes a run repeatable.
 
 use crate::{
     ask::{Ask, Asked},
@@ -40,8 +40,8 @@ where
 
 /// Tell the wall-clock time.
 ///
-/// Infallible, like [`Sleep`]. Wall-clock time can jump — a host's clock may
-/// be adjusted — so measure a pause with [`Sleep`], not by subtracting two
+/// Infallible, like [`Sleep`]. Wall-clock time can jump (a host's clock may
+/// be adjusted), so measure a pause with [`Sleep`], not by subtracting two
 /// readings.
 ///
 /// # Cancellation

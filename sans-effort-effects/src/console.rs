@@ -12,8 +12,8 @@ use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Wri
 ///
 /// # Cancellation
 ///
-/// _Consuming, and not cancel-safe._ A read abandoned before it finishes —
-/// the losing side of a [`select`] — may lose its line: a host that had
+/// _Consuming, and not cancel-safe._ A read abandoned before it finishes
+/// (the losing side of a [`select`]) may lose its line: a host that had
 /// already read it when it learned the routine stopped waiting discards it,
 /// and the next read gets the line after. Some contexts keep it (a
 /// cancel-safe `TokioInput` natively); a routine meant for any host must not

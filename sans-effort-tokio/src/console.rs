@@ -18,7 +18,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 ///
 /// # Cancellation
 ///
-/// A read dropped part-way through a line — the losing side of a `select` —
+/// A read dropped part-way through a line (the losing side of a `select`)
 /// keeps the bytes it had read, and the next read continues the line. tokio's
 /// own `read_line` throws them away, so a timeout that fires while a user is
 /// typing would garble the next line; this reads with `read_until` into a
@@ -189,7 +189,7 @@ mod tests {
         );
     }
 
-    /// For any line, split anywhere — mid-character included — with a read
+    /// For any line, split anywhere (mid-character included) with a read
     /// dropped in between: the next read returns the whole line, its ending
     /// stripped.
     #[test]

@@ -1,7 +1,7 @@
 //! Whether the process-wide handle table contends under a parallel host.
 //!
-//! `threads` threads each drive their own machine through the table — `asks`
-//! ask–reply round trips, every call a `table::resume` or `table::reply` — as
+//! `threads` threads each drive their own machine through the table (`asks`
+//! ask–reply round trips, every call a `table::resume` or `table::reply`) as
 //! a parallel host with one machine per worker would. The machines share
 //! nothing but the table, so throughput that fails to grow with the thread
 //! count is the table's lock.

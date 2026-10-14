@@ -67,7 +67,7 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
 
     #[expect(
         clippy::panic,
-        reason = "an answer in Rust always encodes validly; a refusal means a handle retyped from a `Pending` was replied to with bad bytes — a host bug, reported like a handle from another driver"
+        reason = "an answer in Rust always encodes validly; a refusal means a handle retyped from a `Pending` was replied to with bad bytes, a host bug, reported like a handle from another driver"
     )]
     pub(super) fn reply<A: Answer>(&mut self, reply: ReplyHandle<A>, value: A) -> Yield<E> {
         self.try_reply(reply, value).unwrap_or_else(|refused| {

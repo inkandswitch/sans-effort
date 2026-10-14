@@ -3,7 +3,7 @@
 //!
 //! The standard effect traits cover what most routines need. An application
 //! adds its own the same way they are written, and this guide writes one:
-//! `Lookup`, the greeting word for a name — the demo's, in full. Nothing here
+//! `Lookup`, the greeting word for a name (the demo's, in full). Nothing here
 //! is special to this crate; every piece below is public API.
 //!
 //! # The Trait
@@ -34,7 +34,7 @@
 //! the trait, plus `Effect`, and say what answers it through
 //! [`Ask`](crate::ask::Ask): an [`Answer`](sans_effort_core::reply::Answer),
 //! which is one of the four wire kinds (`String`, `u64`, `()`, `Vec<u8>`) or
-//! a type that crosses as one — `Result` and `Option` cross as bytes. A trait
+//! a type that crosses as one (`Result` and `Option` cross as bytes). A trait
 //! that can fail for reasons outside the routine answers with a `Result`;
 //! one that cannot, with the value itself.
 //!
@@ -50,14 +50,14 @@
 //! }
 //! ```
 //!
-//! A trait whose calls need no answer — a message, like
-//! [`WriteLine`](crate::console::WriteLine) — has an effect struct that does
+//! A trait whose calls need no answer (a message, like
+//! [`WriteLine`](crate::console::WriteLine)) has an effect struct that does
 //! not implement `Ask`, and is _told_ rather than asked.
 //!
 //! # The Reifying Impl
 //!
 //! One blanket impl makes every reifying context implement the trait,
-//! whatever the host's vocabulary — provided the vocabulary can carry the
+//! whatever the host's vocabulary, provided the vocabulary can carry the
 //! effect:
 //!
 //! ```
@@ -99,10 +99,10 @@
 //! # Native Impls
 //!
 //! A native context implements the trait with a real future, directly, and
-//! does nothing until that future is polled — `async fn` sees to it — so a
+//! does nothing until that future is polled (`async fn` sees to it), so a
 //! routine behaves the same under it as under a reifying context. For
 //! one built on `sans-effort-tokio`, that is a type of the application's
-//! own, wrapping a `TokioCtx` and forwarding the standard traits — the
+//! own, wrapping a `TokioCtx` and forwarding the standard traits. The
 //! orphan rule requires the impls to live on a type the application owns:
 //!
 //! ```
@@ -124,8 +124,8 @@
 //! with the `From` impl the requirement names. A foreign host cannot hold
 //! a `ReplyHandle`, so the vocabulary also says how each effect crosses:
 //! [`HostEffect::split`](sans_effort_core::boundary::host_effect::HostEffect::split)
-//! turns an effect into its _view_ — the same effect with its handle
-//! replaced by the request id — and the handle to keep, as a
+//! turns an effect into its _view_ (the same effect with its handle
+//! replaced by the request id) and the handle to keep, as a
 //! [`Pending`](sans_effort_core::boundary::pending::Pending);
 //! [`Encode`](sans_effort_core::boundary::codec::Encode) writes the view as
 //! the record a host reads. The first byte of each record is its _tag_,
@@ -256,22 +256,22 @@
 //! }
 //! ```
 //!
-//! A host that answers over the C ABI replies with a record — kind `1`
-//! (`str`), the id, the string — and the host layer (`sans-effort-host`)
+//! A host that answers over the C ABI replies with a record (kind `1`
+//! (`str`), the id, the string) and the host layer (`sans-effort-host`)
 //! checks the kind against the `Pending` before the routine sees it.
 //! `ABI.md` in the repository has the frame and record formats in full.
 //!
 //! # Effects That Can Fail
 //!
-//! A trait that can fail for reasons outside the routine — a file system, a
-//! lookup that may know no answer — answers with a `Result`, and its error
+//! A trait that can fail for reasons outside the routine (a file system, a
+//! lookup that may know no answer) answers with a `Result`, and its error
 //! type is part of the wire. Give the error [`Encode`] and [`Decode`], a tag
 //! byte per case, and the answer crosses as `bytes`: `00 · value` for `Ok`,
 //! `01 · error` for `Err` (an `Option` likewise: `00` for none, `01 · value`).
 //! A reply is checked against the `Result` when it is delivered, before the
-//! routine sees it: bytes that do not decode are refused — `MALFORMED` over
+//! routine sees it: bytes that do not decode are refused (`MALFORMED` over
 //! the C ABI, a [`Refused`](sans_effort_core::driver::Refused) from
-//! `try_reply` in Rust — and the request stays open for a good reply.
+//! `try_reply` in Rust) and the request stays open for a good reply.
 //!
 //! [`Encode`]: sans_effort_core::boundary::codec::Encode
 //! [`Decode`]: sans_effort_core::boundary::codec::Decode

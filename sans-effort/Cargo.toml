@@ -25,7 +25,7 @@ sans-effort-tokio = { workspace = true, optional = true }
 default = ["std"]
 ## The driver's one lock is `std::sync::Mutex`. At least one of `std` and
 ## `spin` must be enabled; when both are, `std` is used. A crate that only
-## names the traits — a routine — should depend with `default-features = false`
+## names the traits (a routine) should depend with `default-features = false`
 ## and leave the choice to the binary.
 std = [
   "sans-effort-core/std",
@@ -43,8 +43,8 @@ portable-atomic = ["spin", "sans-effort-core/portable-atomic"]
 ## `portable-atomic` backed by a `critical-section` implementation the
 ## application provides.
 critical-section = ["portable-atomic", "sans-effort-core/critical-section"]
-## `host`: what a foreign-function binding needs — typed and byte-level
-## machines, and with `std` the process-wide handle table.
+## `host`: what a foreign-function binding needs (typed and byte-level
+## machines, and with `std` the process-wide handle table).
 host = ["dep:sans-effort-host"]
 ## `testing`: `sans_effort::testing`, the helpers for testing routines.
 testing = ["sans-effort-core/testing"]

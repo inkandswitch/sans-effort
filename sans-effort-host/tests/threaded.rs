@@ -1,20 +1,20 @@
 //! The host table under a real multi-threaded host.
 //!
 //! The spec's traces (`spec_traces.rs`) check the table call by call; loom
-//! checks core's waker. Neither runs the table's own locks — the handle table,
-//! each machine's lock, the per-thread wake collection — from many threads at
+//! checks core's waker. Neither runs the table's own locks (the handle table,
+//! each machine's lock, the per-thread wake collection) from many threads at
 //! once. This host does: 2–4 threads share one queue of events, take whatever
 //! is next, and make the call without coordinating. So two threads collide on
 //! one machine (`BUSY`, retried), calls on different machines overlap, a
 //! spurious resume lands anywhere, and replies go to requests already closed
 //! (`STALE`). The workload is rings of machines passing a token over
-//! channels, every hop asking the host for its request id back — a reply
+//! channels, every hop asking the host for its request id back: a reply
 //! routed to the wrong machine or request makes the routine panic.
 //!
 //! Each seed picks the thread count and the host's dice; thread timing does
 //! the rest, so a seed reproduces choices, not interleavings.
 //!
-//! Wakes outside any call — from `free` or a panic — do not arise here; the
+//! Wakes outside any call (from `free` or a panic) do not arise here; the
 //! table's unit tests cover them. A table that drops `woke` frames stalls
 //! this host on the first seed.
 

@@ -1,7 +1,7 @@
 //! Await two futures; resolve with whichever finishes first.
 //!
 //! [`join`](crate::join::join) waits for both. A routine often needs the
-//! other shape — a message or a timeout, work or a signal to stop:
+//! other shape (a message or a timeout, work or a signal to stop):
 //!
 //! ```text
 //!   select(receive(), sleep(timeout))
@@ -25,8 +25,8 @@
 //! # Cancel Safety
 //!
 //! Whether dropping the loser loses anything depends on the loser. A sleep,
-//! or a receive on a channel, loses nothing. A consuming effect — reading a
-//! line — may lose what it read: the host may already hold the line when it
+//! or a receive on a channel, loses nothing. A consuming effect (reading a
+//! line) may lose what it read: the host may already hold the line when it
 //! learns the routine stopped waiting. Each effect trait says which it is in
 //! its "Cancellation" section.
 //!

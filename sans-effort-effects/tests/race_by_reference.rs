@@ -1,5 +1,5 @@
 //! Racing a read by reference, as a host sees it: the deadline passes, the
-//! sleep's request is answered and the routine goes on waiting — but the
+//! sleep's request is answered and the routine goes on waiting, but the
 //! read's request is never closed. Only the sleep the routine stopped needing
 //! is; the read is answered late, and nothing is lost.
 
@@ -71,7 +71,7 @@ fn a_read_raced_by_reference_outlives_its_deadlines() -> TestResult {
     assert!(closed.is_empty());
 
     // Two deadlines pass. Each is answered; the routine reminds, and sets
-    // the next — and the read stays open throughout.
+    // the next, and the read stays open throughout.
     let mut sleep = sleep;
     for _ in 0..2 {
         let (batch, closed) = driver.reply(sleep, ()).into_parts();
@@ -88,7 +88,7 @@ fn a_read_raced_by_reference_outlives_its_deadlines() -> TestResult {
     }
 
     // The line comes. The read wins this time, and only the pending
-    // deadline — the one the routine no longer needs — closes.
+    // deadline (the one the routine no longer needs) closes.
     let pending = sleep.id();
     let (last, closed) = driver.reply(read, Ok("alice".into())).into_parts();
     let [Effect::WriteLine(WriteLineEffect(got))] =

@@ -147,8 +147,8 @@ impl Writer {
         self.0.extend_from_slice(b);
     }
 
-    /// A nested record, laid out as [`bytes`](Self::bytes) lays it out — a
-    /// `u32` length, then the bytes — but written in place: `write` encodes
+    /// A nested record, laid out as [`bytes`](Self::bytes) lays it out (a
+    /// `u32` length, then the bytes), but written in place: `write` encodes
     /// straight into this buffer, and the length is filled in after. No
     /// separate buffer is built and copied, as `w.bytes(&inner.to_bytes())`
     /// would.
@@ -525,8 +525,8 @@ mod tests {
         assert!(buffer.capacity() >= 64);
     }
 
-    /// Through the `Encode` impls for borrowed forms — `str`, `[u8]`, and
-    /// a reference — as through the owned ones.
+    /// Through the `Encode` impls for borrowed forms (`str`, `[u8]`, and
+    /// a reference) as through the owned ones.
     #[test]
     fn borrowed_forms_encode_as_the_owned_ones() {
         bolero::check!()

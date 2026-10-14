@@ -7,9 +7,9 @@ use core::{future::IntoFuture, marker::PhantomData};
 /// What [`Outbox::ask`] returns: a request that has not been recorded yet.
 ///
 /// It holds only the closure that builds the effect, and has no id. It is
-/// not a future: turning it into one — `.await` does this, and so do
+/// not a future: turning it into one (`.await` does this, and so do
 /// [`join`](crate::join::join), [`select`](crate::select::select), and
-/// `testing::poll_once` when they start — mints the id,
+/// `testing::poll_once` when they start), mints the id,
 /// builds the effect around a [`ReplyHandle`] for it, records the effect,
 /// and returns an [`Awaiting`], which always has an id. The move from "no
 /// id" to "an id" is that one consuming call, so it happens once and cannot

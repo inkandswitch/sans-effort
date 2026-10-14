@@ -108,7 +108,7 @@ impl<R, W> TokioCtx<R, W> {
     ///
     /// # Errors
     ///
-    /// The context itself, unchanged, while a clone — a child's context —
+    /// The context itself, unchanged, while a clone (a child's context)
     /// still shares them.
     pub fn into_parts(self) -> Result<(R, W), Self> {
         let Self {

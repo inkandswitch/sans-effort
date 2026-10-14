@@ -28,7 +28,7 @@ pub struct Machine<E, F: ?Sized = dyn Future<Output = ()> + Send> {
     pending: Vec<(u64, Pending)>,
     /// The highest request id shown to the host. Ids reach the host in the
     /// order they were minted, so an unmatched id at or below this was shown
-    /// and is stale — unless it is in `never_shown` — and one above it was
+    /// and is stale (unless it is in `never_shown`) and one above it was
     /// never issued.
     highest_shown: u64,
     /// Ids below `highest_shown` the host never saw: a request whose effect
@@ -39,16 +39,17 @@ pub struct Machine<E, F: ?Sized = dyn Future<Output = ()> + Send> {
 }
 
 impl<E: HostEffect> Machine<E> {
-    /// Build a driver around `make` and wrap it — the same as
+    /// Build a driver around `make` and wrap it: the same as
     /// `Machine::from_driver(Driver::new(make))`.
     /// Nothing runs until the first [`resume`](Self::resume).
     ///
     /// `make` receives the outbox the routine's context should write into and
-    /// returns the routine's _future_ — `|outbox| Greeter::new(Ctx::new(outbox)).run()`
-    /// — not the routine. The `.run()` cannot be hidden here: `Driver::new`
-    /// requires the future to be `Send`, and only where the routine's type is
-    /// concrete can the compiler decide that. A constructor generic over
-    /// `P: Step` would have no way to state `P::run(): Send` on stable Rust.
+    /// returns the routine's _future_, not the routine:
+    /// `|outbox| Greeter::new(Ctx::new(outbox)).run()`. The `.run()` cannot be
+    /// hidden here: `Driver::new` requires the future to be `Send`, and only
+    /// where the routine's type is concrete can the compiler decide that. A
+    /// constructor generic over `P: Step` would have no way to state
+    /// `P::run(): Send` on stable Rust.
     pub fn new<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
         make: M,
     ) -> Self {
@@ -62,7 +63,7 @@ impl<E: HostEffect> Machine<E> {
 }
 
 impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
-    /// Wrap a driver — a local one ([`Driver::local`]), say, which
+    /// Wrap a driver: a local one ([`Driver::local`]), say, which
     /// [`new`](Machine::new) cannot build. Nothing has been polled yet.
     #[must_use]
     pub const fn from_driver(driver: Driver<E, F>) -> Self {
@@ -78,7 +79,7 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
     /// Reply to the request with this id: the effects recorded before the
     /// next wait.
     ///
-    /// `T` is the kind the host chose. Two checks happen here, at run time —
+    /// `T` is the kind the host chose. Two checks happen here, at run time,
     /// the only place in the stack a reply can be refused: that `T` is the
     /// kind the routine's answer crosses as, and that the value decodes as
     /// that answer (bytes for a `Result`, say).
@@ -116,7 +117,7 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
     /// Run the routine to its next wait without delivering anything: what it
     /// yielded. The first call begins it; after that, for an
     /// [`Idle`](Status::Idle) routine, once something it waits on in the
-    /// process may have changed — harmless when nothing has.
+    /// process may have changed: harmless when nothing has.
     ///
     /// # Errors
     ///
@@ -194,7 +195,7 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
         self.driver.is_finished()
     }
 
-    /// Split a batch into what the host sees and the handles we keep — and
+    /// Split a batch into what the host sees and the handles we keep, and
     /// forget the handles of requests the routine dropped unanswered, so this
     /// table tracks the driver's rather than growing past it.
     fn show(&mut self, step: Yield<E>) -> Yield<Shown<E::View>> {
@@ -234,8 +235,8 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
         }
     }
 
-    /// Deliver, or — if the value does not decode as the answer the routine
-    /// awaits — put the request back and report it malformed.
+    /// Deliver, or (if the value does not decode as the answer the routine
+    /// awaits) put the request back and report it malformed.
     fn deliver<T: Reply>(
         &mut self,
         id: u64,
@@ -279,8 +280,8 @@ mod tests {
     use sans_effort_core::{reply::kind::Kind, step::Step};
     use testresult::TestResult;
 
-    /// A request whose effect could not be built — its constructor panicked,
-    /// and the routine caught it — took an id the host never sees. A reply
+    /// A request whose effect could not be built (its constructor panicked,
+    /// and the routine caught it) took an id the host never sees. A reply
     /// to that id was never issued: `BAD_INPUT`, not `STALE`.
     #[test]
     #[expect(clippy::panic, reason = "the effect's constructor panics on purpose")]

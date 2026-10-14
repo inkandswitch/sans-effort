@@ -460,7 +460,8 @@ in {
         | sed -n '/^-* MODULE/,$p' > "$tla/$instance.tla"
       stop_server
       printf 'INIT q_init\nNEXT q_step\nPROPERTY q_temporalProps\n' > "$tla/$instance.cfg"
-      (cd "$tla" && timeout 300 ${jdk}/bin/java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
+      # The largest instances take a few minutes here; a CI runner is slower.
+      (cd "$tla" && timeout 900 ${jdk}/bin/java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
         -workers 2 -metadir "$tla/states/$instance" -config "$instance.cfg" "$instance.tla") \
         >> "$log" 2>&1
       local code=$?
@@ -482,20 +483,23 @@ in {
       front_desk; do
       check "$instance" ok
     done
-    for instance in mistaken_ignores_woke mistaken_ignores_closed mistaken_ignores_pinning; do
+    for instance in mistaken_ignores_woke mistaken_ignores_closed mistaken_ignores_pinning \
+      mistaken_ends_when_idle mistaken_polls_idle; do
       check "$instance" violation
     done
 
     echo "Liveness under weak fairness (reaches_verdict):"
     ${python} ${strict-folds} "$jar" "$tla" || exit 1
     # A host that ignores closed frames still finishes; its mistake is a
-    # safety one, caught above. One that ignores `woke` frames does not, and
-    # nor does one that loses an event to a call on the wrong worker.
+    # safety one, caught above. One that ignores `woke` frames does not, nor
+    # does one that loses an event to a call on the wrong worker, one that
+    # calls a deadlock the end, or one that spins on idle machines forever.
     for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock ring \
       front_desk mistaken_ignores_closed; do
       live "$instance" ok
     done
-    for instance in mistaken_ignores_woke mistaken_ignores_pinning; do
+    for instance in mistaken_ignores_woke mistaken_ignores_pinning mistaken_ends_when_idle \
+      mistaken_polls_idle; do
       live "$instance" violation
     done
 
@@ -513,10 +517,17 @@ in {
     cd spec
     raw=$(mktemp -d)
     trap 'rm -rf "$raw"' EXIT
-    traces=50
 
     for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock ring \
-      front_desk mistaken_ignores_woke mistaken_ignores_closed mistaken_ignores_pinning; do
+      front_desk mistaken_ignores_woke mistaken_ignores_closed mistaken_ignores_pinning \
+      mistaken_ends_when_idle mistaken_polls_idle; do
+      # The largest instances get more: each line printed below says how
+      # many distinct states an instance's traces visit, to set beside the
+      # count `spec:check` prints.
+      case "$instance" in
+        ping_pong | ring | front_desk) traces=200 ;;
+        *) traces=50 ;;
+      esac
       ${quint}/bin/quint run --mbt --main="$instance" --max-steps=60 --seed=1 \
         --max-samples="$traces" --n-traces="$traces" \
         --out-itf="$raw/''${instance}_{seq}.itf.json" host_protocol.qnt > /dev/null

@@ -28,7 +28,7 @@ use core::{
 /// Poll `a` and `b` together; resolve when both have.
 ///
 /// Takes anything that becomes a future, as `.await` does, and converts both
-/// when the join starts, `a` first — so two [`Asking`](crate::driver::asking::Asking)s
+/// when the join starts, `a` first, so two [`Asking`](crate::driver::asking::Asking)s
 /// are recorded in argument order.
 pub async fn join<A: IntoFuture, B: IntoFuture>(a: A, b: B) -> (A::Output, B::Output) {
     let mut a = pin!(a.into_future());

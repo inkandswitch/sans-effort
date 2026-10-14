@@ -2,7 +2,7 @@
 //! reply.
 //!
 //! A future that cannot finish stores the waker it was polled with; whatever
-//! it waits on calls it when that may have changed — a channel on a send, a
+//! it waits on calls it when that may have changed: a channel on a send, a
 //! lock on a release. Under tokio the waker requeues the task. Here it sets a
 //! flag and calls a hook the host layer installs, which tells the host "this
 //! machine can run". The flag makes that once per wait: further wakes before

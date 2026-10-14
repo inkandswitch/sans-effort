@@ -25,7 +25,7 @@ testresult = { workspace = true }
 [features]
 default = ["std"]
 ## Forwarded to `sans-effort-core`: the driver's lock is `std::sync::Mutex`.
-## A crate that only names the traits — a routine — should depend with
+## A crate that only names the traits (a routine) should depend with
 ## `default-features = false` and leave the choice to the binary.
 std = ["sans-effort-core/std"]
 ## Forwarded to `sans-effort-core`: the lock for a `no_std` build. At least one of

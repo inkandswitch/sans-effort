@@ -1,6 +1,6 @@
 //! The workload both harnesses measure: one machine driven through the
 //! process-wide handle table, every call a `table::resume` or `table::reply`
-//! over bytes — the path a foreign host takes, less the FFI.
+//! over bytes. It is the path a foreign host takes, less the FFI.
 //!
 //! [`drive`] creates a machine whose routine asks for a `u64` `asks` times,
 //! answers each ask from the frames it yields, and frees the machine.

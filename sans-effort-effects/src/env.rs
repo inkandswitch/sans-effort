@@ -11,7 +11,7 @@ use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Wri
 /// Read an environment variable.
 ///
 /// Infallible: an unset variable is `None`, not an error. A host whose value
-/// is not UTF-8 answers `None` too — a routine could do nothing else with it.
+/// is not UTF-8 answers `None` too: a routine could do nothing else with it.
 ///
 /// # Cancellation
 ///

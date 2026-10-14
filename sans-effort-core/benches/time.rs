@@ -1,6 +1,6 @@
 //! Wall-clock time for the shared workloads, with criterion: for local A/B
 //! comparisons against a saved baseline, and for numbers quoted in docs. Not
-//! run in CI — time is noisy there; `instructions` is the regression guard.
+//! run in CI: time is noisy there; `instructions` is the regression guard.
 //!
 //! ```sh
 //! cargo bench -p sans-effort-core --bench time -- --save-baseline before

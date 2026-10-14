@@ -2,8 +2,10 @@
 every step. The replay (sans-effort-host/tests/spec_traces.rs) needs only
 what a host sees, so each step keeps that: its action and picks; for a
 call, its output (none if the table refused it) and whether it was stale
-or on the wrong worker; for `quiet`, what `wakes` held. The steps after
-the verdict (`done`) go, and so do repeats: a small instance has few paths.
+or on the wrong worker; for `quiet`, what `wakes` held; for `spurious` and
+`kill`, the machine. The steps after the verdict (`done`) go, and so do
+repeats: a small instance has few paths. It reports how many distinct model
+states the traces visit, to compare with the state count `spec:check` prints.
 """
 
 import glob
@@ -43,8 +45,19 @@ def step(before, after):
     return out
 
 
+def model(state):
+    return json.dumps(
+        {k: v for k, v in state.items() if not k.startswith(("mbt::", "#"))},
+        sort_keys=True,
+    )
+
+
+visited = set()
+
+
 def trace(path):
     states = json.load(open(path))["states"]
+    visited.update(map(model, states))
     steps = [step(b, a) for b, a in zip(states, states[1:])]
     while steps and steps[-1]["action"] == "done":
         steps.pop()
@@ -58,6 +71,7 @@ paths = sorted(
 distinct = list({json.dumps(t, sort_keys=True): t for t in map(trace, paths)}.values())
 json.dump({"instance": instance, "traces": distinct}, sys.stdout, separators=(",", ":"))
 print(
-    f"{instance}: {len(distinct)} traces, {sum(map(len, distinct))} steps",
+    f"{instance}: {len(distinct)} traces, {sum(map(len, distinct))} steps, "
+    f"{len(visited)} distinct states visited",
     file=sys.stderr,
 )

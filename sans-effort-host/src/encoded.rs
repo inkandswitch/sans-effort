@@ -1,7 +1,7 @@
 //! The byte layer: a [`Machine`] whose calls take and return bytes.
 //!
-//! Same operations as the typed machine — [`resume`](Encoded::resume) and
-//! [`reply`](Encoded::reply) — with one reply record in and the effects
+//! Same operations as the typed machine ([`resume`](Encoded::resume) and
+//! [`reply`](Encoded::reply)) with one reply record in and the effects
 //! encoded out. Each effect is one _frame_: a kind
 //! ([`FRAME_TELL`] or [`FRAME_ASK`]), a `u32` length, and the view's
 //! bytes as the routine's [`Encode`] impl writes them. The length lets a host
@@ -45,8 +45,8 @@ where
         &self.0
     }
 
-    /// Deliver one reply record — `1 id str`, `2 id u64`, `3 id`, or
-    /// `4 id bytes`, and nothing after it — and run to the next wait: the
+    /// Deliver one reply record (`1 id str`, `2 id u64`, `3 id`, or
+    /// `4 id bytes`, and nothing after it) and run to the next wait: the
     /// effects it recorded, encoded, and its status.
     ///
     /// # Errors
@@ -68,8 +68,8 @@ where
         self.0.on_wake(hook);
     }
 
-    /// Run the routine to its next wait without delivering anything — the
-    /// first call begins it: the effects it recorded, encoded, and its
+    /// Run the routine to its next wait without delivering anything (the
+    /// first call begins it): the effects it recorded, encoded, and its
     /// status.
     ///
     /// # Errors
@@ -88,11 +88,11 @@ impl<E, F: ?Sized> core::fmt::Debug for Encoded<E, F> {
 }
 
 /// Room per frame when the output is sized up front: a frame's five bytes
-/// of kind and length, and a typical record — enough that the buffer rarely
+/// of kind and length, and a typical record. Enough that the buffer rarely
 /// grows, and that a `woke` frame the table appends usually fits too.
 const BYTES_PER_FRAME: usize = 32;
 
-/// One frame per effect — kind, `u32` length, the view's own bytes — then one
+/// One frame per effect (kind, `u32` length, the view's own bytes), then one
 /// closed frame per abandoned id. Each record is encoded in place, into one
 /// buffer sized up front; an empty batch allocates nothing.
 fn encode<V: Encode>(step: &Yield<Shown<V>>) -> Vec<u8> {

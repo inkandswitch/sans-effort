@@ -13,8 +13,9 @@
 //
 // The host is the recommended shape: at most one call per machine, a pinned
 // machine's calls on its own worker, outputs handled as calls return, closed
-// frames dropping replies not yet sent, and when nothing is left, `wakes` —
-// then a verdict, "end" or "stall".
+// frames dropping replies not yet sent, and when nothing is left, `wakes`,
+// then a verdict, "end" or "stall". It may also resume a waiting machine for
+// no reason, or free one, within a budget: the ABI says both are safe.
 //
 // Check with `nix develop --command spec:check`.
 
@@ -61,11 +62,27 @@ module protocol {
   // A pinned machine's calls go to the worker that began it. (False: a host
   // that calls on any worker, which the table refuses as `WRONG_THREAD`.)
   const ROUTES_PINNED: bool
+  // The end is declared only once every machine is done. (False: a host that
+  // calls it the end whenever it has nothing left to do.)
+  const CHECKS_ALL_DONE: bool
+  // An idle machine is resumed when a `woke` frame or `wakes` names it.
+  // (False: a host that resumes a machine whenever its call returns idle.)
+  const WAITS_FOR_WOKE: bool
+  // Resumes the host may make for no reason, as a seeded host does.
+  const SPURIOUS: int
+  // Waiting machines the host may free before they finish, as the testing
+  // runner's `Schedule::kill` does.
+  const KILLS: int
 
   // Enough instructions to run any one call to its next wait.
   pure val STEPS = 8
   // More host actions than any instance's longest run takes.
   pure val BOUND = 60
+
+  // Count a host action, stopping one past BOUND: a run that goes on
+  // forever then repeats its states, a cycle the liveness check can find,
+  // and has still broken `terminates`.
+  pure def tick(steps: int): int = if (steps > BOUND) steps else steps + 1
 
   type Status =
     | NotStarted
@@ -95,14 +112,22 @@ module protocol {
     owner: int,
   }
 
+  // An effect a call records: a child spawned, or a request asked.
+  type Effect =
+    // The child's handle once the call returns; its index in the call's
+    // `children` until then.
+    | Spawned(int)
+    // The request's id.
+    | Asked(int)
+
   // The library while a call runs, and what the call has emitted so far.
   type World = {
     machines: int -> Machine,
     queued: str -> int,
     senders: str -> int,
     woke: Set[int],
-    spawned: Set[int],
-    asked: Set[int],
+    // In the order they were recorded.
+    effects: List[Effect],
     closed: Set[int],
     // Children spawned in this call, registered when it returns: each
     // program, and whether it is pinned.
@@ -116,8 +141,7 @@ module protocol {
   // A call's output, delivered to the host when the call returns.
   type Output = {
     woke: Set[int],
-    spawned: Set[int],
-    asked: Set[int],
+    effects: List[Effect],
     closed: Set[int],
     status: Status,
     // The worker the call runs on.
@@ -145,6 +169,9 @@ module protocol {
   var wrong_thread: int
   // Host actions taken so far: bounded exactly when every run terminates.
   var steps: int
+  // What is left of the budgets for spurious resumes and kills.
+  var spurious_left: int
+  var kills_left: int
 
   pure def fresh(prog: str, pinned: bool): Machine = {
     prog: prog,
@@ -202,6 +229,7 @@ module protocol {
   pure def spawn(w: World, h: int, p: str, pinned: bool): World =
     { ...update(w, h, mm => { ...mm, pc: mm.pc + 1 }),
       senders: HOLDS.get(p).fold(w.senders, (s, c) => s.set(c, s.get(c) + 1)),
+      effects: w.effects.append(Spawned(w.children.length())),
       children: w.children.append((p, pinned)) }
 
   // Run one instruction of a running machine.
@@ -221,13 +249,13 @@ module protocol {
       | SpawnPinned(p) => spawn(w, h, p, true)
       | Ask =>
         { ...update(w, h, mm => { ...mm, status: Awaiting, asks: mm.asks.union(Set(mm.next_id)), next_id: mm.next_id + 1 }),
-          asked: w.asked.union(Set(m.next_id)) }
+          effects: w.effects.append(Asked(m.next_id)) }
       | Race(c) =>
         if (ready(w, c)) update(take(w, c), h, mm => { ...mm, pc: mm.pc + 1 })
         else
           { ...update(w, h, mm => { ...mm, status: Awaiting, waiting: c, woken: false, racing: mm.next_id,
                                    asks: mm.asks.union(Set(mm.next_id)), next_id: mm.next_id + 1 }),
-            asked: w.asked.union(Set(m.next_id)) }
+            effects: w.effects.append(Asked(m.next_id)) }
       | Panic =>
         update(w, h, mm => { ...mm, status: Panicking })
     }
@@ -279,12 +307,26 @@ module protocol {
     drop_senders(drop_senders(gone, m.holds), unspawned)
   }
 
-  // Register the children a successful call spawned, numbered in order.
-  pure def register(w: World): World =
-    w.children.foldl(w, (acc, c) => {
-      val handle = acc.machines.keys().size()
-      { ...acc, machines: acc.machines.put(handle, fresh(c._1, c._2)), spawned: acc.spawned.union(Set(handle)) }
-    })
+  // Register the children a successful call spawned, numbered in order,
+  // and name each in its effect by its handle.
+  pure def register(w: World): World = {
+    val base = w.machines.keys().size()
+    { ...w,
+      machines: w.children.foldl(w.machines, (ms, c) => ms.put(ms.keys().size(), fresh(c._1, c._2))),
+      effects: w.effects.foldl([], (es, e) => es.append(match e {
+        | Spawned(i) => Spawned(base + i)
+        | Asked(id) => Asked(id)
+      })) }
+  }
+
+  // The children an output spawned, and the requests it asked.
+  pure def spawned_in(effects: List[Effect]): Set[int] =
+    effects.foldl(Set(), (s, e) => match e { | Spawned(c) => s.union(Set(c)) | Asked(_) => s })
+  pure def asked_in(effects: List[Effect]): Set[int] =
+    effects.foldl(Set(), (s, e) => match e { | Spawned(_) => s | Asked(id) => s.union(Set(id)) })
+
+  // A machine waiting: the host has seen it, and may resume or free it.
+  pure def waiting_in(m: Machine): bool = m.status == Idle or m.status == Awaiting
 
   pure def target(e: Event): int = match e { | Resume(h) => h | Reply(r) => r._1 }
 
@@ -305,6 +347,8 @@ module protocol {
     stale' = 0,
     wrong_thread' = 0,
     steps' = 0,
+    spurious_left' = SPURIOUS,
+    kills_left' = KILLS,
   }
 
   // Make a call: on a worker that is free, for a machine with no call in
@@ -319,7 +363,7 @@ module protocol {
     val m = machines.get(h)
     val wrong = m.pinned and m.owner != -1 and m.owner != worker
     val w0: World = { machines: machines, queued: queued, senders: senders,
-                      woke: Set(), spawned: Set(), asked: Set(), closed: Set(), children: [] }
+                      woke: Set(), effects: [], closed: Set(), children: [] }
     val w1 = match e { | Resume(_) => resume(w0, h) | Reply(r) => deliver(w0, h, r._2) }
     val w2 = run_to_wait(w1, h)
     val failed = w2.machines.get(h).status == Panicking
@@ -333,7 +377,9 @@ module protocol {
       ROUTES_PINNED implies not(wrong),
       pending' = pending.exclude(Set(e)),
       verdict' = verdict,
-      steps' = steps + 1,
+      steps' = tick(steps),
+      spurious_left' = spurious_left,
+      kills_left' = kills_left,
       if (wrong) all {
         machines' = machines,
         queued' = queued,
@@ -349,8 +395,7 @@ module protocol {
         wakes' = if (failed) wakes.union(owned.woke) else wakes,
         in_flight' = in_flight.put(h, {
           woke: if (failed) Set() else owned.woke,
-          spawned: owned.spawned,
-          asked: if (failed) Set() else owned.asked,
+          effects: if (failed) [] else owned.effects,
           closed: if (failed) Set() else owned.closed,
           status: owned.machines.get(h).status,
           worker: worker,
@@ -368,14 +413,16 @@ module protocol {
     nondet h = in_flight.keys().oneOf()
     val out = in_flight.get(h)
     val woken = if (HEEDS_WOKE) out.woke.map(m => Resume(m)) else Set()
+    val polled = if (not(WAITS_FOR_WOKE) and out.status == Idle) Set(Resume(h)) else Set()
     val dropped = if (DROPS_CLOSED) out.closed.map(id => Reply((h, id))) else Set()
     val ended = out.status == Complete or out.status == Gone
     all {
       in_flight' = in_flight.keys().exclude(Set(h)).mapBy(k => in_flight.get(k)),
       pending' = pending
         .union(woken)
-        .union(out.spawned.map(c => Resume(c)))
-        .union(out.asked.map(id => Reply((h, id))))
+        .union(polled)
+        .union(spawned_in(out.effects).map(c => Resume(c)))
+        .union(asked_in(out.effects).map(id => Reply((h, id))))
         .exclude(dropped),
       machines' = if (ended) machines.set(h, { ...machines.get(h), status: Gone }) else machines,
       queued' = queued,
@@ -384,7 +431,9 @@ module protocol {
       verdict' = verdict,
       stale' = stale,
       wrong_thread' = wrong_thread,
-      steps' = steps + 1,
+      steps' = tick(steps),
+      spurious_left' = spurious_left,
+      kills_left' = kills_left,
     }
   }
 
@@ -398,7 +447,8 @@ module protocol {
     else all {
       pending' = pending,
       wakes' = wakes,
-      verdict' = if (machines.keys().forall(h => machines.get(h).status == Gone)) "end" else "stall",
+      verdict' = if (not(CHECKS_ALL_DONE) or machines.keys().forall(h => machines.get(h).status == Gone)) "end"
+                 else "stall",
     },
     machines' = machines,
     queued' = queued,
@@ -406,7 +456,60 @@ module protocol {
     in_flight' = in_flight,
     stale' = stale,
     wrong_thread' = wrong_thread,
-    steps' = steps + 1,
+    steps' = tick(steps),
+    spurious_left' = spurious_left,
+    kills_left' = kills_left,
+  }
+
+  // A resume for no reason, of a waiting machine with no call in flight. The
+  // ABI says it is harmless; the properties holding with it prove so.
+  action spurious = {
+    nondet h = machines.keys().filter(h => waiting_in(machines.get(h)) and not(in_flight.keys().contains(h))).oneOf()
+    all {
+      verdict == "running",
+      spurious_left > 0,
+      pending' = pending.union(Set(Resume(h))),
+      spurious_left' = spurious_left - 1,
+      machines' = machines,
+      queued' = queued,
+      senders' = senders,
+      wakes' = wakes,
+      in_flight' = in_flight,
+      verdict' = verdict,
+      stale' = stale,
+      wrong_thread' = wrong_thread,
+      steps' = tick(steps),
+      kills_left' = kills_left,
+    }
+  }
+
+  // The host frees a waiting machine with no call in flight. As after a
+  // panic, but outside any call: its requests close without frames, what it
+  // held drops, and the wakes that causes wait for `wakes`. The host forgets
+  // the events it had for the machine.
+  action kill = {
+    nondet h = machines.keys().filter(h => waiting_in(machines.get(h)) and not(in_flight.keys().contains(h))).oneOf()
+    val m = machines.get(h)
+    val w0: World = { machines: machines, queued: queued, senders: senders,
+                      woke: Set(), effects: [], closed: Set(), children: [] }
+    val gone = update(w0, h, mm => { ...mm, status: Gone, asks: Set(), racing: 0, waiting: "", holds: Set() })
+    val w1 = drop_senders(gone, m.holds)
+    all {
+      verdict == "running",
+      kills_left > 0,
+      machines' = w1.machines,
+      queued' = w1.queued,
+      senders' = w1.senders,
+      wakes' = wakes.union(w1.woke),
+      pending' = pending.filter(e => target(e) != h),
+      kills_left' = kills_left - 1,
+      in_flight' = in_flight,
+      verdict' = verdict,
+      stale' = stale,
+      wrong_thread' = wrong_thread,
+      steps' = tick(steps),
+      spurious_left' = spurious_left,
+    }
   }
 
   // The host has given its verdict; nothing more happens.
@@ -422,9 +525,11 @@ module protocol {
     stale' = stale,
     wrong_thread' = wrong_thread,
     steps' = steps,
+    spurious_left' = spurious_left,
+    kills_left' = kills_left,
   }
 
-  action step = any { call, ret, quiet, done }
+  action step = any { call, ret, quiet, spurious, kill, done }
 
   // ---- Properties --------------------------------------------------------
 
@@ -432,7 +537,7 @@ module protocol {
   def runnable(h: int): bool = {
     val m = machines.get(h)
     val world: World = { machines: machines, queued: queued, senders: senders,
-                         woke: Set(), spawned: Set(), asked: Set(), closed: Set(), children: [] }
+                         woke: Set(), effects: [], closed: Set(), children: [] }
     match m.status {
       | NotStarted => true
       | Idle => ready(world, m.waiting)
@@ -447,7 +552,7 @@ module protocol {
     pending.contains(Resume(h))
       or wakes.contains(h)
       or in_flight.keys().contains(h)
-      or in_flight.keys().exists(x => in_flight.get(x).woke.contains(h) or in_flight.get(x).spawned.contains(h))
+      or in_flight.keys().exists(x => in_flight.get(x).woke.contains(h) or spawned_in(in_flight.get(x).effects).contains(h))
   ))
 
   // A stall is declared only when nothing could ever progress.
@@ -456,45 +561,50 @@ module protocol {
   // The end is declared only when every machine is done.
   val end_is_sound = verdict == "end" implies machines.keys().forall(h => machines.get(h).status == Gone)
 
+  // Between calls no machine is mid-run: each call ran its machine to a wait
+  // (`STEPS` is enough for every program), and a panic removed it.
+  val settled = machines.keys().forall(h => machines.get(h).status != Running and machines.get(h).status != Panicking)
+
   // The host never replies to a request it was told had closed.
   val no_stale_reply = stale == 0
 
   // The host never calls a pinned machine on another worker than its own.
   val no_wrong_thread = wrong_thread == 0
 
-  val safe = no_lost_wake and stall_is_sound and end_is_sound and no_stale_reply and no_wrong_thread
+  val safe = no_lost_wake and stall_is_sound and end_is_sound and no_stale_reply and no_wrong_thread and settled
 
-  // Liveness, as safety over the whole state graph — checkable exhaustively,
-  // and needing no fairness: until its verdict the host can always act; no
-  // run is longer than BOUND (a run that could go on forever would exceed
-  // it); and the verdict, when it comes, is the expected one. So every run
-  // reaches the expected verdict.
-  val never_stuck = verdict == "running" implies (
-    in_flight.keys() != Set()
-      or pending == Set()
-      or pending.exists(e => not(in_flight.keys().contains(target(e))))
-  )
+  // Liveness, as safety over the whole state graph, checkable exhaustively
+  // and needing no fairness: no run is longer than BOUND (a run that could
+  // go on forever would exceed it), and the verdict, when it comes, is the
+  // expected one. That the host can always act until its verdict follows from
+  // the actions' guards (nothing in flight leaves every worker free; nothing
+  // pending enables `quiet`; a call in flight enables `ret`), and TLC's own
+  // deadlock check, in the liveness run below, would catch a state where it
+  // cannot; `done` keeps the verdict's states enabled. So every run reaches
+  // the expected verdict.
   val terminates = steps <= BOUND
   val right_verdict = verdict == "running" or verdict == EXPECTED
 
-  val ends_right = never_stuck and terminates and right_verdict
+  val ends_right = terminates and right_verdict
 
   // The same, as a temporal property under weak fairness: the host always
   // reaches the verdict it should. `spec:check` runs it on TLC directly, not
   // through `quint verify`, where it never finishes: Apalache's folds, which
   // `run_to_wait` compiles to, are made strict first (see `strict-folds` in
   // nix/commands.nix).
-  temporal fair = weakFair(call, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps))
-    and weakFair(ret, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps))
-    and weakFair(quiet, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps))
+  temporal fair = weakFair(call, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps, spurious_left, kills_left))
+    and weakFair(ret, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps, spurious_left, kills_left))
+    and weakFair(quiet, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps, spurious_left, kills_left))
 
   temporal reaches_verdict = fair implies eventually(verdict == EXPECTED)
 }
 
 // ---- Instances --------------------------------------------------------------
 
-// Two rounds of ping-pong: each round's pong is a send no effect reports —
-// only a `woke` frame tells the host to resume the parent.
+// Two rounds of ping-pong: each round's pong is a send no effect reports;
+// only a `woke` frame tells the host to resume the parent. The host may
+// resume a machine twice for no reason, and free one before it finishes:
+// freeing either closes the other's channel, so the run still ends.
 module ping_pong {
   import types.*
   import protocol(
@@ -510,6 +620,10 @@ module ping_pong {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 2,
+    KILLS = 1,
   ).*
 }
 
@@ -528,6 +642,10 @@ module ping_pong_sequential {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 1,
+    KILLS = 1,
   ).*
 }
 
@@ -548,6 +666,10 @@ module deadline {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 1,
+    KILLS = 1,
   ).*
 }
 
@@ -568,6 +690,10 @@ module panic_wakes {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 1,
+    KILLS = 1,
   ).*
 }
 
@@ -588,6 +714,10 @@ module deadlock {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 1,
+    KILLS = 0,
   ).*
 }
 
@@ -610,6 +740,10 @@ module ring {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 1,
+    KILLS = 1,
   ).*
 }
 
@@ -634,6 +768,10 @@ module front_desk {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 1,
+    KILLS = 1,
   ).*
 }
 
@@ -655,6 +793,10 @@ module mistaken_ignores_woke {
     HEEDS_WOKE = false,
     DROPS_CLOSED = true,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 0,
+    KILLS = 0,
   ).*
 }
 
@@ -674,6 +816,10 @@ module mistaken_ignores_closed {
     HEEDS_WOKE = true,
     DROPS_CLOSED = false,
     ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 0,
+    KILLS = 0,
   ).*
 }
 
@@ -695,5 +841,58 @@ module mistaken_ignores_pinning {
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
     ROUTES_PINNED = false,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 0,
+    KILLS = 0,
+  ).*
+}
+
+// A host that calls it the end whenever it has nothing left to do mistakes a
+// deadlock for the end.
+module mistaken_ends_when_idle {
+  import types.*
+  import protocol(
+    PROGRAMS = Map(
+      "parent" -> [Spawn("other"), Recv("from_other")],
+      "other" -> [Recv("from_parent")],
+    ),
+    HOLDS = Map("parent" -> Set("from_parent"), "other" -> Set("from_other")),
+    CHANNELS = Set("from_parent", "from_other"),
+    ROOT = "parent",
+    WORKERS = 2,
+    EXPECTED = "stall",
+    HEEDS_WOKE = true,
+    DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = false,
+    WAITS_FOR_WOKE = true,
+    SPURIOUS = 0,
+    KILLS = 0,
+  ).*
+}
+
+// A host that resumes a machine whenever its call returns idle, rather than
+// waiting to be told it may progress, spins forever on a deadlock and never
+// reaches a verdict.
+module mistaken_polls_idle {
+  import types.*
+  import protocol(
+    PROGRAMS = Map(
+      "parent" -> [Spawn("other"), Recv("from_other")],
+      "other" -> [Recv("from_parent")],
+    ),
+    HOLDS = Map("parent" -> Set("from_parent"), "other" -> Set("from_other")),
+    CHANNELS = Set("from_parent", "from_other"),
+    ROOT = "parent",
+    WORKERS = 2,
+    EXPECTED = "stall",
+    HEEDS_WOKE = true,
+    DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
+    CHECKS_ALL_DONE = true,
+    WAITS_FOR_WOKE = false,
+    SPURIOUS = 0,
+    KILLS = 0,
   ).*
 }

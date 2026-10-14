@@ -1,7 +1,7 @@
 //! Randomness, supplied by the host.
 //!
 //! Random bytes are an ask like any other: a host answers with real entropy,
-//! or — for a test or a replay — with bytes it chooses, so a run can be
+//! or (for a test or a replay) with bytes it chooses, so a run can be
 //! repeated exactly.
 
 use crate::{

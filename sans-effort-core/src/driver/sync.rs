@@ -8,17 +8,17 @@
 //! With neither feature there is no lock to build, and the crate says so at
 //! compile time rather than failing on a missing type somewhere inside.
 //!
-//! Either way the lock is never contended — the host polls one driver at a
-//! time — and exists to give the outbox a `Sync` impl and a happens-before
+//! Either way the lock is never contended (the host polls one driver at a
+//! time) and exists to give the outbox a `Sync` impl and a happens-before
 //! edge between a `reply` on one thread and the next poll on another.
 //!
 //! The atomics, `Arc`, and `Wake` are `core`'s and `alloc`'s unless the
 //! `portable-atomic` feature is on, for targets without native CAS or 64-bit
-//! atomics — where `alloc::sync` does not exist at all.
+//! atomics, where `alloc::sync` does not exist at all.
 //!
 //! Under `--cfg sans_effort_loom` (`test:loom`) the lock and the waker's flag are loom's,
 //! so its models (`tests/loom.rs`) explore their interleavings. `Arc` stays
-//! `alloc`'s — `Waker::from` takes no other — and so does the driver-id
+//! `alloc`'s (`Waker::from` takes no other) and so does the driver-id
 //! counter, a `static` loom's atomics cannot be.
 
 #[cfg(all(

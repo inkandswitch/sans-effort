@@ -12,7 +12,7 @@ use core::{fmt, marker::PhantomData};
 ///
 /// A `ReplyHandle` names one outstanding call, not a mailbox: it is Erlang's
 /// `From = {Pid, Tag}`, not Akka's `replyTo: ActorRef`. The [`id`](Self::id)
-/// is what crosses a wire — per driver, from 1, so a replay can address
+/// is what crosses a wire: per driver, from 1, so a replay can address
 /// requests by it; the type keeps the answer honest on the Rust side; and the
 /// driver number says which mailbox minted it, so a handle given to the wrong
 /// driver is a caught mistake and not a delivery to whichever slot happens to
@@ -40,7 +40,7 @@ impl<T> ReplyHandle<T> {
     }
 
     /// Consume the handle: which driver minted it, and which request.
-    /// The same handle, typed as another form of its answer — its wire
+    /// The same handle, typed as another form of its answer: its wire
     /// kind, for the host layer's table.
     pub(crate) const fn retype<U>(self) -> ReplyHandle<U> {
         ReplyHandle::mint(self.driver, self.id)

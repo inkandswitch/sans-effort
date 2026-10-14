@@ -13,8 +13,8 @@
 //! know why you want another.
 //!
 //! The names, for readers who have them: traits-and-context is the
-//! _tagless-final_ style with the representation pinned to `impl Future` —
-//! the traits are the algebra, the routine a term abstract in its
+//! _tagless-final_ style with the representation pinned to `impl Future`.
+//! The traits are the algebra, the routine a term abstract in its
 //! interpreter, `TokioCtx` the evaluating interpreter, and `Ctx<E>` the
 //! reifying one that recovers the initial, tagged encoding. The closed-enum
 //! arrangement _is_ that initial encoding. They share one mechanism because

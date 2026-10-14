@@ -3,12 +3,12 @@
 //!
 //! A child runs as a machine of its own, beside its parent rather than
 //! inside it. Parent and child talk through whatever the parent hands the
-//! child when it spawns it — typically the ends of a channel. Channels are
+//! child when it spawns it: typically the ends of a channel. Channels are
 //! plain Rust; they are not an effect trait.
 //!
 //! Spawning is fire-and-forget: it records the child, unstarted, and returns.
 //! Whoever runs the parent decides when and where the child runs. The closure
-//! receives the child's context — `child_ctx` — because that context does not
+//! receives the child's context (`child_ctx`) because that context does not
 //! exist until the child's machine does.
 //!
 //! ```
@@ -48,7 +48,7 @@
 //! names its child context through one of them: `<C as Spawn>::Child`.
 //!
 //! [`spawn`](Spawn::spawn) starts a child that may move between threads
-//! after it starts — work-stealing under tokio — so its future must be
+//! after it starts (work-stealing under tokio), so its future must be
 //! `Send`. Every effect trait in this crate declares its futures `Send`, so a
 //! routine generic over its context proves that with `C::Child: Send + Sync`
 //! (`Sync` because a routine's methods borrow it across `.await`s):
@@ -169,7 +169,7 @@ where
 ///
 /// Each spawn effect carries the child itself, unstarted: a closure from the
 /// child's own outbox to its boxed future. The host's vocabulary decides what
-/// spawning means — typically registering the child as a machine of its own
+/// spawning means: typically registering the child as a machine of its own
 /// and telling the host its handle. None of it crosses an FFI boundary; only
 /// that handle does.
 #[derive(Debug)]
@@ -195,7 +195,7 @@ impl<E> Child<E> {
     }
 
     /// Build the child's future around `outbox`, the outbox of the machine
-    /// that will run it — `Driver::new_boxed(|outbox| child.start(outbox))`.
+    /// that will run it: `Driver::new_boxed(|outbox| child.start(outbox))`.
     #[must_use]
     pub fn start(self, outbox: Outbox<E>) -> BoxedRoutine {
         (self.make)(outbox)
@@ -223,7 +223,7 @@ impl<E> PinnedChild<E> {
     }
 
     /// Build the child's future around `outbox`, on the thread that will run
-    /// it — `Driver::local_boxed(|outbox| child.start(outbox))`.
+    /// it: `Driver::local_boxed(|outbox| child.start(outbox))`.
     #[must_use]
     pub fn start(self, outbox: Outbox<E>) -> LocalBoxedRoutine {
         (self.make)(outbox)

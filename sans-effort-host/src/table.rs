@@ -12,10 +12,10 @@
 //! [`Error::WrongThread`]: nothing changes, and the host routes the call where
 //! it belongs.
 //!
-//! A machine waiting on something inside the process — a channel another
-//! routine sends on — is `IDLE`. When whatever it waits on wakes it, the
+//! A machine waiting on something inside the process (a channel another
+//! routine sends on) is `IDLE`. When whatever it waits on wakes it, the
 //! table reports its handle as a [`FRAME_WOKE`] frame: at the end of the
-//! output of the call whose poll caused the wake — the sender's, typically —
+//! output of the call whose poll caused the wake (the sender's, typically)
 //! or, for a wake outside any call (a sender dropped by [`free`], a panic),
 //! in the output of [`wakes`]. The host resumes that machine when it chooses.
 //!
@@ -30,8 +30,8 @@
 //!
 //! A routine may call the table: spawning registers a child mid-poll, and a
 //! routine's destructors run with no lock of the table's held. The locks are
-//! taken in one order — a machine's own, then the table's, then the list of
-//! wakes — and a machine's own is only tried, never waited on (a collision is
+//! taken in one order (a machine's own, then the table's, then the list of
+//! wakes) and a machine's own is only tried, never waited on (a collision is
 //! [`Error::Busy`], even from the routine itself), so they cannot deadlock.
 //! `design/deadlocks.md` covers the rest: what a host catches, and what a
 //! routine must avoid.
@@ -149,8 +149,8 @@ struct Table {
     pinned: HashMap<u64, ThreadId>,
     next: u64,
 
-    /// Machines being recorded, each with its session and its number there.
-    recorded: HashMap<u64, Tap>,
+    /// Machines being recorded, each with a tap per session recording it.
+    recorded: HashMap<u64, Vec<Tap>>,
 
     /// Recording sessions, by number: the log each is building.
     sessions: HashMap<u32, Log>,
@@ -178,23 +178,32 @@ impl Table {
         }
     }
 
-    /// A fresh handle, never `0`, never reused — unless this thread is
-    /// replaying, when it is the next handle the recording issued, if that
-    /// is free again.
+    /// A fresh handle, never `0`, never one in use, and not reused unless
+    /// this thread is replaying: then it is the next handle the recording
+    /// issued, if that is not `0` and is free again.
     ///
-    /// `next` is above every handle ever issued: fresh ones come from it, and
-    /// a re-issued one moves it past itself — the recording may come from
-    /// another process, whose handles ran ahead of this one's.
+    /// `next` is above every handle issued: fresh ones come from it, and a
+    /// re-issued one moves it past itself, since the recording may come from
+    /// another process, whose handles ran ahead of this one's. Only a log
+    /// naming handles near `u64::MAX` can bring `next` to the end; it then
+    /// starts again from `1`, skipping handles in use.
     fn issue(&mut self) -> u64 {
         if let Some(handle) = REISSUE.with(|reissue| reissue.borrow_mut().pop_front())
+            && handle != 0
             && !self.in_use(handle)
         {
-            self.next = self.next.max(handle + 1);
+            if let Some(past) = handle.checked_add(1) {
+                self.next = self.next.max(past);
+            }
             return handle;
         }
-        let handle = self.next;
-        self.next += 1;
-        handle
+        loop {
+            let handle = self.next;
+            self.next = self.next.checked_add(1).unwrap_or(1);
+            if !self.in_use(handle) {
+                return handle;
+            }
+        }
     }
 
     fn in_use(&self, handle: u64) -> bool {
@@ -204,26 +213,33 @@ impl Table {
     }
 
     /// If the call this thread is making is on a recorded machine, record
-    /// `child` — just created by it — in the same session.
+    /// `child`, just created by it, in each of that machine's sessions.
     fn adopt(&mut self, child: u64) {
         let Some(parent) = CALL.with(|call| call.borrow().as_ref().map(|call| call.handle)) else {
             return;
         };
-        let Some(Tap { session, .. }) = self.recorded.get(&parent).copied() else {
+        let Some(taps) = self.recorded.get(&parent) else {
             return;
         };
-        if let Some(log) = self.sessions.get_mut(&session) {
-            let machine = log.adopt(child);
-            self.recorded.insert(child, Tap { session, machine });
-        }
+        let taps: Vec<Tap> = taps
+            .iter()
+            .filter_map(|tap| {
+                let log = self.sessions.get_mut(&tap.session)?;
+                Some(Tap {
+                    session: tap.session,
+                    machine: log.adopt(child),
+                })
+            })
+            .collect();
+        self.recorded.entry(child).or_default().extend(taps);
     }
 
-    /// Log `event` for `handle`, if it is being recorded.
-    fn note(&mut self, handle: u64, event: impl FnOnce(u32) -> Event) {
-        if let Some(Tap { session, machine }) = self.recorded.get(&handle).copied()
-            && let Some(log) = self.sessions.get_mut(&session)
-        {
-            log.push(event(machine));
+    /// Log `event` for `handle` in each session recording it.
+    fn note(&mut self, handle: u64, event: impl Fn(u32) -> Event) {
+        for tap in self.recorded.get(&handle).into_iter().flatten() {
+            if let Some(log) = self.sessions.get_mut(&tap.session) {
+                log.push(event(tap.machine));
+            }
         }
     }
 }
@@ -255,7 +271,7 @@ struct Call {
 static SESSIONS: AtomicUsize = AtomicUsize::new(0);
 
 /// Log `event` for `handle`, if any session is recording it.
-fn note(handle: u64, event: impl FnOnce(u32) -> Event) {
+fn note(handle: u64, event: impl Fn(u32) -> Event) {
     if SESSIONS.load(Ordering::Acquire) > 0 {
         table().note(handle, event);
     }
@@ -282,7 +298,7 @@ fn woke(handle: u64) {
 }
 
 /// Run one call, collecting the wakes its poll causes: appended to its output
-/// as [`FRAME_WOKE`] frames, or — if it fails, and so has no output — queued
+/// as [`FRAME_WOKE`] frames, or (if it fails, and so has no output) queued
 /// for [`wakes`].
 fn reporting_wakes(
     handle: u64,
@@ -323,8 +339,8 @@ fn woke_frames(handles: &[u64]) -> Vec<u8> {
     w.finish()
 }
 
-/// The machines woken outside any call since the last time — a receiver whose
-/// sender was dropped by [`free`], say — as [`FRAME_WOKE`] frames. Call it
+/// The machines woken outside any call since the last time (a receiver whose
+/// sender was dropped by [`free`], say) as [`FRAME_WOKE`] frames. Call it
 /// when there is nothing else to do; a host that finds no calls to make, no
 /// requests outstanding, and nothing here has reached the end, or a stall.
 #[must_use]
@@ -362,7 +378,7 @@ where
     insert(Box::new(Encoded::from_machine(Machine::new(make))))
 }
 
-/// As [`new`], for a routine already boxed — a spawned child, say — so it is
+/// As [`new`], for a routine already boxed (a spawned child, say), so it is
 /// not boxed twice.
 pub fn new_boxed<E: HostEffect + Send + 'static, M: FnOnce(Outbox<E>) -> BoxedRoutine>(
     make: M,
@@ -426,10 +442,10 @@ pub fn reply(handle: u64, record: &[u8]) -> Result<(Vec<u8>, Status), Error> {
 }
 
 /// Run the routine to its next wait without delivering anything: the effects
-/// it recorded, encoded, plus its status. The first call begins it — and, for
+/// it recorded, encoded, plus its status. The first call begins it, and, for
 /// a parked pinned routine, builds it on the calling thread, which then owns
-/// it. After that, for an [`Status::Idle`] routine — one a [`FRAME_WOKE`]
-/// frame named — once something it waits on may have changed; harmless when
+/// it. After that, for an [`Status::Idle`] routine (one a [`FRAME_WOKE`]
+/// frame named) once something it waits on may have changed; harmless when
 /// nothing has.
 ///
 /// # Errors
@@ -525,7 +541,11 @@ pub(crate) fn start_recording(root: u64) -> u32 {
     let mut log = Log::default();
     let machine = log.adopt(root);
     table.sessions.insert(session, log);
-    table.recorded.insert(root, Tap { session, machine });
+    table
+        .recorded
+        .entry(root)
+        .or_default()
+        .push(Tap { session, machine });
     SESSIONS.fetch_add(1, Ordering::AcqRel);
     session
 }
@@ -533,7 +553,10 @@ pub(crate) fn start_recording(root: u64) -> u32 {
 /// Stop recording a session: its log.
 pub(crate) fn finish_recording(session: u32) -> Log {
     let mut table = table();
-    table.recorded.retain(|_, tap| tap.session != session);
+    table.recorded.retain(|_, taps| {
+        taps.retain(|tap| tap.session != session);
+        !taps.is_empty()
+    });
     let log = table.sessions.remove(&session);
     if log.is_some() {
         SESSIONS.fetch_sub(1, Ordering::AcqRel);
@@ -978,8 +1001,8 @@ mod tests {
     }
 
     /// A machine that panics while holding a sender: the call reports
-    /// `PANICKED`, dropping its future drops the sender, and — the call having
-    /// no output to carry a `woke` frame — `wakes` names the receiver, which
+    /// `PANICKED`, dropping its future drops the sender, and (the call having
+    /// no output to carry a `woke` frame) `wakes` names the receiver, which
     /// sees the channel closed and completes. Migrating and pinned alike.
     #[test]
     fn a_machine_that_panics_holding_a_sender_wakes_the_receiver() -> TestResult {
@@ -1034,7 +1057,7 @@ mod tests {
 
     /// A routine that calls into the table for its own handle while it is
     /// being polled: the machine is taken, so `resume` and `reply` are `BUSY`
-    /// — no deadlock, no second borrow — and the outer call finishes
+    /// (no deadlock, no second borrow) and the outer call finishes
     /// normally. The handle reaches the routine through `own`, set once the
     /// table has issued it. Migrating (its lock is held) and pinned (its
     /// `RefCell` is borrowed) alike.
@@ -1073,7 +1096,7 @@ mod tests {
         Ok(())
     }
 
-    /// Re-issuing a handle from ahead — a log from another process — moves
+    /// Re-issuing a handle from ahead (a log from another process) moves
     /// the counter past it. On a table of its own, so no other test's
     /// handles can move the counter instead.
     #[test]
@@ -1088,8 +1111,27 @@ mod tests {
         });
     }
 
+    /// A log may name any handle. Re-issuing never yields `0` or a handle in
+    /// use, and at the end of the handle space the counter starts again
+    /// from `1`, skipping handles in use, rather than overflowing. On a
+    /// table of its own: the shared one's counter must not move.
+    #[test]
+    fn issuing_survives_the_ends_of_the_handle_space() {
+        let mut table = Table::new();
+        table.pinned.insert(1, thread::current().id());
+        table.next = u64::MAX;
+        assert_eq!(table.issue(), u64::MAX);
+        assert_eq!(table.issue(), 2, "past the end, and past 1, in use");
+
+        let reissuing = reissue(&[0, u64::MAX, 1]);
+        assert_eq!(table.issue(), 3, "never 0: a fresh handle instead");
+        assert_eq!(table.issue(), u64::MAX, "free again, so re-issued");
+        assert_eq!(table.issue(), 4, "1 is in use: a fresh handle instead");
+        drop(reissuing);
+    }
+
     /// Whatever is created and freed, in any order: no handle is `0`, and
-    /// none is issued twice — not even after its machine is freed. (Other
+    /// none is issued twice, not even after its machine is freed. (Other
     /// tests create machines meanwhile; that only skips handles.)
     #[test]
     fn handles_are_never_zero_and_never_reused() {

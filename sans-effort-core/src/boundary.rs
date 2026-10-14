@@ -16,7 +16,7 @@
 //! # Terms
 //!
 //! _The boundary_ is everything that exists because a host cannot hold a Rust
-//! value — this module, and the demo's `greeter_boundary` crate. A
+//! value: this module, and the demo's `greeter_boundary` crate. A
 //! [`HostEffect`](host_effect::HostEffect) is an effect type that can cross it.
 //! _The wire_ is the narrowest sense, the bytes themselves: the [`codec`], and
 //! `ABI.md`'s subject.

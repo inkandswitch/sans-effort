@@ -3,14 +3,14 @@
 //! In Rust you hand a routine to an executor and it polls. A Java or Python
 //! host cannot poll a Rust future, so a [`Driver`] turns a routine into a
 //! _steppable_ thing with sans-io's host API: [`resume`](Driver::resume)
-//! runs it to its next wait — the first call begins it — and each
+//! runs it to its next wait (the first call begins it) and each
 //! [`reply`](Driver::reply) delivers one answer and runs it to the next. Both
 //! return what it yielded, a [`Yield`]: the effects it recorded, and the ids
 //! of any requests it abandoned.
 //!
 //! An [`Outbox`] serves every wait the same way: return an
 //! [`Asking`](asking::Asking) holding the closure that builds the effect. Nothing has
-//! happened yet — like a Rust future, it is lazy. Awaiting it turns it into
+//! happened yet: like a Rust future, it is lazy. Awaiting it turns it into
 //! an [`Awaiting`](awaiting::Awaiting): that one consuming step mints a
 //! [`ReplyHandle`], builds the effect around it, records it, and opens a
 //! mailbox slot; the first poll returns `Pending`; the routine suspends; the
@@ -33,12 +33,12 @@
 //!   .await → Ready("bob")  ◀────── take mail[7]         ◀──resume──
 //! ```
 //!
-//! `Pending` from the routine means "a request is outstanding" — or, if none
+//! `Pending` from the routine means "a request is outstanding", or, if none
 //! is, [`Status::Idle`]: the routine is waiting on something inside the
 //! process, such as a channel another routine sends on. Each driver polls
 //! with a waker of its own; when whatever the routine waits on calls it, the
-//! driver calls the hook set by [`on_wake`](Driver::on_wake) — once per wait
-//! — and whoever set it polls again with [`resume`](Driver::resume). A host
+//! driver calls the hook set by [`on_wake`](Driver::on_wake) (once per wait)
+//! and whoever set it polls again with [`resume`](Driver::resume). A host
 //! layer turns that into "machine 9 can run"; with no hook, a wake is simply
 //! not reported, and resuming idle machines still works.
 //!
@@ -53,7 +53,7 @@
 //! poll on another. About 45 ns per step over an `Rc` design, and zero
 //! allocations.
 //!
-//! Effects are _pull-only_ — the host calls in, the routine never calls out —
+//! Effects are _pull-only_ (the host calls in, the routine never calls out),
 //! so no foreign value ever enters a routine, and nothing on this side is
 //! `!Send`. A `!Send` runtime keeps its foreign values in the shell it hands
 //! you anyway (a `#[wasm_bindgen]` struct, a `PyO3` class, a NIF resource) and
@@ -97,12 +97,12 @@ pub type LocalBoxedRoutine = Pin<Box<dyn Future<Output = ()>>>;
 /// The host API is sans-io's: [`resume`](Self::resume) to begin, then
 /// [`reply`](Self::reply) with each handle the effects hand back, and
 /// [`resume`](Self::resume) again when the routine is [`Idle`](Status::Idle)
-/// and may have something new — until [`is_finished`](Self::is_finished).
+/// and may have something new, until [`is_finished`](Self::is_finished).
 ///
 /// `F` is the routine's future, boxed and unsized. By default it is `Send`,
 /// so a `Driver` may be polled from any thread, one at a time. For a routine
-/// whose future is not `Send` — one holding an `Rc`, or a foreign value tied
-/// to its thread, across an `.await` — [`Driver::local`] builds a _local_
+/// whose future is not `Send` (one holding an `Rc`, or a foreign value tied
+/// to its thread, across an `.await`), [`Driver::local`] builds a _local_
 /// driver, `Driver<E, dyn Future<Output = ()>>`: the same type over a future
 /// that need not be `Send`, which the compiler keeps on the thread that built
 /// it.
@@ -113,7 +113,7 @@ pub struct Driver<E, F: ?Sized = dyn Future<Output = ()> + Send> {
 impl<E> Driver<E> {
     /// Build the routine around a fresh outbox. `make` receives the outbox
     /// the routine's context should write into and returns the routine's
-    /// future — typically `|outbox| Routine::new(Ctx::new(outbox)).run()`.
+    /// future: typically `|outbox| Routine::new(Ctx::new(outbox)).run()`.
     ///
     /// `Send` is checked here, once, on the concrete future: this is where a
     /// context holding an `Rc` across an `.await` is rejected. This is also
@@ -130,8 +130,8 @@ impl<E> Driver<E> {
         }
     }
 
-    /// As [`new`](Self::new), for a routine that is already boxed — a spawned
-    /// child, say — so it is not boxed twice.
+    /// As [`new`](Self::new), for a routine that is already boxed (a spawned
+    /// child, say), so it is not boxed twice.
     pub fn new_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
         let outbox = Outbox::new();
         let future = make(outbox.clone());
@@ -154,8 +154,8 @@ impl<E> Driver<E> {
         }
     }
 
-    /// As [`local`](Self::local), for a routine that is already boxed — a
-    /// pinned child, say.
+    /// As [`local`](Self::local), for a routine that is already boxed, such
+    /// as a pinned child.
     pub fn local_boxed<M: FnOnce(Outbox<E>) -> LocalBoxedRoutine>(
         make: M,
     ) -> Driver<E, dyn Future<Output = ()>> {
@@ -173,8 +173,8 @@ impl<E, F: Future<Output = ()> + ?Sized> Driver<E, F> {
     /// recorded before the next wait.
     ///
     /// The handle is proof that this driver minted a request for this
-    /// answer; if the routine has since dropped that request — the losing
-    /// arm of a [`select`](crate::select::select), say — the answer is
+    /// answer; if the routine has since dropped that request (the losing
+    /// arm of a [`select`](crate::select::select), say), the answer is
     /// discarded and the yield is empty, because the routine moved on without
     /// it.
     ///
@@ -212,8 +212,8 @@ impl<E, F: Future<Output = ()> + ?Sized> Driver<E, F> {
     /// Run the routine to its next wait without delivering anything: what it
     /// yielded. The first call begins it.
     ///
-    /// After that, for an [`Idle`](Status::Idle) routine — one waiting on
-    /// something in the process, such as a channel another routine sends on —
+    /// After that, for an [`Idle`](Status::Idle) routine (one waiting on
+    /// something in the process, such as a channel another routine sends on)
     /// once that may have changed. Harmless when nothing has: the routine finds
     /// nothing new, and the yield is empty; after completion it is always
     /// empty.
@@ -222,7 +222,7 @@ impl<E, F: Future<Output = ()> + ?Sized> Driver<E, F> {
     }
 
     /// Call `hook` when the routine, suspended with nothing outstanding for
-    /// the host, may be able to progress — something it waits on in the
+    /// the host, may be able to progress: something it waits on in the
     /// process has changed. Called at most once per poll, possibly from
     /// another thread, possibly during another machine's poll; it should only
     /// note the fact. Replaces any earlier hook.
@@ -268,8 +268,8 @@ impl<E, F: Future<Output = ()> + ?Sized> core::fmt::Debug for Driver<E, F> {
 /// assert_eq!(queue, ["WriteLine", "ReadLine"]);
 /// ```
 ///
-/// A host whose effects cost something to perform — a timer, a network
-/// request — reads [`closed`](Self::closed) and stops the work for those ids.
+/// A host whose effects cost something to perform (a timer, a network
+/// request) reads [`closed`](Self::closed) and stops the work for those ids.
 /// A closed id means the routine no longer needs the reply, not that the
 /// effect did not happen.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -660,7 +660,7 @@ mod tests {
     /// Requests kept alive past the call that built them, so none closes.
     type Kept = Arc<Mutex<Vec<awaiting::Awaiting<Effect, String>>>>;
 
-    /// A request's effect built by code that records more of its own — two
+    /// A request's effect built by code that records more of its own: two
     /// requests and a saying. Everything leaves in the order it was
     /// recorded, and the outer request was recorded first, when its id was
     /// minted.
@@ -688,8 +688,8 @@ mod tests {
         );
     }
 
-    /// A request whose effect cannot be built — its constructor panics, and
-    /// the routine catches it — leaves no hole that later effects wait
+    /// A request whose effect cannot be built (its constructor panics, and
+    /// the routine catches it) leaves no hole that later effects wait
     /// behind, whether it was the only one being built or another was
     /// waiting ahead of it. Its id is never seen.
     #[test]
@@ -734,7 +734,7 @@ mod tests {
     }
 
     /// A future that completes on its first poll, holding a [`Farewell`]
-    /// until it is dropped — as an `async move` block holds what it captured.
+    /// until it is dropped, as an `async move` block holds what it captured.
     struct Holding {
         _farewell: Farewell,
     }
@@ -793,7 +793,7 @@ mod tests {
     }
 
     /// Answers whose decoding can fail, one per wire kind, so that what a
-    /// mailbox checks — the value as delivered — is visible.
+    /// mailbox checks (the value as delivered) is visible.
     #[derive(Debug)]
     struct NonEmpty(String);
 
@@ -1226,7 +1226,7 @@ mod tests {
     }
 
     /// A queue that stores the waiter's waker when empty and calls it on the
-    /// next send — the part of a real channel that matters here.
+    /// next send: the part of a real channel that matters here.
     #[derive(Clone, Default)]
     struct Signal(Arc<Mutex<(VecDeque<String>, Option<Waker>)>>);
 
@@ -1385,7 +1385,7 @@ mod tests {
         Ok(())
     }
 
-    /// Wakes itself once and suspends — a yield — then finishes.
+    /// Wakes itself once and suspends (a yield), then finishes.
     struct Yielder(Outbox<Effect>);
 
     impl Step for Yielder {

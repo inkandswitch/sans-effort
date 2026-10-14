@@ -2,64 +2,73 @@
 
 The greeter (prompt, read, look up, pause, greet, count, repeat), written once against five effect traits, then run four ways that must agree byte for byte; and routines that spawn children and talk to them over plain channels (ping-pong, the front desk, a ring, two deadline races). Three of the greeter's traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`, as do the spawning routines' `Spawn` and `SpawnPinned`; two (`Count`, `Lookup`) are the demo's own. A journal routine uses the rest of the standard library (`Var`, `ReadFile`, `WriteFile`, `Now`, `Random`), and every host answers it from the same small world (one variable, files in memory, a clock that moves a second per reading, counting random bytes), so its transcripts agree too.
 
-```text
-  routines/        shared by both paths. The routines, one per module: greeter (the
-                   conversation), fanout (two waits at once), ticker (needs only Sleep
-                   + WriteLine), ping_pong (spawns a child and plays over two
-                   async-channels), front_desk (spawns a pinned clerk per name; each
-                   replies on a one-shot channel), ring (16 routines pass a counter
-                   4000 hops; the cost of a hop), journal (appends entries stamped
-                   with the time and a random id to a file the environment names),
-                   deadline (two workers, each raced against a sleep: the quick one
-                   wins, the slow one answers late). no_std.
-                   faults/: routines that misbehave on purpose, for testing hosts,
-                   not examples to follow: deadlock (two routines each waiting
-                   for the other). See Host Checks.
-                   effects/: the demo's own effect traits, one module each: count
-                   (Count, CountEffect) and lookup (Lookup, LookupEffect); each
-                   with its reifying Ctx impl beside it (the orphan rule puts it
-                   there). The routines themselves use only traits.
-                   Tests: a Recording mock + testing::run_now: no driver, one poll.
-
-  native/          the routine runs as an ordinary task on an executor. No Driver.
-    tokio/         DemoCtx wraps sans-effort-tokio's TokioCtx (Sleep, ReadLine,
-                   WriteLine, Spawn as tokio futures and tasks), adds Count and Lookup,
-                   and forwards the rest; tokio::spawn(Greeter::new(ctx).run()).
-                   Tests: paused clock and multithreaded runs, output captured.
-    wasm/          JsCtx implements the traits over a JS object the caller supplies:
-                   through a dispatcher task, so its futures are Send; the event loop
-                   is the executor. Classes Greeter, Fanout, PingPong, FrontDesk, Ring,
-                   Journal, Deadline, and faults::Deadlock.
-    js/            a Node host: five functions and one awaited promise. pkg/ is
-                   generated.
-
-  driven/          the routine runs behind a Driver; a foreign host replies by id.
-    boundary/      the host vocabularies. Full carries every effect the routines use
-                   (tags 1–5 and 8–12) and, with the default `table` feature, spawning (tags 6 and 7:
-                   split registers the child in sans-effort-host's table); Quiet only
-                   Sleep + WriteLine. View/HostEffect/Encode: the tag table.
-                   Tests: through a Driver, as data; Greeter under Quiet is a
-                   compile_fail; a deterministic Rust router runs ping-pong and front
-                   desk across machines.
-    cdylib/        the C-ABI binding over sans-effort-host: abi_version/new…/resume/
-                   reply/wakes/free/buf_free, plus record/record_finish (a binding
-                   export, not ABI); unsafe only at the pointers, no mechanism. The
-                   only crate allowing unsafe. Its replay binary replays a recorded
-                   run in Rust.
-    python/        a ctypes host that speaks ABI.md with a byte buffer and no library:
-                   perform each effect, then reply; resume spawned children and each
-                   machine a woke frame names; ask wakes() when nothing is queued.
-    java/          a Panama (java.lang.foreign) host: the same ABI, downcalls only, no
-                   JNI. Parallel: a pool of driver threads polls different machines at
-                   once (migrating machines move between them, pinned ones stay on the
-                   worker that first resumed them); asks run on virtual threads; woke
-                   frames schedule resumes; closed frames cancel. --trace logs which
-                   thread polled what.
-```
+## Layout
 
 Two native runtimes and two foreign hosts, on purpose. tokio and the JS event loop are executors: the routine is spawned on them and its context makes each wait a real future, with no driver. Python and Java cannot poll a Rust future, so there the routine runs behind a `Driver`, and the host replies by request id over the C ABI it decodes from `ABI.md`. The routine cannot tell which it is under.
 
 A JS host _could_ take the Python role (hold a `Machine` in a wasm-bindgen class and step it), and would want to for a deterministic scheduler or a replay harness; the exploration this library came from has one. For running a routine in a page, the native form is the idiomatic one.
+
+| Host   | Directories                        | Path   | Scheduled by                      |
+|--------|------------------------------------|--------|-----------------------------------|
+| tokio  | `native/tokio/`                    | native | tokio's runtime                   |
+| Node   | `native/wasm/`, `native/js/`       | native | the JS event loop                 |
+| Python | `driven/cdylib/`, `driven/python/` | driven | a Python loop, through a `Driver` |
+| Java   | `driven/cdylib/`, `driven/java/`   | driven | Java threads, through a `Driver`  |
+
+All four run the same routines, from `routines/`. Both driven hosts share `driven/boundary/`, the vocabulary they answer.
+
+### Routines
+
+`routines/` is shared by both paths and is `no_std`. One routine per module:
+
+| Module       | What it does                                                                           |
+|--------------|----------------------------------------------------------------------------------------|
+| `greeter`    | The conversation                                                                       |
+| `fanout`     | Two waits at once                                                                      |
+| `ticker`     | Needs only `Sleep` and `WriteLine`                                                     |
+| `ping_pong`  | Spawns a child and plays over two `async-channel`s                                     |
+| `front_desk` | Spawns a pinned clerk per name; each replies on a one-shot channel                     |
+| `ring`       | 16 routines pass a counter 4,000 hops, which measures the cost of a hop                |
+| `journal`    | Appends entries stamped with the time and a random id to a file the environment names  |
+| `deadline`   | Two workers, each raced against a sleep: the quick one wins, the slow one answers late |
+
+`faults/` holds routines that misbehave on purpose. They test hosts and are not examples to follow. Its one fault, `deadlock`, is two routines each waiting for the other (see [Host Checks](#host-checks)).
+
+`effects/` holds the demo's own effect traits, one module each: `count` (`Count`, `CountEffect`) and `lookup` (`Lookup`, `LookupEffect`). Each trait's reifying `Ctx` impl is beside it, because the orphan rule puts it there. The routines themselves name only traits.
+
+The tests run the routines against a `Recording` mock with `testing::run_now`: no driver, one poll. A `trybuild` test checks that a context whose futures are not `Send` cannot implement an effect trait.
+
+### Native Hosts
+
+In `native/`, the routine runs as an ordinary task on an executor, with no `Driver`.
+
+`tokio/` runs the routine with `tokio::spawn(Greeter::new(ctx).run())`. Its `DemoCtx` wraps `sans-effort-tokio`'s `TokioCtx` and forwards `Sleep`, `ReadLine`, `WriteLine`, `Spawn`, and `SpawnPinned` to it. It adds `Count` and `Lookup`, and answers the journal's effects from the same small world as the other hosts. Its tests use a paused clock and multithreaded runs, with output captured.
+
+`wasm/` is the routine compiled for wasm-bindgen. Its `JsCtx` implements the effect traits over a JS object the caller supplies, through a dispatcher task, so its futures are `Send`. The event loop is the executor. It exports the classes `Greeter`, `Fanout`, `PingPong`, `FrontDesk`, `Ring`, `Journal`, `Deadline`, and `faults::Deadlock`.
+
+`js/` is the Node host: a host object with one function per effect, and one awaited promise. Its `pkg/` is generated.
+
+### Driven Hosts
+
+In `driven/`, the routine runs behind a `Driver`, and a foreign host replies by request id.
+
+`boundary/` holds the host vocabularies:
+
+| Vocabulary | Carries                                                                                                           |
+|------------|-------------------------------------------------------------------------------------------------------------------|
+| `Full`     | Every effect the routines use (tags 1–5 and 8–12), and, with the default `table` feature, spawning (tags 6 and 7) |
+| `Quiet`    | Only `Sleep` and `WriteLine`                                                                                      |
+| `View`     | What a host sees of either; with `HostEffect` and `Encode`, the tag table                                         |
+
+When `Full` splits a spawn, it registers the child in `sans-effort-host`'s table. The crate's tests drive the greeter through a `Driver`, as data, and through a `Machine` with raw reply bytes. They run every multi-machine routine under `testing::drive_with`'s schedules, and replay recorded runs. A `compile_fail` doctest checks that `Greeter` cannot run under `Quiet`.
+
+`cdylib/` is the C-ABI binding over `sans-effort-host`. It exports `abi_version`, a `new…` constructor per routine, `resume`, `reply`, `wakes`, `free`, and `buf_free`, each prefixed `greeter_`. It also exports `record` and `record_finish`, which are the binding's own, not ABI. It uses `unsafe` only at the pointers and holds no mechanism; it is the only crate that allows `unsafe`. Its `replay` binary replays a recorded run in Rust.
+
+`python/` is a `ctypes` host that speaks `ABI.md` with a byte buffer and no library. It performs each effect, then replies. It resumes spawned children and each machine a woke frame names, and asks `wakes()` when nothing is queued.
+
+`java/` is a Panama (`java.lang.foreign`) host: the same ABI, downcalls only, no JNI. It is parallel: a pool of driver threads polls different machines at once. Migrating machines move between the threads; pinned ones stay on the worker that first resumed them. Asks run on virtual threads, woke frames schedule resumes, and closed frames cancel. `--trace` logs which thread polled what.
+
+## Running It
 
 ```sh
 printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio               # native: tokio

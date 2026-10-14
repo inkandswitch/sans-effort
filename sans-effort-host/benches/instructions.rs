@@ -7,8 +7,8 @@
 //! Each workload runs at two sizes; the difference between them is the cost
 //! of the extra round trips, with setup and teardown subtracted. The hard
 //! limits on heap blocks encode today's counts, so an allocation added to a
-//! call fails the run. A round trip takes 2 blocks — the reply record this
-//! host builds and the call's output bytes — and 4 when it is recorded (the
+//! call fails the run. A round trip takes 2 blocks (the reply record this
+//! host builds and the call's output bytes) and 4 when it is recorded (the
 //! log keeps its own copy of each record and outcome).
 //!
 //! ```sh
@@ -50,10 +50,11 @@ fn round_trips(asks: u64) -> u64 {
     black_box(through_table::drive(through_table::asker(black_box(asks))))
 }
 
-// The same, recorded: every call is logged, with its outcome.
+// The same, recorded: every call is logged, with its outcome. A session
+// also takes one block for the root's taps.
 #[library_benchmark]
-#[bench::one(args = (1), config = at_most(20))]
-#[bench::hundred(args = (100), config = at_most(421))]
+#[bench::one(args = (1), config = at_most(21))]
+#[bench::hundred(args = (100), config = at_most(422))]
 fn recorded(asks: u64) -> usize {
     let handle = through_table::asker(black_box(asks));
     let recorder = record(handle);

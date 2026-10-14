@@ -63,7 +63,7 @@ use core::{
 /// Poll `future` once with a no-op waker and return its output.
 ///
 /// This is not an executor. It is for futures that are ready on the first
-/// poll — a routine against a mock whose every method returns immediately —
+/// poll (a routine against a mock whose every method returns immediately)
 /// and it says so loudly when that assumption fails.
 ///
 /// # Panics
@@ -142,8 +142,8 @@ pub async fn poll_once<F: IntoFuture<IntoFuture: Unpin>>(future: F) -> F::IntoFu
 /// progress. [`drive_with`] under [`Fifo`].
 ///
 /// The handler sees each effect with an [`Answers`] for the machine that
-/// recorded it: reply to an ask — now, or after a delay on the run's virtual
-/// clock — begin a spawned child, or, for a tell, nothing. Replies and a
+/// recorded it: reply to an ask (now, or after a delay on the run's virtual
+/// clock) begin a spawned child, or, for a tell, nothing. Replies and a
 /// child's first resume are queued, not run at once, so the schedule decides
 /// when they happen.
 ///
@@ -192,8 +192,8 @@ pub fn drive<E: 'static, H: FnMut(E, &mut Answers<'_, E>)>(
 }
 
 /// As [`drive`], with `schedule` choosing, at every step, which ready action
-/// runs next — an effect for the handler, a queued reply, a child's first
-/// resume, a woken machine's resume — whether to resume some machine
+/// runs next (an effect for the handler, a queued reply, a child's first
+/// resume, a woken machine's resume) whether to resume some machine
 /// spuriously first, and whether to kill one. A routine whose output depends
 /// on the schedule, or that a spurious resume breaks, fails under one.
 ///
@@ -202,8 +202,8 @@ pub fn drive<E: 'static, H: FnMut(E, &mut Answers<'_, E>)>(
 /// replies are delivered, when machines resume, and how machines interleave.
 ///
 /// _Time is virtual._ A reply sent with [`Answers::reply_after`] waits on a
-/// timer, and timers fire — in the order they fall due, the clock jumping to
-/// each — only when nothing else is ready, as on tokio's paused clock. Work
+/// timer, and timers fire (in the order they fall due, the clock jumping to
+/// each) only when nothing else is ready, as on tokio's paused clock. Work
 /// that can happen now always happens before a timer, under every schedule.
 ///
 /// _A killed machine_ is dropped, as a host's `free` or a panic would drop
@@ -424,7 +424,7 @@ impl<E> World<E> {
         machine.status() != Status::Complete
     }
 
-    /// Fire the timer that falls due first — the earliest set, among equals —
+    /// Fire the timer that falls due first (the earliest set, among equals)
     /// moving the clock to its due time and queueing its reply. Whether there
     /// was one.
     fn fire_next_timer(&mut self) -> bool {
@@ -611,8 +611,8 @@ mod tests {
             }
         }
 
-        /// Answers each ask with its request id — at once, or after
-        /// `ask_delay` — and each sleep after its length; begins each child.
+        /// Answers each ask with its request id (at once, or after
+        /// `ask_delay`) and each sleep after its length; begins each child.
         /// What is said, with the clock when it was said, and how the run
         /// ended.
         fn run<S: Schedule>(
@@ -725,8 +725,8 @@ mod tests {
         }
 
         /// An answer ready now beats any timer; a slow one beats the timeout
-        /// if it is due first, or at the same time — set first, it fires
-        /// first — and loses after. The same under every schedule.
+        /// if it is due first, or at the same time (set first, it fires
+        /// first) and loses after. The same under every schedule.
         #[test]
         fn ready_work_beats_a_timer_and_a_slow_answer_races_it_in_due_order() {
             bolero::check!()
@@ -954,7 +954,7 @@ mod tests {
         }
 
         /// The root completes; its child waits on a channel it holds the
-        /// sender of, forever — and is named.
+        /// sender of, forever, and is named.
         #[test]
         fn a_stalled_child_is_named() -> TestResult {
             let root = Driver::new(|outbox: Outbox<Effect>| async move {

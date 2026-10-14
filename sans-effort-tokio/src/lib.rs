@@ -5,7 +5,7 @@
 //! A routine takes one context, which must provide every effect trait it
 //! names. An application with effect traits of its own wraps a `TokioCtx` in
 //! a type of its own, implements its traits there, and forwards the stdlib
-//! ones — one line each:
+//! ones, one line each:
 //!
 //! ```
 //! use core::{future::Future, time::Duration};

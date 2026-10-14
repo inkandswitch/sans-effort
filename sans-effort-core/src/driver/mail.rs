@@ -9,7 +9,7 @@
 //! hands it back to be woken, so a combinator that polls only what was woken
 //! (`FuturesUnordered`, `join_all`) sees the reply.
 //!
-//! Values are stored as [`Value`] — the closed menu — not type-erased. The
+//! Values are stored as [`Value`] (the closed menu), not type-erased. The
 //! slot records no kind: only a [`ReplyHandle<T>`] minted for it can deliver,
 //! and that handle's `T` is the proof. The kind check a foreign host needs
 //! lives in the host layer, where an untyped id arrives.
@@ -124,8 +124,8 @@ impl Mail {
         value
     }
 
-    /// Where request `id`'s open slot is. The newest first — almost always
-    /// the one asked about — then a binary search.
+    /// Where request `id`'s open slot is. The newest first (almost always
+    /// the one asked about), then a binary search.
     fn position(&self, id: u64) -> Option<usize> {
         let newest = self.slots.len().checked_sub(1)?;
         if self.slots.get(newest).is_some_and(|slot| slot.id == id) {
@@ -182,8 +182,8 @@ impl Mail {
 
     /// The routine dropped a polled request. Its slot goes; if no reply had
     /// arrived, its id is reported in the next step's
-    /// [`closed`](super::Yield::closed). A request whose reply arrived —
-    /// collected or not — was answered, not abandoned: the host has no work
+    /// [`closed`](super::Yield::closed). A request whose reply arrived
+    /// (collected or not) was answered, not abandoned: the host has no work
     /// left to stop, so it is not reported.
     pub(super) fn close(&mut self, id: u64) {
         if let Some(at) = self.position(id)

@@ -1,6 +1,6 @@
 //! The effects of one yield, kept inline when there are few.
 //!
-//! Almost every yield carries one or two effects — an ask; a line written and
+//! Almost every yield carries one or two effects: an ask; a line written and
 //! then a read. A `Vec` for them would cost an allocation on every resume and
 //! reply. A [`Batch`] holds up to two in place and spills to a `Vec` beyond
 //! that. The outbox records into one and the driver hands it over whole, so

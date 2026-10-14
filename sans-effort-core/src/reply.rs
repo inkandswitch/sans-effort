@@ -1,7 +1,7 @@
 //! Replies: what a routine's wait resolves to, and the handle that answers it.
 //!
-//! On the wire a reply is one of four things — bytes, a string, a `u64`, or
-//! nothing ([`value::Value`]) — and [`Reply`] is the sealed trait for those
+//! On the wire a reply is one of four things (bytes, a string, a `u64`, or
+//! nothing ([`value::Value`])) and [`Reply`] is the sealed trait for those
 //! four. The menu is small on purpose: it is what every foreign host can
 //! carry across an ABI, and the mailbox stores replies as `Value`, not
 //! `Box<dyn Any>`, so there is no downcast and no `'static` bound on request
@@ -29,7 +29,7 @@ use crate::boundary::{
 use alloc::{string::String, vec::Vec};
 
 /// A reply's form on the wire. Sealed: the impls below are the menu, and
-/// nothing outside this crate can add to it — which is what lets a driver
+/// nothing outside this crate can add to it, which is what lets a driver
 /// treat a kind mismatch as unreachable rather than as an error.
 ///
 /// Each kind is also an [`Answer`] that crosses as itself.
@@ -37,7 +37,7 @@ pub trait Reply: private::Sealed + Answer<Wire = Self> + Clone {
     /// Wrap for the mailbox.
     fn into_value(self) -> Value;
 
-    /// `None` if the value is of another kind — which a
+    /// `None` if the value is of another kind, which a
     /// [`ReplyHandle`] minted for a slot of this kind makes unreachable
     /// through the public API.
     fn from_value(value: Value) -> Option<Self>;
@@ -61,7 +61,7 @@ pub trait Reply: private::Sealed + Answer<Wire = Self> + Clone {
 ///
 /// The wire kinds answer as themselves. `Result<T, E>` and `Option<T>` cross
 /// as bytes in this crate's [codec](crate::boundary::codec), so a fallible
-/// request can say what it returns — `Result<String, ReadLineError>` — and a
+/// request can say what it returns (`Result<String, ReadLineError>`) and a
 /// host that replies in Rust is checked against exactly that. Any other type
 /// implements this trait to say how it crosses.
 ///
@@ -323,7 +323,7 @@ mod tests {
     use super::*;
 
     /// A wire value comes back as itself from its own kind, and as nothing
-    /// from any other — borrowed or taken.
+    /// from any other: borrowed or taken.
     #[test]
     fn menu_round_trips_through_value() {
         bolero::check!()

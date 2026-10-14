@@ -6,14 +6,14 @@
 //! same session. Each [`resume`](crate::table::resume),
 //! [`reply`](crate::table::reply), and [`free`](crate::table::free) on a
 //! session machine is logged in call order, with what went in and what came
-//! out. Machines outside the session — another test's, say — never appear.
+//! out. Machines outside the session (another test's, say) never appear.
 //!
 //! A routine is deterministic given its inputs, and request ids are minted
 //! deterministically, so the calls alone are enough to run it again:
 //! [`replay`] builds the root anew, makes the same calls in the same order,
 //! and compares every outcome with the recorded one. The table issues the
-//! recorded handles again while it replays, so outputs that name machines —
-//! `woke` frames, a vocabulary's spawn effects — compare byte for byte.
+//! recorded handles again while it replays, so outputs that name machines
+//! (`woke` frames, a vocabulary's spawn effects) compare byte for byte.
 //!
 //! ```text
 //!   record(root) ──▶ host drives root and its children ──▶ finish() → Log
@@ -23,7 +23,7 @@
 //!
 //! Replay is sequential. A run from a host that makes one call at a time
 //! replays exactly. A run from a parallel host, whose calls on machines that
-//! talk to each other overlapped in time, may not — and then replay reports
+//! talk to each other overlapped in time, may not, and then replay reports
 //! a [`Divergence`] rather than passing quietly. Wakes outside any call
 //! ([`wakes`](crate::table::wakes)) are not recorded: they change no machine.
 
@@ -33,12 +33,14 @@ use crate::{
     table,
 };
 use alloc::vec::Vec;
+use core::fmt;
 use sans_effort_core::boundary::codec::{Decode, DecodeError, Encode, Reader, Writer};
 use sans_effort_core::driver::status::Status;
 
 /// Begin recording `root` and every machine it creates. Call it before the
 /// root's first `resume`, and [`finish`](Recorder::finish) it to get the
-/// log.
+/// log. A machine may be recorded more than once: each recording gets every
+/// call made while it is open.
 #[must_use]
 pub fn record(root: u64) -> Recorder {
     Recorder {
@@ -49,8 +51,8 @@ pub fn record(root: u64) -> Recorder {
 /// Make the calls `log` recorded again, against a root `root` builds, and
 /// check each outcome against the recorded one.
 ///
-/// `root` must build the same routine the recording's root was — the same
-/// constructor a binding exports, say. The recorded machines must have been
+/// `root` must build the same routine the recording's root was, such as the
+/// same constructor a binding exports. The recorded machines must have been
 /// freed (a finished run frees them), so their handles can be issued again.
 /// Every machine the replay creates is freed before it returns.
 ///
@@ -288,8 +290,8 @@ impl Decode for Event {
     }
 }
 
-/// What a call returned: its code — a status (`>= 0`) or an error (`< 0`),
-/// as `ABI.md` numbers them — and the effect frames it wrote.
+/// What a call returned: its code, as `ABI.md` numbers them (a status if
+/// `>= 0`, an error if `< 0`), and the effect frames it wrote.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Outcome {
     /// The status or error code.
@@ -317,8 +319,9 @@ impl Decode for Outcome {
 /// Where a replay stopped agreeing with its recording.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Divergence {
-    /// A call's outcome differed.
-    #[error("call {at}: recorded {expected:?}, replayed {actual:?}")]
+    /// A call's outcome differed. Its message gives each side's code and
+    /// length, and the offset of the first byte that differs.
+    #[error("call {at}: {}", Mismatch(.expected, .actual))]
     Outcome {
         /// Which call, counting from 0.
         at: usize,
@@ -336,6 +339,34 @@ pub enum Divergence {
         /// The machine's number in the session.
         machine: u32,
     },
+}
+
+/// How two outcomes differ, in a sentence.
+struct Mismatch<'a>(&'a Outcome, &'a Outcome);
+
+impl fmt::Display for Mismatch<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Mismatch(expected, actual) = self;
+        write!(
+            f,
+            "recorded code {} and {} bytes, replayed code {} and {} bytes",
+            expected.code,
+            expected.bytes.len(),
+            actual.code,
+            actual.bytes.len()
+        )?;
+        let common = expected
+            .bytes
+            .iter()
+            .zip(&actual.bytes)
+            .take_while(|(e, a)| e == a)
+            .count();
+        if expected.bytes == actual.bytes {
+            Ok(())
+        } else {
+            write!(f, "; the bytes first differ at offset {common}")
+        }
+    }
 }
 
 /// A call's result, as a recording keeps it.
@@ -484,7 +515,7 @@ mod tests {
             unreachable!("the root and its child: {:?}", log.handles());
         };
         // The child was created during a recorded call, so it is in the
-        // session too — though the recorder has finished, its calls are not.
+        // session too, though the recorder has finished, its calls are not.
         let child = *child;
         table::resume(child)?;
         table::free(child)?;
@@ -492,7 +523,7 @@ mod tests {
     }
 
     /// A child joins its parent's session, its calls are logged as its
-    /// own machine's, and replay issues the recorded handles again — the
+    /// own machine's, and replay issues the recorded handles again: the
     /// parent's output names the child, so only the same handle replays it.
     #[test]
     fn a_spawning_run_replays_with_the_same_handles() -> TestResult {
@@ -572,8 +603,8 @@ mod tests {
         Ok(())
     }
 
-    /// A recorded handle whose machine still lives — migrating, parked, or
-    /// pinned and started — is not issued again; replay gets a fresh one.
+    /// A recorded handle whose machine still lives (migrating, parked, or
+    /// pinned and started) is not issued again; replay gets a fresh one.
     #[test]
     fn a_recorded_handle_still_in_use_is_not_issued_again() -> TestResult {
         let pinned = || {
@@ -603,6 +634,62 @@ mod tests {
         assert_eq!(table::recorded_handle(session, 0), None);
         table::free(root)?;
         Ok(())
+    }
+
+    /// Two recordings of one machine are two taps: each sees every call,
+    /// including those on the children the machine creates, and finishing
+    /// one leaves the other recording.
+    #[test]
+    fn a_machine_recorded_twice_is_in_both_logs() -> TestResult {
+        let root = spawner();
+        let first = record(root);
+        let second = record(root);
+        table::resume(root)?;
+        let child = recorder_child(&first)?;
+        assert_eq!(recorder_child(&second)?, child);
+        table::resume(child)?;
+        let first = first.finish();
+        table::reply(child, &str_reply(1, "hi"))?;
+        table::free(child)?;
+        table::free(root)?;
+        let second = second.finish();
+
+        assert_eq!(first.handles(), [root, child]);
+        assert_eq!(first.events().len(), 2, "the two resumes");
+        assert_eq!(second.handles(), [root, child]);
+        assert_eq!(second.events().len(), 5, "and then the reply and frees");
+        assert_eq!(second.events().get(..2), Some(first.events()));
+        replay(&second, spawner)?;
+        Ok(())
+    }
+
+    /// A divergence in a call's frames says where they first differ, so
+    /// whoever reads it need not compare two byte arrays by eye.
+    #[test]
+    fn a_divergence_names_the_first_differing_byte() {
+        let outcome = |code, bytes: &[u8]| Outcome {
+            code,
+            bytes: bytes.to_vec(),
+        };
+        let at = |expected, actual| Divergence::Outcome {
+            at: 3,
+            expected,
+            actual,
+        };
+        assert_eq!(
+            at(outcome(0, &[1, 2, 3, 4]), outcome(0, &[1, 2, 9, 4])).to_string(),
+            "call 3: recorded code 0 and 4 bytes, replayed code 0 and 4 bytes; \
+             the bytes first differ at offset 2"
+        );
+        assert_eq!(
+            at(outcome(0, &[1, 2]), outcome(0, &[1, 2, 3])).to_string(),
+            "call 3: recorded code 0 and 2 bytes, replayed code 0 and 3 bytes; \
+             the bytes first differ at offset 2"
+        );
+        assert_eq!(
+            at(outcome(0, &[]), outcome(-4, &[])).to_string(),
+            "call 3: recorded code 0 and 0 bytes, replayed code -4 and 0 bytes"
+        );
     }
 
     #[test]

@@ -42,7 +42,7 @@ pub struct Outbox<E> {
 }
 
 /// Effects leave in the order they were recorded, and a request is recorded
-/// when its id is minted — before its effect is built, which runs the
+/// when its id is minted: before its effect is built, which runs the
 /// caller's code with no lock held. So minting reserves the request's place;
 /// anything recorded meanwhile, by that code or another thread, waits behind
 /// it in `held`; and once the effect is built, the ready front of `held`
@@ -57,8 +57,8 @@ struct Inner<E> {
     building: Option<u64>,
     held: Vec<Held<E>>,
     mail: Mail,
-    /// The driver's own waker. A request polled with it — awaited directly,
-    /// or through `join` or `select` — needs no waker kept: the driver polls
+    /// The driver's own waker. A request polled with it (awaited directly,
+    /// or through `join` or `select`) needs no waker kept: the driver polls
     /// the routine after every reply anyway.
     driver_waker: Option<Waker>,
 }
@@ -122,7 +122,7 @@ impl<E> Outbox<E> {
 
     /// Asking for a `T`: an [`Asking`] that, when awaited, mints a
     /// [`ReplyHandle`], builds the effect around it with `make`, records it,
-    /// and then yields the reply. Nothing happens until it is awaited — not
+    /// and then yields the reply. Nothing happens until it is awaited, not
     /// even numbering.
     pub fn ask<A: Answer, F: FnOnce(ReplyHandle<A>) -> E>(&self, make: F) -> Asking<E, A, F> {
         Asking::new(make, self.clone())
@@ -178,7 +178,7 @@ impl<E> Outbox<E> {
     }
 
     /// A later poll of a request: its reply, if the host has delivered one;
-    /// otherwise `waker` is kept, to be woken when it does — unless it is the
+    /// otherwise `waker` is kept, to be woken when it does, unless it is the
     /// driver's own.
     pub(super) fn collect(&self, id: u64, waker: &Waker) -> Option<Value> {
         let mut inner = self.inner.lock();
@@ -199,8 +199,8 @@ impl<E> Outbox<E> {
         self.inner.lock().mail.deliver(reply, value)
     }
 
-    /// Everything since the last poll — the effects recorded and the ids
-    /// closed — and how many requests are still open, read under one lock so
+    /// Everything since the last poll (the effects recorded and the ids
+    /// closed) and how many requests are still open, read under one lock so
     /// the three agree.
     pub(super) fn drain(&self) -> (Yield<E>, usize) {
         let mut inner = self.inner.lock();

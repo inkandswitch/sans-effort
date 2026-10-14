@@ -1,5 +1,5 @@
 //! A newtype over `Ctx` gets every stdlib effect trait from `AsCtx`, and can
-//! reify an effect trait its own crate adds — here, one the stdlib knows
+//! reify an effect trait its own crate adds: here, one the stdlib knows
 //! nothing about.
 
 use core::{future::Future, ops::ControlFlow, time::Duration};

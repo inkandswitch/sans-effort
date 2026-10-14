@@ -12,12 +12,12 @@ use core::{
 /// A request that has been recorded: the future an [`Asking`](super::asking::Asking)
 /// becomes. It resolves once the host has replied.
 ///
-/// It always has an id — there is no way to build one without — so an id,
+/// It always has an id (there is no way to build one without), so an id,
 /// once minted, cannot be lost. Dropping it before the reply arrives closes
 /// its mailbox slot: a late reply is discarded, and the id is reported in
 /// the next step's [`closed`](super::Yield::closed). Once a reply has
-/// arrived — collected or not, as when a `select` takes the other branch on
-/// the same poll — the request was answered, and dropping it reports
+/// arrived (collected or not, as when a `select` takes the other branch on
+/// the same poll) the request was answered, and dropping it reports
 /// nothing.
 ///
 /// `Unpin`, structurally: it holds an id and an outbox handle and borrows

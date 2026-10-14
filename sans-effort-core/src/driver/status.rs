@@ -10,7 +10,7 @@ pub enum Status {
     /// The routine returned. Further replies return nothing.
     Complete,
     /// Pending with no request outstanding: waiting on something inside the
-    /// process — a channel, a lock — that another routine may complete.
+    /// process (a channel, a lock) that another routine may complete.
     /// Nothing wakes it; [`resume`](super::Driver::resume) polls it again.
     Idle,
 }

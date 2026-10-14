@@ -1,7 +1,7 @@
 [package]
 name = "sans-effort-core"
 version = "0.1.0"
-description = "The mechanism under sans-effort: the routine trait, the driver, and the boundary — small and slow to change, for runtime and binding authors"
+description = "The mechanism under sans-effort: the routine trait, the driver, and the boundary; small and slow to change, for runtime and binding authors"
 readme = "README.md"
 autobenches = false
 

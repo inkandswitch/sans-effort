@@ -37,7 +37,7 @@ mod tests {
     use super::*;
     use testresult::TestResult;
 
-    /// A sleep starts when it is awaited, as a reifying context's would — not
+    /// A sleep starts when it is awaited, as a reifying context's would, not
     /// when `sleep` is called.
     #[tokio::test(start_paused = true)]
     async fn a_sleep_starts_when_awaited() {

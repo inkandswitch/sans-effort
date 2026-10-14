@@ -3,8 +3,8 @@
 //! The host-protocol spec proves that a host which follows `woke` frames never
 //! loses a machine; it takes for granted that the driver reports every wake.
 //! That is these models' subject: a waker called from another thread while
-//! the driver is polling, or between polls, must reach the hook — once per
-//! wait, never zero times — and an effect told from another thread must come
+//! the driver is polling, or between polls, must reach the hook (once per
+//! wait, never zero times) and an effect told from another thread must come
 //! out in exactly one batch. Run with `--cfg sans_effort_loom` (`test:loom`), which swaps
 //! the driver's lock and wake flag for loom's.
 
@@ -29,7 +29,7 @@ use std::{
 use testresult::TestResult;
 
 /// A message that may arrive from another thread, waking whoever waits.
-/// Registers the waker, then looks again — as real channels do — so a send
+/// Registers the waker, then looks again (as real channels do), so a send
 /// between the first look and the registration is not missed.
 #[derive(Default)]
 struct Signal {
@@ -73,7 +73,7 @@ impl Signal {
 struct Waiting {
     driver: Driver<()>,
     received: Arc<AtomicUsize>,
-    /// How often the hook — the host's "this machine woke" — was called.
+    /// How often the hook (the host's "this machine woke") was called.
     told: Arc<AtomicUsize>,
 }
 
@@ -122,7 +122,7 @@ fn joined(thread: thread::JoinHandle<()>) -> TestResult {
 }
 
 /// A message sent while the driver polls: either the poll sees it, or the
-/// hook is told — and a resume then receives it. Then the same for a second
+/// hook is told, and a resume then receives it. Then the same for a second
 /// wait, which only a flag cleared at the start of each poll can announce: a
 /// stale flag from the first wake would swallow the second.
 #[test]

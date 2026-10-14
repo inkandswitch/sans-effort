@@ -2,7 +2,7 @@
 //! function: the routine, its driver, and the smallest host loop that runs
 //! it to completion.
 //!
-//! - [`asks`]: `n` asks, each answered at once — one request's round trip
+//! - [`asks`]: `n` asks, each answered at once: one request's round trip
 //!   through a driver, `n` times.
 //! - [`fanout`]: `n` rounds of two asks in flight at once, answered in turn.
 //! - [`wide`] and [`wide_in_order`]: `n` asks in flight at once through
