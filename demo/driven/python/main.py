@@ -1,0 +1,469 @@
+"""The greeter driven from Python over the C ABI, with ctypes and no library.
+
+Everything a foreign host needs to know is in ABI.md at the repository root;
+this file is that document as ~100 lines of Python. The greeter's own tag
+table (which byte means which effect) is the one thing that is the program's
+rather than the ABI's, and it is `TAGS` below.
+
+    cargo build -p greeter_cdylib
+    python3 demo/driven/python/main.py            # alice, bob, then end of input
+    python3 demo/driven/python/main.py --fanout   # two waits per batch
+    python3 demo/driven/python/main.py --ticker   # a Quiet machine: only tags 4 and 5, ever
+    python3 demo/driven/python/main.py --ping-pong    # a parent and the child it spawns (tag 6)
+    python3 demo/driven/python/main.py --front-desk   # a clerk spawned per name, pinned (tag 7)
+    python3 demo/driven/python/main.py --ring         # 16 machines passing a counter: woke frames only
+    python3 demo/driven/python/main.py --journal      # env, files, clock, randomness (tags 8–12)
+    python3 demo/driven/python/main.py --deadline     # receives raced against sleeps: closed frames
+    python3 demo/driven/python/main.py --deadlock     # host check: two machines waiting on each other, a stall reported
+    python3 demo/driven/python/main.py --ring --seed 7    # host check: a seeded, adversarial schedule
+    python3 demo/driven/python/main.py --ring --seed 7 --record /tmp/ring.log   # …saved, to replay in Rust:
+    cargo run -p greeter_cdylib --bin replay -- /tmp/ring.log ring
+
+With spawning, the loop is a small scheduler: it keeps every machine by
+handle, resumes each child it is told about to begin it, and each machine a `woke`
+frame names. A message between two routines never passes through here; the
+sender's call reports whom it woke, and resuming is how the receiver finds
+the message. When nothing is queued it asks `wakes` for anything woken
+outside a call; if that is empty too, the run is over — or stalled.
+
+Time is virtual: a sleep sets a timer, and timers fire, earliest first, only
+when there is nothing else to do — so a sleep never holds up work that can
+happen now, and costs no wall time. A closed frame names a request the
+routine abandoned (the losing side of a race): its timer is dropped, and an
+ask still queued behind the call that closed it is never performed.
+
+With `--seed N` the loop is adversarial, and reproducible by the seed: it
+takes the next action from a machine chosen at random (each machine's own
+effects stay in order, as a batch's do for any host), defers each reply to a
+random later turn, and now and then resumes a machine for no reason — which
+the ABI says is harmless. The transcript must not change.
+"""
+
+import ctypes
+import heapq
+import itertools
+import random
+import struct
+import sys
+import time
+from collections import deque
+from pathlib import Path
+
+# ---- ABI.md, as code ------------------------------------------------------
+
+ABI_VERSION = 0
+FRAME_TELL, FRAME_ASK, FRAME_CLOSED, FRAME_WOKE = 1, 2, 3, 4
+OK = AWAITING = 0
+COMPLETE, IDLE = 1, 2
+ERRORS = {-1: "BUSY", -2: "FINISHED", -3: "WRONG_KIND", -4: "PANICKED", -5: "BAD_HANDLE", -6: "BAD_INPUT", -7: "MALFORMED", -8: "STALE", -9: "WRONG_THREAD"}
+
+# Reply records: kind, then request id, then payload.
+
+
+def reply_str(id_: int, s: str) -> bytes:
+    b = s.encode()
+    return struct.pack("<BQI", 1, id_, len(b)) + b
+
+
+def reply_u64(id_: int, n: int) -> bytes:
+    return struct.pack("<BQQ", 2, id_, n)
+
+
+def reply_unit(id_: int) -> bytes:
+    return struct.pack("<BQ", 3, id_)
+
+
+def reply_bytes(id_: int, b: bytes) -> bytes:
+    return struct.pack("<BQI", 4, id_, len(b)) + b
+
+
+class Reader:
+    """Little-endian records; `str` is u32 length + UTF-8."""
+
+    def __init__(self, data: bytes):
+        self.data, self.at = data, 0
+
+    def _take(self, fmt: str):
+        (v,) = struct.unpack_from(fmt, self.data, self.at)
+        self.at += struct.calcsize(fmt)
+        return v
+
+    def u8(self) -> int:
+        return self._take("<B")
+
+    def u32(self) -> int:
+        return self._take("<I")
+
+    def u64(self) -> int:
+        return self._take("<Q")
+
+    def bytes(self) -> bytes:
+        n = self._take("<I")
+        b = self.data[self.at : self.at + n]
+        if len(b) != n:
+            raise ValueError(f"a {n}-byte field has only {len(b)} bytes left")
+        self.at += n
+        return b
+
+    def str(self) -> str:
+        return self.bytes().decode()
+
+    def done(self) -> bool:
+        return self.at >= len(self.data)
+
+
+def frames(data: bytes) -> list[tuple[int, bytes]]:
+    """Split a batch into (frame kind, payload). Knows nothing of any routine's tags."""
+    r, out = Reader(data), []
+    while not r.done():
+        out.append((r.u8(), r.bytes()))
+    return out
+
+
+class Library:
+    """`abi_version / new / resume / reply / wakes / free / buf_free` over a loaded cdylib, prefix `greeter_`."""
+
+    def __init__(self, path: Path):
+        self.lib = ctypes.CDLL(str(path))
+        self.lib.greeter_abi_version.restype = ctypes.c_uint8
+        if (v := self.lib.greeter_abi_version()) != ABI_VERSION:
+            raise RuntimeError(f"ABI revision {v}; this host speaks {ABI_VERSION}")
+        self.lib.greeter_new.restype = ctypes.c_uint64
+        self.lib.greeter_new_fanout.restype = ctypes.c_uint64
+        self.lib.greeter_new_ticker.restype = ctypes.c_uint64
+        self.lib.greeter_new_ping_pong.restype = ctypes.c_uint64
+        self.lib.greeter_new_front_desk.restype = ctypes.c_uint64
+        self.lib.greeter_new_ring.restype = ctypes.c_uint64
+        self.lib.greeter_new_journal.restype = ctypes.c_uint64
+        self.lib.greeter_new_deadline.restype = ctypes.c_uint64
+        self.lib.greeter_new_deadlock.restype = ctypes.c_uint64
+        self.lib.greeter_resume.restype = ctypes.c_int32
+        self.lib.greeter_resume.argtypes = [
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        self.lib.greeter_reply.restype = ctypes.c_int32
+        self.lib.greeter_reply.argtypes = [
+            ctypes.c_uint64,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        self.lib.greeter_record.restype = ctypes.c_uint32
+        self.lib.greeter_record.argtypes = [ctypes.c_uint64]
+        self.lib.greeter_record_finish.restype = ctypes.c_int32
+        self.lib.greeter_record_finish.argtypes = [
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        self.lib.greeter_wakes.restype = ctypes.c_int32
+        self.lib.greeter_wakes.argtypes = self.lib.greeter_resume.argtypes[1:]
+        self.lib.greeter_free.restype = ctypes.c_int32
+        self.lib.greeter_buf_free.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
+
+    def new(self, kind: str) -> int:
+        return {
+            "greeter": self.lib.greeter_new,
+            "fanout": self.lib.greeter_new_fanout,
+            "ticker": self.lib.greeter_new_ticker,
+            "ping-pong": self.lib.greeter_new_ping_pong,
+            "front-desk": self.lib.greeter_new_front_desk,
+            "ring": self.lib.greeter_new_ring,
+            "journal": self.lib.greeter_new_journal,
+            "deadline": self.lib.greeter_new_deadline,
+            "deadlock": self.lib.greeter_new_deadlock,
+        }[kind]()
+
+    def record(self, handle: int) -> int:
+        """Begin recording `handle` and the machines it creates; the recording's number."""
+        return self.lib.greeter_record(handle)
+
+    def record_finish(self, recording: int) -> bytes:
+        """The recording's log, encoded. Raises on an error code."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_record_finish(recording, ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)[1]
+
+    def reply(self, handle: int, record: bytes) -> tuple[int, bytes]:
+        """One reply record in; (status, effect bytes) out. Raises on an error code."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_reply(handle, record, len(record), ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)
+
+    def resume(self, handle: int) -> tuple[int, bytes]:
+        """Run to the next wait with nothing to deliver — the first call begins it; (status, effect bytes) out. Harmless when nothing changed. Raises on an error code."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_resume(handle, ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)
+
+    def wakes(self) -> bytes:
+        """The machines woken outside any call, as `woke` frames."""
+        out_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        out_len = ctypes.c_size_t()
+        code = self.lib.greeter_wakes(ctypes.byref(out_ptr), ctypes.byref(out_len))
+        return self._collect(code, out_ptr, out_len)[1]
+
+    def _collect(self, code: int, out_ptr, out_len) -> tuple[int, bytes]:
+        if code < 0:
+            raise RuntimeError(ERRORS.get(code, code))
+        data = ctypes.string_at(out_ptr, out_len.value)
+        self.lib.greeter_buf_free(out_ptr, out_len.value)
+        return code, data
+
+    def free(self, handle: int) -> None:
+        code = self.lib.greeter_free(handle)
+        if code < 0:
+            raise RuntimeError(ERRORS.get(code, code))
+
+
+# ---- the greeter's tag table (the program's, not the ABI's) ---------------
+
+TAGS = {1: "count", 2: "lookup", 3: "read_line", 4: "sleep", 5: "write_line", 6: "spawned", 7: "spawned_pinned",
+        8: "now", 9: "random", 10: "var", 11: "read_file", 12: "write_file"}
+
+
+def read_line_reply(id_: int, line: str | None) -> bytes:
+    """`read_line` is fallible, so it is answered with bytes: an encoded
+    `Result<String, ReadLineError>` — `00 · str` for a line, `01 · 00` once
+    the input is closed."""
+    if line is None:
+        return reply_bytes(id_, b"\x01\x00")
+    b = line.encode()
+    return reply_bytes(id_, b"\x00" + struct.pack("<I", len(b)) + b)
+
+
+def some_str(s: str | None) -> bytes:
+    """An encoded `Option<String>`: `00` for none, `01 · str` for some."""
+    if s is None:
+        return b"\x00"
+    b = s.encode()
+    return b"\x01" + struct.pack("<I", len(b)) + b
+
+
+def ok_bytes(b: bytes | None) -> bytes:
+    """An encoded `Result<Vec<u8>, FsError>`: `00 · bytes`, or `01 · 00` (not found)."""
+    if b is None:
+        return b"\x01\x00"
+    return b"\x00" + struct.pack("<I", len(b)) + b
+
+
+def decode(data: bytes) -> list[dict]:
+    """Frames → dicts with a `kind`, its fields, and an `id` if awaiting."""
+    effects = []
+    for n, (frame, payload) in enumerate(frames(data)):
+        if frame == FRAME_CLOSED:
+            effects.append({"kind": "closed", "id": Reader(payload).u64()})
+            continue
+        if frame == FRAME_WOKE:
+            effects.append({"kind": "woke", "handle": Reader(payload).u64()})
+            continue
+        if frame not in (FRAME_TELL, FRAME_ASK):
+            continue  # a reserved frame kind: a newer binding's record, safe to skip
+        r = Reader(payload)
+        tag = r.u8()
+        kind = TAGS.get(tag)
+        if kind is None:
+            if frame == FRAME_TELL:
+                continue  # a tell this host doesn't know: nothing to answer, skip it
+            raise ValueError(f"frame {n} asks with unknown tag {tag}: this host cannot answer it; it knows {sorted(TAGS)}")
+        if kind == "count":
+            effects.append({"kind": kind, "id": r.u64()})
+        elif kind == "lookup":
+            effects.append({"kind": kind, "name": r.str(), "id": r.u64()})
+        elif kind == "read_line":
+            effects.append({"kind": kind, "id": r.u64()})
+        elif kind == "sleep":
+            effects.append({"kind": kind, "millis": r.u64(), "id": r.u64()})
+        elif kind == "write_line":
+            effects.append({"kind": kind, "text": r.str()})
+        elif kind in ("spawned", "spawned_pinned"):
+            effects.append({"kind": kind, "handle": r.u64()})
+        elif kind == "now":
+            effects.append({"kind": kind, "id": r.u64()})
+        elif kind == "random":
+            effects.append({"kind": kind, "len": r.u32(), "id": r.u64()})
+        elif kind == "var":
+            effects.append({"kind": kind, "name": r.str(), "id": r.u64()})
+        elif kind == "read_file":
+            effects.append({"kind": kind, "path": r.str(), "id": r.u64()})
+        elif kind == "write_file":
+            effects.append({"kind": kind, "path": r.str(), "bytes": r.bytes(), "id": r.u64()})
+        if not r.done():
+            raise ValueError(f"frame {n} ({kind}) has {len(payload) - r.at} bytes this host did not expect: its tag table disagrees with the routine's")
+    return effects
+
+
+# ---- the host loop ----------------------------------------------------------
+
+GREETINGS = {"alice": "Hello", "bob": "Hi", "carol": "Hey"}
+
+# The journal's world, the same in every host so transcripts agree: one
+# variable, files in memory, a clock that starts at 1 700 000 000 000 ms and
+# moves a second per reading, and random bytes that count up from 00.
+ENVIRONMENT = {"JOURNAL": "notes.txt"}
+EPOCH_MILLIS = 1_700_000_000_000
+
+
+def drive(lib: Library, root: int, script: list[str], seed: int | None = None) -> list[str]:
+    """Perform each effect and reply by id; resume every child a machine
+    spawns, to begin it; resume each machine a `woke` frame names; free each machine as it
+    completes. Every call comes from this one thread, so a pinned child stays
+    on the thread that first resumed it. With a `seed`, adversarially (see the
+    module's docs)."""
+    lines, written, greeted = iter(script), [], 0
+    files: dict[str, bytes] = {}
+    readings, next_byte = 0, 0
+    machines: dict[int, int] = {}  # handle → status of its last call
+    rng = random.Random(seed) if seed is not None else None
+    # (lane, handle, effect): a machine's effects share its lane, and stay in
+    # order; deferred replies have lanes of their own.
+    queue: deque[tuple[object, int, dict]] = deque()
+    closed: set[tuple[int, int]] = set()  # (handle, id) the routine abandoned
+    timers: list[tuple[int, int, int, int]] = []  # (due ms, order set, handle, id)
+    now, order = 0, itertools.count()
+
+    def ran(handle: int, result: tuple[int, bytes]) -> None:
+        status, data = result
+        machines[handle] = status
+        for e in decode(data):
+            # A closed id may name an ask still queued from an earlier batch —
+            # in a race, answering one side closes the other — so note it now.
+            if e["kind"] == "closed":
+                closed.add((handle, e["id"]))
+            else:
+                queue.append((handle, handle, e))
+
+    def take() -> tuple[int, dict]:
+        """The next action: the oldest, or — seeded — the oldest of a lane
+        chosen at random, after perhaps a spurious resume."""
+        if rng is None:
+            _, handle, e = queue.popleft()
+            return handle, e
+        live = [h for h, status in machines.items() if status != COMPLETE]
+        if live and rng.random() < 1 / 8:
+            stutter = rng.choice(live)
+            ran(stutter, lib.resume(stutter))
+        seen: set[object] = set()
+        eligible = [i for i, (lane, _, _) in enumerate(queue) if not (lane in seen or seen.add(lane))]
+        at = rng.choice(eligible)
+        _, handle, e = queue[at]
+        del queue[at]
+        return handle, e
+        if status == COMPLETE:
+            lib.free(handle)
+
+    ran(root, lib.resume(root))
+
+    while True:
+        while queue:
+            handle, e = take()
+            if (handle, e.get("id")) in closed:
+                continue  # abandoned while it waited its turn: never performed
+            if e["kind"] == "write_line":
+                written.append(e["text"])
+                print(e["text"])
+                continue
+            if e["kind"] in ("spawned", "spawned_pinned"):
+                ran(e["handle"], lib.resume(e["handle"]))
+                continue
+            if e["kind"] == "woke":
+                if e["handle"] in machines and machines[e["handle"]] != COMPLETE:
+                    ran(e["handle"], lib.resume(e["handle"]))
+                continue
+            if e["kind"] == "reply":  # a deferred reply's turn
+                ran(handle, lib.reply(handle, e["record"]))
+                continue
+            if e["kind"] == "read_line":
+                record = read_line_reply(e["id"], next(lines, None))
+            elif e["kind"] == "lookup":
+                record = reply_str(e["id"], GREETINGS.get(e["name"], "Greetings"))
+            elif e["kind"] == "sleep":
+                heapq.heappush(timers, (now + e["millis"], next(order), handle, e["id"]))
+                continue
+            elif e["kind"] == "count":
+                greeted += 1
+                record = reply_u64(e["id"], greeted)
+            elif e["kind"] == "now":
+                record = reply_u64(e["id"], (EPOCH_MILLIS + 1_000 * readings) * 1_000_000)
+                readings += 1
+            elif e["kind"] == "random":
+                record = reply_bytes(e["id"], bytes((next_byte + i) % 256 for i in range(e["len"])))
+                next_byte = (next_byte + e["len"]) % 256
+            elif e["kind"] == "var":
+                record = reply_bytes(e["id"], some_str(ENVIRONMENT.get(e["name"])))
+            elif e["kind"] == "read_file":
+                record = reply_bytes(e["id"], ok_bytes(files.get(e["path"])))
+            elif e["kind"] == "write_file":
+                files[e["path"]] = e["bytes"]
+                record = reply_bytes(e["id"], b"\x00")
+            if rng is None:
+                ran(handle, lib.reply(handle, record))
+            else:
+                queue.append((("reply", handle, e["id"]), handle, {"kind": "reply", "id": e["id"], "record": record}))
+
+        # Nothing queued: anything woken outside a call? Then any timer due,
+        # earliest first. If neither, nothing can happen again — the end, or
+        # a stall.
+        woken = decode(lib.wakes())
+        if woken:
+            queue.extend((("woke", e["handle"]), 0, e) for e in woken)
+            continue
+        while timers and (timers[0][2], timers[0][3]) in closed:
+            heapq.heappop(timers)  # abandoned: the routine stopped waiting
+        if not timers:
+            break
+        now, _, handle, ask = heapq.heappop(timers)
+        ran(handle, lib.reply(handle, reply_unit(ask)))
+
+    stuck = [h for h, status in machines.items() if status != COMPLETE]
+    if stuck:
+        raise Stalled(len(stuck))
+    return written
+
+
+class Stalled(Exception):
+    """Machines that can never progress: nothing to call, nothing to reply
+    to, nothing woken, and they have not completed. A deadlock, or a routine
+    waiting on something no machine will provide."""
+
+    def __init__(self, machines: int):
+        super().__init__(f"stalled: {machines} machines can never progress")
+
+
+def find_library() -> Path:
+    root = Path(__file__).resolve().parents[3]
+    for profile in ("debug", "release"):
+        for name in ("libgreeter_cdylib.so", "libgreeter_cdylib.dylib", "greeter_cdylib.dll"):
+            p = root / "target" / profile / name
+            if p.exists():
+                return p
+    sys.exit("build it first: cargo build -p greeter_cdylib")
+
+
+if __name__ == "__main__":
+    kinds = ("fanout", "ticker", "ping-pong", "front-desk", "ring", "journal", "deadline", "deadlock")
+    kind = next((k for k in kinds if f"--{k}" in sys.argv), "greeter")
+    seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else None
+    record_to = sys.argv[sys.argv.index("--record") + 1] if "--record" in sys.argv else None
+    script = {"greeter": ["alice", "bob"], "fanout": ["bob", "carol"], "ticker": [], "ping-pong": [], "front-desk": ["alice", "bob", "carol"], "ring": [], "journal": [], "deadline": [], "deadlock": []}[kind]
+    lib = Library(find_library())
+    began = time.perf_counter()
+    root = lib.new(kind)
+    recording = lib.record(root) if record_to else None
+    try:
+        drive(lib, root, script, seed)
+    except Stalled as stalled:
+        print(stalled, file=sys.stderr)
+        sys.exit(1)
+    finally:
+        if recording is not None:
+            Path(record_to).write_bytes(lib.record_finish(recording))
+    if kind == "ring":
+        hops, elapsed = 16 * 250, time.perf_counter() - began
+        print(f"{hops} hops in {elapsed * 1e3:.1f} ms: {elapsed * 1e6 / hops:.2f} µs per hop", file=sys.stderr)

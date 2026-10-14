@@ -22,6 +22,15 @@ result-*
 # rustc snippet output
 rust_out
 
+# Quint / Apalache output (spec checks)
+**/_apalache-out/
+
+# Java classes the editor's tooling compiles beside demo/driven/java/Main.java
+*.class
+
+# Python bytecode (the demo host, imported as a module)
+__pycache__/
+
 # wasm / npm artifacts
 **/dist/
 **/node_modules/

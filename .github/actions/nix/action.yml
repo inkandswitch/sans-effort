@@ -1,0 +1,46 @@
+name: Nix CI shell
+description: >-
+  Install Nix, restore the Nix store, and build the flake's `ci` shell, so a
+  workflow's steps can run `nix develop .#ci --command ...` with the tools
+  flake.lock pins. Optionally restore and save Cargo's registry and target/.
+
+inputs:
+  cargo-cache:
+    description: >-
+      Names this job's Cargo cache (registry and target/), which differs by what
+      the job builds. Empty: no Cargo cache.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@v31
+      with:
+        github_access_token: ${{ github.token }}
+
+    # One store cache for every job: they all use the same shell. A new one is
+    # saved only when the flake changes; until then a job restores the last.
+    - uses: nix-community/cache-nix-action@v7
+      with:
+        primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**') }}
+        restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
+        # Before saving, drop what the shell no longer uses (it is a GC root,
+        # below), once the store outgrows the shell itself (~3.2 GB).
+        gc-max-store-size: 4G
+
+    # A profile is a GC root: the shell survives the collection above.
+    - name: Build the CI shell
+      shell: bash
+      run: nix develop .#ci --profile "$RUNNER_TEMP/ci-shell" --command true
+
+    - if: inputs.cargo-cache != ''
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          target
+        key: cargo-${{ inputs.cargo-cache }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+        restore-keys: cargo-${{ inputs.cargo-cache }}-${{ runner.os }}-${{ runner.arch }}-

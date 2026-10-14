@@ -1,26 +1,16 @@
-//! A routine over an `Rc`-based context is `!Send`, and the compiler says so
-//! at the one place that asks — not on the traits.
+//! An `Rc`-based context cannot implement an effect trait: the future `sleep`
+//! returns borrows it, and an effect trait's future must be `Send`.
 
 use core::{cell::Cell, time::Duration};
-use sans_effort::run::Run;
-use routines::{
-    ticker::Ticker,
-    traits::{Sleep, WriteLine},
-};
+use sans_effort::time::Sleep;
 use std::rc::Rc;
 
 struct Local(Rc<Cell<u32>>);
 
 impl Sleep for Local {
-    async fn sleep(&self, _: Duration) {}
+    async fn sleep(&self, _: Duration) {
+        self.0.set(self.0.get() + 1);
+    }
 }
 
-impl WriteLine for Local {
-    fn write_line(&self, _: String) {}
-}
-
-fn spawn<F: core::future::Future + Send + 'static>(_: F) {}
-
-fn main() {
-    spawn(Ticker::new(Local(Rc::new(Cell::new(0))), 3).run());
-}
+fn main() {}

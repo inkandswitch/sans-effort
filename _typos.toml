@@ -7,3 +7,5 @@ check-filename = true
 extend-ignore-re = ["[0-9a-f]{32,}", "[A-Za-z0-9+/]{40,}={0,2}"]
 
 [default.extend-words]
+# The Effekt language (Brachthäuser et al.), cited in design/.
+Effekt = "Effekt"
