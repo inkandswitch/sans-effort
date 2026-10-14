@@ -590,8 +590,8 @@ module protocol {
   // The same, as a temporal property under weak fairness: the host always
   // reaches the verdict it should. `spec:check` runs it on TLC directly, not
   // through `quint verify`, where it never finishes: Apalache's folds, which
-  // `run_to_wait` compiles to, are made strict first (see `strict-folds` in
-  // nix/commands.nix).
+  // `run_to_wait` compiles to, are made strict first (see
+  // nix/strict-folds.py).
   temporal fair = weakFair(call, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps, spurious_left, kills_left))
     and weakFair(ret, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps, spurious_left, kills_left))
     and weakFair(quiet, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps, spurious_left, kills_left))
