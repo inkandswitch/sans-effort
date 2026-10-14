@@ -7,11 +7,11 @@
 //! allocates shows up as allocations growing with the size.
 //!
 //! The asking workloads carry hard limits on heap blocks, so an allocation
-//! added to the path fails the run. Today a yield that carries effects
-//! allocates once — the `Vec` of effects handed to the host — so `asks`
-//! (one yield per ask) and `fanout` (one per round of two) grow by one block
-//! per step. The ring's count includes `async-channel`'s own listeners, which
-//! are not this crate's to guard.
+//! added to the path fails the run. A yield of two effects or fewer
+//! allocates nothing, so `asks` (one yield per ask) and `fanout` (one per
+//! round of two) take the same blocks at any size: the driver, the routine,
+//! and the host's queue. The ring's count includes `async-channel`'s own
+//! listeners, which are not this crate's to guard.
 //!
 //! ```sh
 //! nix develop --command bench:instructions
@@ -40,14 +40,14 @@ fn at_most(blocks: u64) -> LibraryBenchmarkConfig {
 
 #[library_benchmark]
 #[bench::one(args = (1), config = at_most(5))]
-#[bench::hundred(args = (100), config = at_most(104))]
+#[bench::hundred(args = (100), config = at_most(5))]
 fn asks(n: u64) -> u64 {
     black_box(workloads::asks(black_box(n)))
 }
 
 #[library_benchmark]
 #[bench::one(args = (1), config = at_most(5))]
-#[bench::hundred(args = (100), config = at_most(104))]
+#[bench::hundred(args = (100), config = at_most(5))]
 fn fanout(n: u64) -> u64 {
     black_box(workloads::fanout(black_box(n)))
 }

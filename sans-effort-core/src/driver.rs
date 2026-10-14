@@ -61,6 +61,7 @@
 
 pub mod asking;
 pub mod awaiting;
+pub mod batch;
 pub mod outbox;
 pub mod status;
 
@@ -256,7 +257,8 @@ impl<E, F: Future<Output = ()> + ?Sized> core::fmt::Debug for Driver<E, F> {
 /// and the ids of requests it abandoned along the way.
 ///
 /// It iterates over the effects, so a host that has nothing to cancel uses it
-/// like the `Vec` it replaces:
+/// like a `Vec`. The effects are a [`Batch`](batch::Batch): up to two held
+/// inline, so the common yield allocates nothing.
 ///
 /// ```
 /// # use sans_effort_core::driver::Yield;
@@ -273,20 +275,24 @@ impl<E, F: Future<Output = ()> + ?Sized> core::fmt::Debug for Driver<E, F> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use = "a yield holds effects to perform and ids whose work can stop"]
 pub struct Yield<T> {
-    effects: Vec<T>,
+    effects: batch::Batch<T>,
     closed: Vec<u64>,
 }
 
 impl<T> Yield<T> {
-    /// A yield from its parts.
-    pub const fn new(effects: Vec<T>, closed: Vec<u64>) -> Self {
-        Self { effects, closed }
+    /// A yield from its parts: the effects as a [`Batch`](batch::Batch) or a
+    /// `Vec`.
+    pub fn new<B: Into<batch::Batch<T>>>(effects: B, closed: Vec<u64>) -> Self {
+        Self {
+            effects: effects.into(),
+            closed,
+        }
     }
 
     /// The effects recorded, in order.
     #[must_use]
     pub fn effects(&self) -> &[T] {
-        &self.effects
+        self.effects.as_slice()
     }
 
     /// Ids of requests the routine abandoned unanswered. A reply to one is
@@ -298,20 +304,21 @@ impl<T> Yield<T> {
 
     /// `true` if there are no effects and nothing was closed.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.effects.is_empty() && self.closed.is_empty()
     }
 
     /// The effects and the closed ids.
     #[must_use]
-    pub fn into_parts(self) -> (Vec<T>, Vec<u64>) {
+    pub fn into_parts(self) -> (batch::Batch<T>, Vec<u64>) {
         (self.effects, self.closed)
     }
 
     /// The same yield with each effect transformed; the closed ids are kept.
+    /// Two effects or fewer stay inline.
     pub fn map<U, F: FnMut(T) -> U>(self, f: F) -> Yield<U> {
         Yield {
-            effects: self.effects.into_iter().map(f).collect(),
+            effects: self.effects.map(f),
             closed: self.closed,
         }
     }
@@ -319,13 +326,16 @@ impl<T> Yield<T> {
 
 impl<T> Default for Yield<T> {
     fn default() -> Self {
-        Self::new(Vec::new(), Vec::new())
+        Self {
+            effects: batch::Batch::new(),
+            closed: Vec::new(),
+        }
     }
 }
 
 impl<T> IntoIterator for Yield<T> {
     type Item = T;
-    type IntoIter = alloc::vec::IntoIter<T>;
+    type IntoIter = batch::IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.effects.into_iter()
@@ -334,7 +344,7 @@ impl<T> IntoIterator for Yield<T> {
 
 impl<T> From<Yield<T>> for Vec<T> {
     fn from(yielded: Yield<T>) -> Self {
-        yielded.effects
+        yielded.effects.into()
     }
 }
 
@@ -454,7 +464,10 @@ mod tests {
             .for_each(|(effects, closed)| {
                 let made = || Yield::new(effects.clone(), closed.clone());
                 assert_eq!(made().is_empty(), effects.is_empty() && closed.is_empty());
-                assert_eq!(made().into_parts(), (effects.clone(), closed.clone()));
+                assert_eq!(
+                    made().into_parts(),
+                    (batch::Batch::from(effects.clone()), closed.clone())
+                );
 
                 let mapped = made().map(|e| u16::from(e) + 1);
                 let expected: Vec<u16> = effects.iter().map(|e| u16::from(*e) + 1).collect();

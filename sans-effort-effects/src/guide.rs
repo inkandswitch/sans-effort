@@ -233,16 +233,17 @@
 //!
 //! let mut driver = Driver::<Effect>::new(|outbox| Greet(Ctx::new(outbox)).run());
 //! let mut effects = driver.resume().into_iter();
-//! let (view, pending) = effects.next().expect("one ask").split();
+//! let (view, pending) = effects.next().ok_or("one ask")?.split();
 //! assert_eq!(view, View::Lookup { name: "alice".into(), id: 1 });
 //! // Tag 2, the name as `u32 len · bytes`, then the id.
 //! let record = [&[2, 5, 0, 0, 0][..], b"alice", &1_u64.to_le_bytes()].concat();
 //! assert_eq!(view.to_bytes(), record);
 //!
 //! let Some(Pending::Str(reply)) = pending else { unreachable!("a lookup awaits a str") };
-//! let (view, _) = driver.reply(reply, "Hello".into()).into_iter().next().expect("one tell").split();
+//! let (view, _) = driver.reply(reply, "Hello".into()).into_iter().next().ok_or("one tell")?.split();
 //! assert_eq!(view, View::WriteLine { text: "Hello, alice!".into() });
 //! assert_eq!(driver.status(), Status::Complete);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! Two variants given the same tag no longer compile:

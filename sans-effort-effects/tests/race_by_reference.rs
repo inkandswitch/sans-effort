@@ -64,7 +64,7 @@ fn a_read_raced_by_reference_outlives_its_deadlines() -> TestResult {
     let [
         Effect::ReadLine(Asked { reply: read, .. }),
         Effect::Sleep(Asked { reply: sleep, .. }),
-    ] = <[Effect; 2]>::try_from(first).map_err(|_| "a read and a deadline")?
+    ] = <[Effect; 2]>::try_from(Vec::from(first)).map_err(|_| "a read and a deadline")?
     else {
         return Err("first batch: read, then sleep")?;
     };
@@ -78,7 +78,7 @@ fn a_read_raced_by_reference_outlives_its_deadlines() -> TestResult {
         let [
             Effect::WriteLine(WriteLineEffect(reminder)),
             Effect::Sleep(Asked { reply: next, .. }),
-        ] = <[Effect; 2]>::try_from(batch).map_err(|_| "a reminder and a deadline")?
+        ] = <[Effect; 2]>::try_from(Vec::from(batch)).map_err(|_| "a reminder and a deadline")?
         else {
             return Err("after a deadline: remind, then sleep again")?;
         };
@@ -92,7 +92,7 @@ fn a_read_raced_by_reference_outlives_its_deadlines() -> TestResult {
     let pending = sleep.id();
     let (last, closed) = driver.reply(read, Ok("alice".into())).into_parts();
     let [Effect::WriteLine(WriteLineEffect(got))] =
-        <[Effect; 1]>::try_from(last).map_err(|_| "the line, written")?
+        <[Effect; 1]>::try_from(Vec::from(last)).map_err(|_| "the line, written")?
     else {
         return Err("last batch: the line")?;
     };

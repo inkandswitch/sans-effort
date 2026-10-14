@@ -210,7 +210,7 @@ fn effect_told_from_another_thread() -> TestResult {
         }
     });
 
-    let (mut told, _) = driver.resume().into_parts();
+    let mut told: Vec<u8> = driver.resume().into_iter().collect();
     let outbox = handed
         .lock()?
         .take()
@@ -222,12 +222,12 @@ fn effect_told_from_another_thread() -> TestResult {
             signal.send();
         }
     });
-    told.extend(driver.resume().into_parts().0);
+    told.extend(driver.resume());
     joined(teller)?;
     while driver.status() != Status::Complete {
-        told.extend(driver.resume().into_parts().0);
+        told.extend(driver.resume());
     }
-    told.extend(driver.resume().into_parts().0);
+    told.extend(driver.resume());
 
     told.sort_unstable();
     assert_eq!(told, [0, 1]);

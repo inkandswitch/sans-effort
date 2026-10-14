@@ -197,20 +197,17 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
     /// table tracks the driver's rather than growing past it.
     fn show(&mut self, step: Yield<E>) -> Yield<Shown<E::View>> {
         let (effects, closed) = step.into_parts();
-        let shown = effects
-            .into_iter()
-            .map(|effect| {
-                let (view, pending) = effect.split();
-                let awaits = pending.is_some();
-                if let Some(p) = pending {
-                    let id = p.id();
-                    self.never_shown.extend(self.highest_shown + 1..id);
-                    self.highest_shown = self.highest_shown.max(id);
-                    self.pending.push((id, p));
-                }
-                Shown { view, awaits }
-            })
-            .collect();
+        let shown = effects.map(|effect| {
+            let (view, pending) = effect.split();
+            let awaits = pending.is_some();
+            if let Some(p) = pending {
+                let id = p.id();
+                self.never_shown.extend(self.highest_shown + 1..id);
+                self.highest_shown = self.highest_shown.max(id);
+                self.pending.push((id, p));
+            }
+            Shown { view, awaits }
+        });
 
         // After inserting: a request polled and dropped in the same step is
         // both in this batch and already closed.

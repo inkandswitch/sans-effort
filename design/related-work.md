@@ -63,7 +63,7 @@ A `corophage` `Yielder` takes `&mut self` for each effect, so two effects cannot
 
 ### Cost
 
-`corophage` reports roughly 10–14 ns per synchronously handled effect, with one allocation per run and none per dispatch. `sans-effort` measures roughly 120 ns per ask round trip, with one allocation per yield and several short lock acquisitions. The difference is what each ask carries here and not there: a lock that lets a driver move between threads, an id and a mail slot so several asks can be outstanding, tracking of closed ids, and a fresh list of effects handed to the host. The two measurements are from different machines, so read them as an order of magnitude, not a ratio.
+`corophage` reports roughly 10–14 ns per synchronously handled effect, with one allocation per run and none per dispatch. `sans-effort` measures roughly 120 ns per ask round trip, with no allocation per yield of two effects or fewer, and several short lock acquisitions. The difference is what each ask carries here and not there: a lock that lets a driver move between threads, an id and a mail slot so several asks can be outstanding, and tracking of closed ids. The two measurements are from different machines, so read them as an order of magnitude, not a ratio.
 
 ### What Carries Over
 

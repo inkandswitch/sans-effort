@@ -2,6 +2,7 @@
 
 use super::{
     asking::Asking,
+    batch::Batch,
     mail::{Check, Delivery, Mail},
     sync::{Arc, Mutex},
 };
@@ -53,7 +54,7 @@ pub struct Outbox<E> {
 /// empty and unallocated. Invariant: `building` is set only while `held` is
 /// empty; the first thing that must wait moves it into `held`.
 struct Inner<E> {
-    effects: Vec<E>,
+    effects: Batch<E>,
     building: Option<u64>,
     held: Vec<Held<E>>,
     mail: Mail,
@@ -90,11 +91,11 @@ impl<E> Inner<E> {
             .iter()
             .position(|held| matches!(held, Held::Reserved(_)))
             .unwrap_or(self.held.len());
-        self.effects
-            .extend(self.held.drain(..ready).filter_map(|held| match held {
-                Held::Ready(effect) => Some(effect),
-                Held::Reserved(_) => None,
-            }));
+        for held in self.held.drain(..ready) {
+            if let Held::Ready(effect) = held {
+                self.effects.push(effect);
+            }
+        }
     }
 }
 
@@ -102,7 +103,7 @@ impl<E> Outbox<E> {
     pub(super) fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
-                effects: Vec::new(),
+                effects: Batch::new(),
                 building: None,
                 held: Vec::new(),
                 mail: Mail::new(),
@@ -184,7 +185,7 @@ impl<E> Outbox<E> {
 
     /// Everything recorded since the last poll, and how many requests are
     /// still open — read together so the two agree.
-    pub(super) fn drain(&self) -> (Vec<E>, usize) {
+    pub(super) fn drain(&self) -> (Batch<E>, usize) {
         let mut inner = self.inner.lock();
         let effects = core::mem::take(&mut inner.effects);
         let outstanding = inner.mail.outstanding();

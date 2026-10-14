@@ -180,9 +180,9 @@ pub async fn poll_once<F: IntoFuture<IntoFuture: Unpin>>(future: F) -> F::IntoFu
 /// drive(Driver::new(|outbox| Doubler(outbox).run()), |effect, host| match effect {
 ///     Effect::Ask(reply) => host.reply(reply, 21),
 ///     Effect::Say(n) => said.push(n),
-/// })
-/// .expect("completes");
+/// })?;
 /// assert_eq!(said, [42]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn drive<E: 'static, H: FnMut(E, &mut Answers<'_, E>)>(
     root: Driver<E>,
@@ -941,7 +941,7 @@ mod tests {
                 world.timers.push(Timer {
                     due: ms(5),
                     at,
-                    deliver: Box::new(|_| Yield::new(Vec::new(), Vec::new())),
+                    deliver: Box::new(|_| Yield::default()),
                 });
             }
 
