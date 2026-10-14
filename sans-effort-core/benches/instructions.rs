@@ -13,10 +13,10 @@
 //! and the host's queue. The ring's count includes `async-channel`'s own
 //! listeners, which are not this crate's to guard.
 //!
-//! `wide`, with thousands of requests in flight, carries a ceiling on
-//! instructions instead, about 1.5 times the current count: room for
-//! compiler drift, and a failure if the cost per reply grows with the number
-//! of requests in flight.
+//! `wide` and `wide_in_order`, with thousands of requests in flight answered
+//! newest first and oldest first, carry a ceiling on instructions instead,
+//! about 1.5 times the current count: room for compiler drift, and a failure
+//! if the cost per reply grows with the number of requests in flight.
 //!
 //! ```sh
 //! nix develop --command bench:instructions
@@ -75,13 +75,22 @@ fn wide(n: u64) -> u64 {
 }
 
 #[library_benchmark]
+#[bench::ten_thousand(args = (10_000), config = under(36_000_000))]
+fn wide_in_order(n: u64) -> u64 {
+    black_box(workloads::wide_in_order(black_box(n)))
+}
+
+#[library_benchmark]
 #[bench::ten_hops((2, 5))]
 #[bench::thousand_hops((2, 500))]
 fn ring((nodes, rounds): (usize, u64)) -> u64 {
     black_box(workloads::ring(black_box(nodes), black_box(rounds)))
 }
 
-library_benchmark_group!(name = driver, benchmarks = [asks, fanout, wide, ring]);
+library_benchmark_group!(
+    name = driver,
+    benchmarks = [asks, fanout, wide, wide_in_order, ring]
+);
 
 main!(
     config = LibraryBenchmarkConfig::default().tool(Dhat::default()),

@@ -30,10 +30,12 @@ exclude_re = [
   # sort alike.
   "replace > with (>=|==) in Mail::open",
   "replace < with <= in Mail::open",
-  # `Mail::remove` pops when the slot is the last and otherwise removes it in
-  # place, which is right in either case; `at` always names a slot.
-  "replace \\+ with \\* in Mail::remove",
-  "replace < with <= in Mail::remove",
+  # `Mail::take` sweeps closed slots out once they outnumber the open ones.
+  # Sweeping sooner (`>=`), or on every take (`-` to `+`), gives the same
+  # answers; only the cost differs, which `bench:instructions`' ceiling on
+  # `wide_in_order` guards.
+  "replace > with >= in Mail::take",
+  "replace - with \\+ in Mail::take",
 ]
 
 exclude_globs = [

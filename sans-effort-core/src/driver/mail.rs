@@ -28,16 +28,23 @@ static DRIVERS: AtomicU64 = AtomicU64::new(1);
 
 pub(super) struct Mail {
     driver: u64,
-    /// Open slots, sorted by id, so a lookup is a binary search. Ids are
-    /// minted in order, so opening a slot is almost always a push. Not
-    /// indexed by id: one long-lived request would keep every later slot.
+    /// Slots sorted by id, so a lookup is a binary search; ids are minted in
+    /// order, so opening a slot is almost always a push. A slot taken from
+    /// anywhere but the end is closed where it stands, and the closed ones
+    /// are swept out together once they outnumber the open: taking a slot is
+    /// O(1) amortized, in whatever order a host answers. Not indexed by id:
+    /// one long-lived request would keep every later slot.
     slots: Vec<Slot>,
+    /// How many of `slots` are open.
+    open: usize,
     closed: Vec<u64>,
     next: u64,
 }
 
 struct Slot {
     id: u64,
+    /// `false` once taken: closed in place until the next sweep.
+    open: bool,
     value: Option<Value>,
     check: Check,
     /// The waker the request's future was last polled with, if it is still
@@ -67,6 +74,7 @@ impl Mail {
         Self {
             driver: DRIVERS.fetch_add(1, Ordering::Relaxed),
             slots: Vec::new(),
+            open: 0,
             closed: Vec::new(),
             next: 1,
         }
@@ -83,6 +91,7 @@ impl Mail {
     pub(super) fn open(&mut self, id: u64, check: Check) {
         let slot = Slot {
             id,
+            open: true,
             value: None,
             check,
             waker: None,
@@ -90,28 +99,40 @@ impl Mail {
         if self.slots.last().is_none_or(|last| id > last.id) {
             self.slots.push(slot);
         } else {
-            let at = self.slots.partition_point(|open| open.id < id);
+            let at = self.slots.partition_point(|other| other.id < id);
             self.slots.insert(at, slot);
         }
+        self.open += 1;
     }
 
-    /// Take the slot at `at` out, keeping the rest in order.
-    fn remove(&mut self, at: usize) -> Option<Slot> {
-        if at + 1 == self.slots.len() {
-            self.slots.pop()
-        } else {
-            (at < self.slots.len()).then(|| self.slots.remove(at))
+    /// Take the open slot at `at` (from [`position`](Self::position)): its
+    /// value, if a reply arrived. The last slot is popped, with any closed
+    /// ones before it; any other is closed in place, and the closed swept out
+    /// once they outnumber the open.
+    fn take(&mut self, at: usize) -> Option<Value> {
+        let slot = self.slots.get_mut(at).filter(|slot| slot.open)?;
+        slot.open = false;
+        slot.waker = None;
+        let value = slot.value.take();
+        self.open -= 1;
+        while self.slots.last().is_some_and(|last| !last.open) {
+            self.slots.pop();
         }
+        if self.slots.len() - self.open > self.open {
+            self.slots.retain(|slot| slot.open);
+        }
+        value
     }
 
-    /// Where request `id`'s slot is. The newest first — almost always the
-    /// one asked about — then a binary search.
+    /// Where request `id`'s open slot is. The newest first — almost always
+    /// the one asked about — then a binary search.
     fn position(&self, id: u64) -> Option<usize> {
         let newest = self.slots.len().checked_sub(1)?;
         if self.slots.get(newest).is_some_and(|slot| slot.id == id) {
             return Some(newest);
         }
-        self.slots.binary_search_by_key(&id, |slot| slot.id).ok()
+        let at = self.slots.binary_search_by_key(&id, |slot| slot.id).ok()?;
+        self.slots.get(at).filter(|slot| slot.open).map(|_| at)
     }
 
     /// `false` if no request with that id is waiting: it was already
@@ -146,7 +167,7 @@ impl Mail {
         let at = self.position(id)?;
         let slot = self.slots.get_mut(at)?;
         if slot.value.is_some() {
-            return self.remove(at).and_then(|slot| slot.value);
+            return self.take(at);
         }
         if let Some(waker) = waker
             && !slot
@@ -166,7 +187,7 @@ impl Mail {
     /// left to stop, so it is not reported.
     pub(super) fn close(&mut self, id: u64) {
         if let Some(at) = self.position(id)
-            && self.remove(at).is_some_and(|slot| slot.value.is_none())
+            && self.take(at).is_none()
         {
             self.closed.push(id);
         }
@@ -177,6 +198,92 @@ impl Mail {
     }
 
     pub(super) const fn outstanding(&self) -> usize {
-        self.slots.len()
+        self.open
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::collections::BTreeMap;
+
+    /// The structure's own invariants: ids strictly increasing, the count of
+    /// open slots right, the last slot open, and never more closed slots
+    /// than open ones (or a sweep is overdue).
+    fn assert_shape(mail: &Mail) {
+        assert!(
+            mail.slots
+                .windows(2)
+                .all(|w| matches!(w, [a, b] if a.id < b.id))
+        );
+        let open = mail.slots.iter().filter(|slot| slot.open).count();
+        assert_eq!(open, mail.open);
+        assert!(mail.slots.last().is_none_or(|last| last.open));
+        assert!(mail.slots.len() - mail.open <= mail.open);
+    }
+
+    /// Any sequence of opens, deliveries, collections, and closes behaves as
+    /// a map of the open requests does, in whatever order requests are
+    /// answered and dropped.
+    #[test]
+    fn the_mailbox_behaves_as_a_map_of_open_requests() {
+        bolero::check!()
+            .with_type::<Vec<(u8, u8)>>()
+            .for_each(|ops| {
+                let mut mail = Mail::new();
+                let mut model: BTreeMap<u64, Option<u64>> = BTreeMap::new();
+                let mut minted = Vec::new();
+                let mut closed = Vec::new();
+                for &(op, key) in ops {
+                    let id = minted
+                        .get(usize::from(key) % minted.len().max(1))
+                        .copied()
+                        .unwrap_or(0);
+                    match op % 4 {
+                        0 => {
+                            let id = mail.mint::<u64>().id();
+                            mail.open(id, crate::reply::check::<u64>);
+                            minted.push(id);
+                            model.insert(id, None);
+                        }
+                        1 => {
+                            let reply = ReplyHandle::<u64>::mint(mail.driver, id);
+                            let delivered = matches!(
+                                mail.deliver(reply, Value::U64(id)),
+                                Delivery::Delivered(_)
+                            );
+                            assert_eq!(delivered, model.contains_key(&id));
+                            if let Some(slot) = model.get_mut(&id) {
+                                *slot = Some(id);
+                            }
+                        }
+                        2 => {
+                            let expected = match model.get(&id) {
+                                Some(Some(value)) => Some(*value),
+                                _ => None,
+                            };
+                            let got = mail.collect(id, None).map(|value| match value {
+                                Value::U64(n) => n,
+                                Value::Bytes(_) | Value::Str(_) | Value::Unit => u64::MAX,
+                            });
+                            assert_eq!(got, expected);
+                            if expected.is_some() {
+                                model.remove(&id);
+                            }
+                        }
+                        _ => {
+                            mail.close(id);
+                            if let Some(value) = model.remove(&id)
+                                && value.is_none()
+                            {
+                                closed.push(id);
+                            }
+                        }
+                    }
+                    assert_eq!(mail.outstanding(), model.len());
+                    assert_shape(&mail);
+                }
+                assert_eq!(mail.take_closed(), closed);
+            });
     }
 }

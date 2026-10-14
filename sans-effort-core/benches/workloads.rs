@@ -5,8 +5,9 @@
 //! - [`asks`]: `n` asks, each answered at once — one request's round trip
 //!   through a driver, `n` times.
 //! - [`fanout`]: `n` rounds of two asks in flight at once, answered in turn.
-//! - [`wide`]: `n` asks in flight at once through `futures`' `join_all` —
-//!   which polls only the request a reply woke — answered newest first.
+//! - [`wide`] and [`wide_in_order`]: `n` asks in flight at once through
+//!   `futures`' `join_all`, which polls only the request a reply woke;
+//!   answered newest first, and in the order asked.
 //! - [`ring`]: `nodes` drivers passing a counter around a ring of channels,
 //!   `rounds` times; each hop is a message no effect reports, found by
 //!   resuming whichever driver's wake hook fired.
@@ -96,20 +97,33 @@ pub(crate) fn fanout(n: u64) -> u64 {
 
 /// Asks `n` at once through `join_all`, which polls only what was woken: each
 /// reply costs a wake and a lookup among the requests still open, not a
-/// poll of all of them.
+/// poll of all of them. Answered newest first.
 pub(crate) fn wide(n: u64) -> u64 {
+    answer_wide(n, VecDeque::pop_back)
+}
+
+/// As [`wide`], answered in the order asked: oldest first.
+pub(crate) fn wide_in_order(n: u64) -> u64 {
+    answer_wide(n, VecDeque::pop_front)
+}
+
+/// Ask `n` at once, then answer each request `next` picks, until it completes.
+fn answer_wide<N: FnMut(&mut VecDeque<ReplyHandle<u64>>) -> Option<ReplyHandle<u64>>>(
+    n: u64,
+    mut next: N,
+) -> u64 {
     let mut driver = Driver::new(move |outbox: Outbox<Effect>| async move {
         let asks = (0..n).map(|_| outbox.ask(Effect::Ask).into_future());
         let answers = futures_util::future::join_all(asks).await;
         drop(answers);
     });
-    let mut open: Vec<ReplyHandle<u64>> = driver
+    let mut open: VecDeque<ReplyHandle<u64>> = driver
         .resume()
         .into_iter()
         .map(|Effect::Ask(reply)| reply)
         .collect();
     let mut answered = 0;
-    while let Some(reply) = open.pop() {
+    while let Some(reply) = next(&mut open) {
         answered += 1;
         drop(driver.reply(reply, answered));
     }
