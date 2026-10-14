@@ -260,3 +260,185 @@
 //! (`str`), the id, the string — and the host layer (`sans-effort-host`)
 //! checks the kind against the `Pending` before the routine sees it.
 //! `ABI.md` in the repository has the frame and record formats in full.
+//!
+//! # Effects That Can Fail
+//!
+//! A trait that can fail for reasons outside the routine — a file system, a
+//! lookup that may know no answer — answers with a `Result`, and its error
+//! type is part of the wire. Give the error [`Encode`] and [`Decode`], a tag
+//! byte per case, and the answer crosses as `bytes`: `00 · value` for `Ok`,
+//! `01 · error` for `Err` (an `Option` likewise: `00` for none, `01 · value`).
+//! A reply is checked against the `Result` when it is delivered, before the
+//! routine sees it: bytes that do not decode are refused — `MALFORMED` over
+//! the C ABI, a [`Refused`](sans_effort_core::driver::Refused) from
+//! `try_reply` in Rust — and the request stays open for a good reply.
+//!
+//! [`Encode`]: sans_effort_core::boundary::codec::Encode
+//! [`Decode`]: sans_effort_core::boundary::codec::Decode
+//!
+//! ```
+//! use core::{future::Future, ops::ControlFlow};
+//! use sans_effort_core::{
+//!     boundary::{
+//!         codec::{Decode, DecodeError, Encode, Reader, Writer},
+//!         pending::Pending,
+//!     },
+//!     driver::Driver,
+//!     reply::Answer,
+//!     step::Step,
+//! };
+//! use sans_effort_effects::{
+//!     ask::{Ask, Asked},
+//!     console::{WriteLine, WriteLineEffect},
+//!     ctx::{AsCtx, Ctx},
+//! };
+//!
+//! /// Why there is no greeting.
+//! #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+//! pub enum GreetingError {
+//!     /// No greeting is known for the name.
+//!     Unknown,
+//! }
+//!
+//! /// `Unknown` is tag `0`.
+//! impl Encode for GreetingError {
+//!     fn encode(&self, w: &mut Writer) {
+//!         match self {
+//!             GreetingError::Unknown => w.u8(0),
+//!         }
+//!     }
+//! }
+//!
+//! impl Decode for GreetingError {
+//!     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+//!         match r.u8()? {
+//!             0 => Ok(GreetingError::Unknown),
+//!             tag => Err(DecodeError::UnknownTag { tag }),
+//!         }
+//!     }
+//! }
+//!
+//! /// The greeting word for a name, if there is one.
+//! pub trait Greeting {
+//!     /// The greeting word for `name`.
+//!     fn greeting(&self, name: String)
+//!         -> impl Future<Output = Result<String, GreetingError>> + Send;
+//! }
+//!
+//! /// What `Greeting` records. Awaits `bytes`: an encoded `Result`.
+//! pub struct GreetingEffect(pub String);
+//!
+//! impl Ask for GreetingEffect {
+//!     type Reply = Result<String, GreetingError>;
+//! }
+//!
+//! impl<C: AsCtx + Sync> Greeting for C
+//! where
+//!     C::Vocabulary: From<Asked<GreetingEffect>> + Send,
+//! {
+//!     async fn greeting(&self, name: String) -> Result<String, GreetingError> {
+//!         self.ctx().ask(GreetingEffect(name)).await
+//!     }
+//! }
+//!
+//! enum Effect {
+//!     Greeting(Asked<GreetingEffect>),
+//!     WriteLine(WriteLineEffect),
+//! }
+//!
+//! impl From<Asked<GreetingEffect>> for Effect {
+//!     fn from(asked: Asked<GreetingEffect>) -> Self {
+//!         Effect::Greeting(asked)
+//!     }
+//! }
+//!
+//! impl From<WriteLineEffect> for Effect {
+//!     fn from(write: WriteLineEffect) -> Self {
+//!         Effect::WriteLine(write)
+//!     }
+//! }
+//!
+//! struct Greet<C>(C);
+//!
+//! impl<C: Greeting + WriteLine> Step for Greet<C> {
+//!     async fn step(&mut self) -> ControlFlow<()> {
+//!         match self.0.greeting("bob".into()).await {
+//!             Ok(word) => self.0.write_line(format!("{word}, bob!")),
+//!             Err(GreetingError::Unknown) => self.0.write_line("Who is bob?".into()),
+//!         }
+//!         ControlFlow::Break(())
+//!     }
+//! }
+//!
+//! let mut driver = Driver::<Effect>::new(|outbox| Greet(Ctx::new(outbox)).run());
+//! let Some(Effect::Greeting(Asked { reply, .. })) = driver.resume().into_iter().next() else {
+//!     unreachable!("it asks first")
+//! };
+//!
+//! // On the wire, a `Result` is a `bytes` reply.
+//! let Pending::Bytes(reply) = <Result<String, GreetingError>>::pending(reply) else {
+//!     unreachable!("a `Result` crosses as bytes")
+//! };
+//!
+//! // Not an encoded `Result<String, GreetingError>`: refused, and still open.
+//! let (reply, _why) = driver.try_reply(reply, vec![7]).err().ok_or("refused")?.into_parts();
+//!
+//! // `01 · 00`: `Err(GreetingError::Unknown)`.
+//! let told = driver.try_reply(reply, vec![1, 0])?;
+//! let Some(Effect::WriteLine(WriteLineEffect(text))) = told.into_iter().next() else {
+//!     unreachable!("then it writes")
+//! };
+//! assert_eq!(text, "Who is bob?");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Testing It
+//!
+//! An effect trait wants two kinds of test. The routine's _logic_ runs
+//! against a native impl, like `Greetings` above, in an ordinary async test.
+//! The _effect_ — what the routine asks for, and what it does with each
+//! answer — runs under a reifying context with
+//! [`testing::drive`](sans_effort_core::testing::drive) (the `testing`
+//! feature): it drives the routine and every machine the routine spawns,
+//! calling a handler for each effect, which answers asks through
+//! [`Answers`](sans_effort_core::testing::Answers) and records what was told.
+//! [`drive_with`](sans_effort_core::testing::drive_with) takes a schedule —
+//! [`Choices`](sans_effort_core::testing::schedule::Choices), from a
+//! fuzzer's bytes — to try the other orders a host may choose.
+//!
+//! ```
+//! # use core::{future::Future, ops::ControlFlow};
+//! # pub trait Lookup { fn lookup(&self, name: String) -> impl Future<Output = String> + Send; }
+//! # #[derive(Debug, Clone, PartialEq, Eq)] pub struct LookupEffect(pub String);
+//! # impl sans_effort_effects::ask::Ask for LookupEffect { type Reply = String; }
+//! # use sans_effort_effects::{ask::Asked, ctx::AsCtx};
+//! # impl<C: AsCtx + Sync> Lookup for C where C::Vocabulary: From<Asked<LookupEffect>> + Send {
+//! #     async fn lookup(&self, name: String) -> String { self.ctx().ask(LookupEffect(name)).await }
+//! # }
+//! # use sans_effort_effects::console::{WriteLine, WriteLineEffect};
+//! # enum Effect { Lookup(Asked<LookupEffect>), WriteLine(WriteLineEffect) }
+//! # impl From<Asked<LookupEffect>> for Effect { fn from(a: Asked<LookupEffect>) -> Self { Effect::Lookup(a) } }
+//! # impl From<WriteLineEffect> for Effect { fn from(w: WriteLineEffect) -> Self { Effect::WriteLine(w) } }
+//! # use sans_effort_core::step::Step;
+//! # struct Greet<C>(C);
+//! # impl<C: Lookup + WriteLine> Step for Greet<C> {
+//! #     async fn step(&mut self) -> ControlFlow<()> {
+//! #         let word = self.0.lookup("alice".into()).await;
+//! #         self.0.write_line(format!("{word}, alice!"));
+//! #         ControlFlow::Break(())
+//! #     }
+//! # }
+//! use sans_effort_core::{driver::Driver, testing::drive};
+//! use sans_effort_effects::ctx::Ctx;
+//!
+//! // `Greet` and its vocabulary `Effect`, from the example above.
+//! let mut written = Vec::new();
+//! drive(Driver::new(|outbox| Greet(Ctx::new(outbox)).run()), |effect, host| match effect {
+//!     Effect::Lookup(Asked { request: LookupEffect(name), reply }) => {
+//!         host.reply(reply, format!("Hello to {name}"));
+//!     }
+//!     Effect::WriteLine(WriteLineEffect(text)) => written.push(text),
+//! })?;
+//! assert_eq!(written, ["Hello to alice, alice!"]);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
