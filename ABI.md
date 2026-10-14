@@ -80,7 +80,7 @@ None of this section is contract: a host that keeps the contract above may be sh
 
 ### The Loop
 
-The spec is the state machine a host implements. Its host has three actions, and a host that does the same inherits what the model checker proved: no wake is lost, and "finished" and "stalled" are reported only when true.
+The spec is the state machine a host implements. Its host has three actions, and a host that does the same inherits what the model checker proved: no wake is lost, no pinned machine is called off its own worker, and "finished" and "stalled" are reported only when true.
 
 - _`call`:_ take the next event for some machine not already in a call — begin it, resume it, or reply to it — and make that call.
 - _`ret`:_ when the call returns, act on its output. Perform each ask, and queue its reply as the machine's next event when the answer comes. Begin each machine a spawn effect names. Queue a `resume` for each machine a woke frame names. Note each closed id: drop that id's pending work, and any reply to it still queued. Free the machine if it completed.

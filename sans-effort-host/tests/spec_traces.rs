@@ -8,7 +8,9 @@
 //! routines, with real channels, asks, `select`, spawning, and panics — and
 //! each call's output must be the spec's: the `woke` frames, the children
 //! spawned, the ids asked and closed, and the status. So must what `wakes`
-//! reports when the host is quiet.
+//! reports when the host is quiet. Each call runs on the thread of the spec's
+//! worker, so machines migrate as the spec moves them, a pinned one stays
+//! where it began, and a call on the wrong worker is refused.
 
 use async_channel::{Receiver, Sender};
 use sans_effort_core::{
@@ -17,7 +19,7 @@ use sans_effort_core::{
         host_effect::HostEffect,
         pending::Pending,
     },
-    driver::{BoxedRoutine, outbox::Outbox, status::Status},
+    driver::{BoxedRoutine, LocalBoxedRoutine, outbox::Outbox, status::Status},
     reply::handle::ReplyHandle,
     select::select,
 };
@@ -29,7 +31,8 @@ use sans_effort_host::{
 use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap},
-    sync::{Arc, Mutex, Once, PoisonError},
+    sync::{Arc, Mutex, Once, PoisonError, mpsc},
+    thread::{self, JoinHandle},
 };
 use testresult::TestResult;
 
@@ -41,6 +44,7 @@ enum Instr {
     Send(&'static str),
     Recv(&'static str),
     Spawn(&'static str),
+    SpawnPinned(&'static str),
     Ask,
     Race(&'static str),
     Panic,
@@ -77,6 +81,8 @@ impl Instance {
             "deadline" | "mistaken_ignores_closed" => Ok(&DEADLINE),
             "panic_wakes" => Ok(&PANIC_WAKES),
             "deadlock" => Ok(&DEADLOCK),
+            "ring" => Ok(&RING),
+            "front_desk" | "mistaken_ignores_pinning" => Ok(&FRONT_DESK),
             other => Err(format!(
                 "no instance {other}: add it here as in spec/host_protocol.qnt"
             )),
@@ -148,16 +154,83 @@ const DEADLOCK: Instance = Instance {
     root: "parent",
 };
 
+const RING: Instance = Instance {
+    programs: &[
+        (
+            "node0",
+            &[
+                Instr::Spawn("node1"),
+                Instr::Spawn("node2"),
+                Instr::Send("c1"),
+                Instr::Recv("c0"),
+                Instr::Send("c1"),
+                Instr::Recv("c0"),
+            ],
+        ),
+        (
+            "node1",
+            &[
+                Instr::Recv("c1"),
+                Instr::Send("c2"),
+                Instr::Recv("c1"),
+                Instr::Send("c2"),
+                Instr::Recv("c1"),
+            ],
+        ),
+        (
+            "node2",
+            &[
+                Instr::Recv("c2"),
+                Instr::Send("c0"),
+                Instr::Recv("c2"),
+                Instr::Send("c0"),
+                Instr::Recv("c2"),
+            ],
+        ),
+    ],
+    holds: &[("node0", &["c1"]), ("node1", &["c2"]), ("node2", &["c0"])],
+    channels: &["c0", "c1", "c2"],
+    root: "node0",
+};
+
+const FRONT_DESK: Instance = Instance {
+    programs: &[
+        (
+            "desk",
+            &[
+                Instr::Ask,
+                Instr::SpawnPinned("clerk_a"),
+                Instr::Ask,
+                Instr::SpawnPinned("clerk_b"),
+                Instr::Ask,
+                Instr::Recv("greet_a"),
+                Instr::Recv("greet_b"),
+            ],
+        ),
+        ("clerk_a", &[Instr::Ask, Instr::Send("greet_a")]),
+        ("clerk_b", &[Instr::Ask, Instr::Send("greet_b")]),
+    ],
+    holds: &[
+        ("desk", &[]),
+        ("clerk_a", &["greet_a"]),
+        ("clerk_b", &["greet_b"]),
+    ],
+    channels: &["greet_a", "greet_b"],
+    root: "desk",
+};
+
 // ---- The programs as real routines --------------------------------------
 
 enum Effect {
     Ask(ReplyHandle<()>),
     Spawn(Box<dyn FnOnce(Outbox<Effect>) -> BoxedRoutine + Send>),
+    SpawnPinned(Box<dyn FnOnce(Outbox<Effect>) -> LocalBoxedRoutine + Send>),
 }
 
 enum View {
     Ask(u64),
     Spawned(u64),
+    SpawnedPinned(u64),
 }
 
 /// As a binding's vocabulary does: a spawned child is registered when the
@@ -169,6 +242,7 @@ impl HostEffect for Effect {
         match self {
             Effect::Ask(reply) => (View::Ask(reply.id()), Some(Pending::Unit(reply))),
             Effect::Spawn(make) => (View::Spawned(table::new_boxed(make)), None),
+            Effect::SpawnPinned(make) => (View::SpawnedPinned(table::park_pinned(make)), None),
         }
     }
 }
@@ -178,6 +252,7 @@ impl Encode for View {
         let (tag, value) = match self {
             View::Ask(id) => (1, id),
             View::Spawned(handle) => (2, handle),
+            View::SpawnedPinned(handle) => (3, handle),
         };
         w.u8(tag);
         w.u64(*value);
@@ -221,7 +296,7 @@ impl World {
         let mut kit: HashMap<&'static str, Vec<Held>> = HashMap::new();
         for (_, program) in instance.programs {
             for instr in *program {
-                if let Instr::Spawn(child) = *instr {
+                if let Instr::Spawn(child) | Instr::SpawnPinned(child) = *instr {
                     kit.entry(child).or_default().push(bundle(child)?);
                 }
             }
@@ -274,7 +349,7 @@ fn program(
                             return;
                         }
                     }
-                    Instr::Spawn(child) => {
+                    Instr::Spawn(child) | Instr::SpawnPinned(child) => {
                         let senders = world
                             .kit
                             .lock()
@@ -283,7 +358,13 @@ fn program(
                             .and_then(Vec::pop)
                             .expect("a bundle for each spawn");
                         let make = program(Arc::clone(&world), child, senders);
-                        outbox.tell(Effect::Spawn(Box::new(make)));
+                        outbox.tell(if matches!(instr, Instr::Spawn(_)) {
+                            Effect::Spawn(Box::new(make))
+                        } else {
+                            Effect::SpawnPinned(Box::new(move |outbox| -> LocalBoxedRoutine {
+                                make(outbox)
+                            }))
+                        });
                     }
                     Instr::Ask => outbox.ask(Effect::Ask).await,
                     Instr::Race(c) => {
@@ -352,26 +433,11 @@ fn tag(v: &Value) -> Result<&str, String> {
         .ok_or_else(|| format!("an ITF variant: {v}"))
 }
 
-/// An ITF `Option`'s value, which `what` says must be there.
-fn some<'a>(v: &'a Value, what: &str) -> Result<&'a Value, String> {
-    match tag(v)? {
-        "Some" => Ok(at(v, "value")),
-        _ => Err(format!("{what}: {v}")),
-    }
-}
-
-/// The value at `key` in an ITF map, which `what` says must be there.
-fn lookup<'a>(map: &'a Value, key: u64, what: &str) -> Result<&'a Value, String> {
-    for entry in at(map, "#map")
-        .as_array()
-        .ok_or_else(|| format!("an ITF map: {map}"))?
-    {
-        let (k, v) = pair(entry)?;
-        if int(k)? == key {
-            return Ok(v);
-        }
-    }
-    Err(format!("{what}: {key}"))
+/// A step's flag, which `spec:traces` writes as a JSON boolean.
+fn flag(v: &Value, key: &str) -> Result<bool, String> {
+    at(v, key)
+        .as_bool()
+        .ok_or_else(|| format!("a step's {key} flag: {v}"))
 }
 
 // ---- The replay ----------------------------------------------------------------
@@ -401,6 +467,14 @@ impl Output {
 struct Replay {
     /// Real handles, by the spec's machine number.
     handles: Vec<u64>,
+    workers: Workers,
+    /// The worker of each machine's first call: a pinned machine's owner.
+    owners: HashMap<u64, u64>,
+    /// Calls not yet returned: each machine's status after it, and worker.
+    in_flight: HashMap<u64, (String, u64)>,
+    /// Machines not yet freed, by the spec's number.
+    live: BTreeSet<u64>,
+    calls: usize,
 }
 
 impl Replay {
@@ -459,7 +533,7 @@ impl Replay {
                         (FRAME_ASK, 1) => {
                             out.asked.insert(value);
                         }
-                        (FRAME_TELL, 2) => {
+                        (FRAME_TELL, 2 | 3) => {
                             out.spawned.insert(
                                 u64::try_from(self.handles.len()).map_err(|e| e.to_string())?,
                             );
@@ -472,6 +546,109 @@ impl Replay {
             }
         }
         Ok(out)
+    }
+
+    /// A `call` step: the same call, on the same worker's thread, must have
+    /// the spec's output.
+    fn call(&mut self, step: &Value) -> Result<(), String> {
+        let picks = at(step, "picks");
+        let event = at(picks, "e");
+        let worker = int(at(picks, "worker"))?;
+        let (machine, result) = match tag(event)? {
+            "Resume" => {
+                let machine = int(at(event, "value"))?;
+                let handle = self.real(machine)?;
+                (
+                    machine,
+                    self.workers.run(worker, move || table::resume(handle))?,
+                )
+            }
+            "Reply" => {
+                let (machine, id) = pair(at(at(event, "value"), "#tup"))?;
+                let (machine, id) = (int(machine)?, int(id)?);
+                let handle = self.real(machine)?;
+                let record = unit_reply(id);
+                (
+                    machine,
+                    self.workers
+                        .run(worker, move || table::reply(handle, &record))?,
+                )
+            }
+            other => return Err(format!("an unknown event {other}")),
+        };
+        self.calls += 1;
+        self.owners.entry(machine).or_insert(worker);
+
+        // A pinned machine called off its own worker: the spec changes
+        // nothing, and the table refuses the call.
+        if flag(step, "wrong_thread")? {
+            return match result {
+                Err(Error::WrongThread) => Ok(()),
+                result => Err(format!(
+                    "call on machine {machine} off its worker:\n  spec:  refused\n  table: {result:?}"
+                )),
+            };
+        }
+
+        let expected = Output::from_spec(at(step, "output"))?;
+        let stale = flag(step, "stale")?;
+        let actual = match result {
+            // A reply to a closed request, or to a machine gone: the spec
+            // delivers nothing, and the table refuses it.
+            Err(Error::Stale { .. } | Error::BadHandle) if stale => Output {
+                status: expected.status.clone(),
+                ..Output::default()
+            },
+            Err(Error::BadHandle) if expected.status == "Gone" => Output {
+                status: "Gone".into(),
+                ..Output::default()
+            },
+            result => self.observe(result)?,
+        };
+        if actual != expected {
+            return Err(format!(
+                "call on machine {machine}:\n  spec:  {expected:?}\n  table: {actual:?}"
+            ));
+        }
+        self.live.extend(actual.spawned.iter().copied());
+        if actual.status == "Gone" {
+            self.live.remove(&machine);
+        }
+        self.in_flight.insert(machine, (actual.status, worker));
+        Ok(())
+    }
+
+    /// A `ret` step: a machine whose call completed it is freed, on that
+    /// call's worker — a pinned machine's own.
+    fn ret(&mut self, step: &Value) -> Result<(), String> {
+        let machine = int(at(at(step, "picks"), "h"))?;
+        let (status, worker) = self
+            .in_flight
+            .remove(&machine)
+            .ok_or_else(|| format!("a return for machine {machine}, with no call in flight"))?;
+        if status == "Complete" {
+            let handle = self.real(machine)?;
+            self.workers
+                .run(worker, move || table::free(handle))?
+                .map_err(|e| format!("freeing machine {machine}: {e}"))?;
+            self.live.remove(&machine);
+        }
+        Ok(())
+    }
+
+    /// Free what a stall left behind — the table is process-wide — and say
+    /// how many calls the trace made. A pinned machine is freed by its owner;
+    /// one never called, by anyone.
+    fn finish(mut self) -> Result<usize, String> {
+        for machine in core::mem::take(&mut self.live) {
+            let handle = self.real(machine)?;
+            let owner = self.owners.get(&machine).copied().unwrap_or_default();
+            self.workers
+                .run(owner, move || table::free(handle))?
+                .unwrap_or_default();
+        }
+        drop(table::wakes());
+        Ok(self.calls)
     }
 
     /// The real `wakes`, as spec machine numbers.
@@ -490,6 +667,47 @@ impl Replay {
     }
 }
 
+/// A thread per spec worker, started when the trace first uses it.
+#[derive(Default)]
+struct Workers(HashMap<u64, Worker>);
+
+struct Worker {
+    jobs: mpsc::Sender<Box<dyn FnOnce() + Send>>,
+    thread: JoinHandle<()>,
+}
+
+impl Workers {
+    /// Run `job` on `worker`'s thread and wait for its result.
+    fn run<T: Send + 'static, F: FnOnce() -> T + Send + 'static>(
+        &mut self,
+        worker: u64,
+        job: F,
+    ) -> Result<T, String> {
+        let thread = self.0.entry(worker).or_insert_with(|| {
+            let (jobs, queue) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+            let thread = thread::spawn(move || queue.into_iter().for_each(|job| job()));
+            Worker { jobs, thread }
+        });
+        let (done, result) = mpsc::channel();
+        thread
+            .jobs
+            .send(Box::new(move || drop(done.send(job()))))
+            .map_err(|_| format!("worker {worker} has stopped"))?;
+        result
+            .recv()
+            .map_err(|_| format!("worker {worker} died mid-call"))
+    }
+}
+
+impl Drop for Workers {
+    fn drop(&mut self) {
+        for (_, Worker { jobs, thread }) in self.0.drain() {
+            drop(jobs);
+            let _joined = thread.join();
+        }
+    }
+}
+
 /// A unit reply record for request `id`: kind 3, the id, no payload.
 fn unit_reply(id: u64) -> Vec<u8> {
     let mut w = Writer::new();
@@ -505,81 +723,23 @@ fn replay(instance: &'static Instance, trace: &[Value]) -> Result<usize, String>
     let root = table::new(program(Arc::clone(&world), instance.root, root_senders));
     let mut run = Replay {
         handles: vec![root],
+        workers: Workers::default(),
+        owners: HashMap::new(),
+        in_flight: HashMap::new(),
+        live: BTreeSet::from([0]),
+        calls: 0,
     };
-    let mut live: BTreeSet<u64> = BTreeSet::from([0]);
-    let mut calls = 0;
 
-    for (index, steps) in trace.windows(2).enumerate() {
-        let [before, after] = steps else {
-            unreachable!("windows of two");
-        };
+    for (index, at_step) in trace.iter().enumerate() {
         let step = index + 1;
-        let picks = at(after, "picks");
-        let action = at(after, "action")
+        let action = at(at_step, "action")
             .as_str()
             .ok_or_else(|| format!("step {step}: no action"))?;
         match action {
-            "call" => {
-                let event = some(at(picks, "e"), "a call picks an event")?;
-                let (machine, result) = match tag(event)? {
-                    "Resume" => {
-                        let machine = int(at(event, "value"))?;
-                        (machine, table::resume(run.real(machine)?))
-                    }
-                    "Reply" => {
-                        let (machine, id) = pair(at(at(event, "value"), "#tup"))?;
-                        let (machine, id) = (int(machine)?, int(id)?);
-                        (machine, table::reply(run.real(machine)?, &unit_reply(id)))
-                    }
-                    other => return Err(format!("step {step}: an unknown event {other}")),
-                };
-                calls += 1;
-                let expected = Output::from_spec(lookup(
-                    at(after, "in_flight"),
-                    machine,
-                    "the call is in flight",
-                )?)?;
-                let stale = int(at(after, "stale"))? > int(at(before, "stale"))?;
-                let actual = match result {
-                    // A reply to a closed request, or to a machine gone: the
-                    // spec delivers nothing, and the table refuses it.
-                    Err(Error::Stale { .. } | Error::BadHandle) if stale => Output {
-                        status: expected.status.clone(),
-                        ..Output::default()
-                    },
-                    Err(Error::BadHandle) if expected.status == "Gone" => Output {
-                        status: "Gone".into(),
-                        ..Output::default()
-                    },
-                    result => run
-                        .observe(result)
-                        .map_err(|e| format!("step {step}: {e}"))?,
-                };
-                if actual != expected {
-                    return Err(format!(
-                        "step {step}, call on machine {machine}:\n  spec:  {expected:?}\n  table: {actual:?}"
-                    ));
-                }
-                live.extend(actual.spawned.iter().copied());
-                if actual.status == "Gone" {
-                    live.remove(&machine);
-                }
-            }
-            "ret" => {
-                let machine = int(some(at(picks, "h"), "a return picks a machine")?)?;
-                let out = Output::from_spec(lookup(
-                    at(before, "in_flight"),
-                    machine,
-                    "the call was in flight",
-                )?)?;
-                if out.status == "Complete" {
-                    table::free(run.real(machine)?)
-                        .map_err(|e| format!("step {step}: freeing machine {machine}: {e}"))?;
-                    live.remove(&machine);
-                }
-            }
+            "call" => run.call(at_step).map_err(|e| format!("step {step}, {e}"))?,
+            "ret" => run.ret(at_step).map_err(|e| format!("step {step}, {e}"))?,
             "quiet" => {
-                let expected = set(at(before, "wakes"))?;
+                let expected = set(at(at_step, "wakes"))?;
                 let actual = run.wakes()?;
                 if actual != expected {
                     return Err(format!(
@@ -591,13 +751,7 @@ fn replay(instance: &'static Instance, trace: &[Value]) -> Result<usize, String>
             other => return Err(format!("step {step}: an unknown action {other}")),
         }
     }
-
-    // A stall leaves machines behind; the table is process-wide.
-    for machine in live {
-        table::free(run.real(machine)?).unwrap_or_default();
-    }
-    drop(table::wakes());
-    Ok(calls)
+    run.finish()
 }
 
 #[test]
@@ -629,7 +783,7 @@ fn the_table_does_what_the_spec_says() -> TestResult {
             traces += 1;
         }
     }
-    assert!(traces >= 30, "the fixtures are there: {traces} traces");
+    assert!(traces >= 250, "the fixtures are there: {traces} traces");
     assert!(calls >= traces, "every trace makes calls: {calls}");
     Ok(())
 }

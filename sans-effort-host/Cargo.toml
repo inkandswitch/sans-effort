@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Everything a foreign host needs to step sans-effort routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
 readme = "README.md"
 autobenches = false
+# Replays `spec/traces/`, which lives outside the package.
+exclude = ["tests/spec_traces.rs"]
 
 categories = ["asynchronous", "external-ffi-bindings"]
 keywords = ["async", "coroutine", "effects", "ffi", "sans-io"]

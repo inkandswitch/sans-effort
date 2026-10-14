@@ -23,6 +23,7 @@ use core::{
 /// `Unpin`, structurally: it holds an id and an outbox handle and borrows
 /// nothing of itself, so a `join`, a `select`, or a hand-written combinator
 /// can poll it through `&mut` with no `Box::pin`.
+#[must_use = "an `Awaiting` does nothing until it is awaited, and dropping it closes the request"]
 pub struct Awaiting<E, T> {
     id: u64,
     outbox: Outbox<E>,

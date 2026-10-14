@@ -27,83 +27,12 @@
     procps
   ]);
 
-  # `quint run --mbt` writes full ITF states, which repeat the whole model at
-  # every step. The replay (sans-effort-host/tests/spec_traces.rs) compares
-  # only what a host can see, so each trace keeps that: the action and its
-  # picks, and after it the calls in flight with their outputs (and workers),
-  # `wakes`, and the counts of stale replies and wrong-worker calls. The steps after the verdict (`done`) go, and so do
-  # repeats: a small instance has few paths.
-  slim-traces = pkgs.writeText "slim-traces.py" ''
-    import glob, json, sys
-
-    raw, instance = sys.argv[1], sys.argv[2]
-    keep = ("in_flight", "wakes", "stale", "wrong_thread")
+  # Slims `quint run --mbt` traces to what the replay needs: nix/slim-traces.py.
+  slim-traces = ./slim-traces.py;
 
 
-    def slim(state):
-        out = {"action": state["mbt::actionTaken"], "picks": state["mbt::nondetPicks"]}
-        for name, value in state.items():
-            if name.rsplit("::", 1)[-1] in keep:
-                out[name.rsplit("::", 1)[-1]] = value
-        return out
-
-
-    def trace(path):
-        states = [slim(s) for s in json.load(open(path))["states"]]
-        while states and states[-1]["action"] == "done":
-            states.pop()
-        return states
-
-
-    paths = sorted(glob.glob(f"{raw}/{instance}_*.itf.json"),
-                   key=lambda p: int(p.rsplit("_", 1)[1].split(".")[0]))
-    distinct = list({json.dumps(t, sort_keys=True): t for t in map(trace, paths)}.values())
-    json.dump({"instance": instance, "traces": distinct}, sys.stdout, separators=(",", ":"))
-    print(f"{instance}: {len(distinct)} traces, {sum(map(len, distinct))} steps", file=sys.stderr)
-  '';
-
-  # TLC, which `spec:check` runs on the spec's liveness property, needs
-  # Apalache's two folds strict. As shipped they pass the accumulator on
-  # unevaluated, and TLC re-evaluates such an argument at every use inside
-  # ENABLED, which weak fairness needs: exponential in the spec's 8-step
-  # `run_to_wait`, so the check never finished. Binding the accumulator in a
-  # set comprehension evaluates it once. Writes `Apalache.tla` (patched) and
-  # `Variants.tla` from Apalache's jar into a directory; refuses to run if
-  # Apalache's text changed and a patch no longer matches.
-  strict-folds = pkgs.writeText "strict-folds.py" ''
-    import sys, zipfile
-
-    jar, out = sys.argv[1], sys.argv[2]
-    modules = zipfile.ZipFile(jar)
-
-
-    def module(name):
-        return modules.read("tla2sany/StandardModules/" + name).decode()
-
-
-    PATCHES = [
-        (r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
-        IF __seq = <<>>
-        THEN __v
-        ELSE ApaFoldSeqLeft(__Op, __Op(__v, Head(__seq)), Tail(__seq))""",
-         r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
-        IF __seq = <<>>
-        THEN __v
-        ELSE CHOOSE __r \in { ApaFoldSeqLeft(__Op, __acc, Tail(__seq)) :
-                              __acc \in { __Op(__v, Head(__seq)) } } : TRUE"""),
-        (r"""         ApaFoldSet(__Op, __Op(__v,__w), __T)""",
-         r"""         CHOOSE __r \in { ApaFoldSet(__Op, __acc, __T) :
-                           __acc \in { __Op(__v, __w) } } : TRUE"""),
-    ]
-
-    apalache = module("Apalache.tla")
-    for lazy, strict in PATCHES:
-        if apalache.count(lazy) != 1:
-            sys.exit("Apalache.tla has changed: a fold to make strict was not found")
-        apalache = apalache.replace(lazy, strict)
-    open(out + "/Apalache.tla", "w").write(apalache)
-    open(out + "/Variants.tla", "w").write(module("Variants.tla"))
-  '';
+  # Apalache's folds made strict for TLC: nix/strict-folds.py.
+  strict-folds = ./strict-folds.py;
 in {
   "bench:instructions" = cmd "Count instructions and allocations for the core workloads and the handle table (Gungraun, under Valgrind; Linux)" ''
     set -e
