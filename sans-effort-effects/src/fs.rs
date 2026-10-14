@@ -119,7 +119,6 @@ impl Decode for WriteFileEffect {
 
 /// Why a file could not be read or written.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[non_exhaustive]
 pub enum FsError {
     /// Nothing is at the path, or its directory does not exist.
     #[error("not found")]

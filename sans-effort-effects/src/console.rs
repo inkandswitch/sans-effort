@@ -124,7 +124,6 @@ impl Decode for WriteLineEffect {
 
 /// Why no line was read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[non_exhaustive]
 pub enum ReadLineError {
     /// The input has ended; no more lines will come.
     #[error("input closed")]
