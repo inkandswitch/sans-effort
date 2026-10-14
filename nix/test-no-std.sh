@@ -31,7 +31,9 @@ cargo check -p routines -p greeter_boundary --no-default-features --features san
 
 echo ""
 echo "===> Without a lock: one error, the one that says which feature to enable..."
-out=$(cargo check -p sans-effort-core --no-default-features --message-format=short 2>&1 || true)
+# No colour, whatever the environment asks for (CI sets CARGO_TERM_COLOR):
+# escape codes inside `error` would hide it from the count.
+out=$(cargo check -p sans-effort-core --no-default-features --message-format=short --color=never 2>&1 || true)
 # Short format: an error line is `error…`, or `path:line:col: error…`.
 errors=$(printf '%s\n' "$out" | grep -cE '(^|: )error(\[|:)' || true)
 if ! printf '%s\n' "$out" | grep -q 'needs a lock' || [ "$errors" -ne 2 ]; then
