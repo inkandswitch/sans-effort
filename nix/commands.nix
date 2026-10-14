@@ -76,7 +76,7 @@ in {
     echo "Done"
   '';
 
-  "test:host" = cmd "Run tests (default and all features) and doc tests" ''
+  "test:host" = cmd "Run tests (default and all features, and the demo vocabulary without its table) and doc tests" ''
     set -e
 
     echo "===> Running tests (default features)..."
@@ -85,6 +85,12 @@ in {
     echo ""
     echo "===> Running tests (all features)..."
     ${cargo} test --workspace --all-features
+
+    echo ""
+    echo "===> Running the demo routines' and vocabulary's tests without \`table\`..."
+    # The configuration `test:no_std` builds for wasm32, here with its tests:
+    # a test that needs the table but is not gated on it fails to compile.
+    ${cargo} test -p routines -p greeter_boundary --no-default-features --features sans-effort/spin
 
     echo ""
     echo "===> Running doc tests..."
