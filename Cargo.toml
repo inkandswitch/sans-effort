@@ -36,6 +36,8 @@ criterion = { version = "0.8.2", default-features = false, features = [
   "html_reports",
   "plotters",
 ] }
+# Dev only: `join_all`, the shape of a wide fan-out, in core's tests and benches.
+futures-util = { version = "0.3.34", default-features = false }
 getrandom = { version = "0.3.4", default-features = false }
 # Its runner, `gungraun-runner`, must be the same version: `nix/gungraun-runner.nix`.
 gungraun = "=0.20.0"

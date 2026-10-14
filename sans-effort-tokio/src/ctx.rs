@@ -45,7 +45,10 @@ impl<R, W> TokioCtx<R, W> {
     /// A context reading lines from `reader`, writing them to `writer`, and
     /// running pinned children on `pool`.
     #[must_use]
-    pub fn new(reader: R, writer: W, pool: LocalPoolHandle) -> Self {
+    pub fn new(reader: R, writer: W, pool: LocalPoolHandle) -> Self
+    where
+        W: io::Write,
+    {
         Self {
             clock: TokioClock,
             console: Arc::new(Console {

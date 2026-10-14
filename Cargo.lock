@@ -946,6 +946,7 @@ dependencies = [
  "async-channel",
  "bolero",
  "criterion",
+ "futures-util",
  "gungraun",
  "loom",
  "portable-atomic",

@@ -9,6 +9,7 @@ use super::{
 };
 use crate::reply::{Answer, handle::ReplyHandle, value::Value};
 use alloc::vec::Vec;
+use core::task::Waker;
 
 /// The shared half of a [`Driver`](super::Driver): effects go in from the
 /// routine's side, replies go in from the host's, and the driver takes the
@@ -59,6 +60,10 @@ struct Inner<E> {
     building: Option<u64>,
     held: Vec<Held<E>>,
     mail: Mail,
+    /// The driver's own waker. A request polled with it — awaited directly,
+    /// or through `join` or `select` — needs no waker kept: the driver polls
+    /// the routine after every reply anyway.
+    driver_waker: Option<Waker>,
 }
 
 /// A place in the order: an effect, or the request whose effect is being
@@ -108,6 +113,7 @@ impl<E> Outbox<E> {
                 building: None,
                 held: Vec::new(),
                 mail: Mail::new(),
+                driver_waker: None,
             })),
         }
     }
@@ -169,9 +175,21 @@ impl<E> Outbox<E> {
         }
     }
 
-    /// A later poll of a request: its reply, if the host has delivered one.
-    pub(super) fn collect(&self, id: u64) -> Option<Value> {
-        self.inner.lock().mail.collect(id)
+    /// The driver's own waker, once, as the driver is built.
+    pub(super) fn adopt(&self, waker: &Waker) {
+        self.inner.lock().driver_waker = Some(waker.clone());
+    }
+
+    /// A later poll of a request: its reply, if the host has delivered one;
+    /// otherwise `waker` is kept, to be woken when it does — unless it is the
+    /// driver's own.
+    pub(super) fn collect(&self, id: u64, waker: &Waker) -> Option<Value> {
+        let mut inner = self.inner.lock();
+        let own = inner
+            .driver_waker
+            .as_ref()
+            .is_some_and(|own| own.will_wake(waker));
+        inner.mail.collect(id, (!own).then_some(waker))
     }
 
     /// The request was dropped after it was recorded.

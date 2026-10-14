@@ -25,12 +25,23 @@ The core and the standard effect traits share one flat namespace: together they 
 
 ## A Routine
 
-A routine names only the effect traits it uses, as trait bounds:
+A routine names only the effect traits it uses, as trait bounds. On tokio it is an ordinary task: `tokio::spawn(Countdown { ctx: TokioCtx::new(…), left: 3 }.run())`.
+
+Behind a driver, a host decides what each effect means. It names the effects it offers in a _vocabulary_, an enum with a `From` impl for each: `Asked<…Effect>` for an effect that waits for an answer, the effect itself for one that does not. `Ctx<E>` then implements every trait whose effect `E` carries. The host resumes the driver, performs each effect it yields, and replies by handle until the routine completes:
 
 ```rust
 use core::{ops::ControlFlow, time::Duration};
-use sans_effort::{console::WriteLine, step::Step, time::Sleep};
+use sans_effort::{
+    ask::Asked,
+    console::{WriteLine, WriteLineEffect},
+    ctx::Ctx,
+    driver::{Driver, status::Status},
+    step::Step,
+    time::{Sleep, SleepEffect},
+};
+use std::collections::VecDeque;
 
+// The routine.
 struct Countdown<C> {
     ctx: C,
     left: u32,
@@ -47,9 +58,41 @@ impl<C: Sleep + WriteLine> Step for Countdown<C> {
         ControlFlow::Continue(())
     }
 }
+
+// A host's vocabulary: the effects it offers.
+enum Effect {
+    Sleep(Asked<SleepEffect>),
+    WriteLine(WriteLineEffect),
+}
+
+impl From<Asked<SleepEffect>> for Effect {
+    fn from(asked: Asked<SleepEffect>) -> Self {
+        Effect::Sleep(asked)
+    }
+}
+
+impl From<WriteLineEffect> for Effect {
+    fn from(write: WriteLineEffect) -> Self {
+        Effect::WriteLine(write)
+    }
+}
+
+// The host: perform each effect, reply by handle, until it completes.
+let mut driver = Driver::<Effect>::new(|outbox| Countdown { ctx: Ctx::new(outbox), left: 3 }.run());
+let mut written = Vec::new();
+let mut queue: VecDeque<Effect> = driver.resume().into();
+while let Some(effect) = queue.pop_front() {
+    match effect {
+        Effect::WriteLine(WriteLineEffect(line)) => written.push(line),
+        // A virtual clock: answer at once rather than wait.
+        Effect::Sleep(Asked { reply, .. }) => queue.extend(driver.reply(reply, ())),
+    }
+}
+assert_eq!(written, ["3", "2", "1"]);
+assert_eq!(driver.status(), Status::Complete);
 ```
 
-On tokio, `tokio::spawn(Countdown { ctx: TokioCtx::new(…), left: 3 }.run())`. Behind a driver, `Driver::new(|outbox| Countdown { ctx: Ctx::new(outbox), left: 3 }.run())`, then `resume()` and `reply(handle, value)` until it finishes.
+A host in another language does the same through `sans_effort::host` (the `host` feature), with request ids instead of handles; `ABI.md` in the repository describes it.
 
 ## Features
 
@@ -61,9 +104,18 @@ On tokio, `tokio::spawn(Countdown { ctx: TokioCtx::new(…), left: 3 }.run())`. 
 | `critical-section` | | `portable-atomic` backed by an application-provided `critical-section` |
 | `host` | | `sans_effort::host` |
 | `testing` | | `sans_effort::testing`; enable it in `[dev-dependencies]` |
-| `tokio` | | `sans_effort::tokio`; implies `std` |
+| `tokio` | | `sans_effort::tokio`; implies `std`; native targets only |
 
-At least one of `std` and `spin` must be enabled somewhere in the build. A library of routines should depend with `default-features = false` and leave the choice to the binary.
+At least one of `std` and `spin` must be enabled somewhere in the build. A library of routines should leave that choice to the binary that runs them, yet still build on its own. Depend with `default-features = false`, and forward a default `std` feature, which a `no_std` binary turns off:
+
+```text
+[dependencies]
+sans-effort = { version = "0.1", default-features = false }
+
+[features]
+default = ["std"]
+std = ["sans-effort/std"]
+```
 
 ## License
 

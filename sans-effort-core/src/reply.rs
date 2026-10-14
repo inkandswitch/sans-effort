@@ -102,6 +102,11 @@ pub trait Answer: Sized {
     /// Whether `wire` holds a valid answer, without keeping it. The default
     /// decodes a copy.
     ///
+    /// An override must accept exactly what [`from_wire`](Self::from_wire)
+    /// accepts: a reply is checked when it is delivered and decoded when the
+    /// routine next polls, and a reply that passes one and fails the other
+    /// panics there.
+    ///
     /// # Errors
     ///
     /// As [`from_wire`](Self::from_wire).

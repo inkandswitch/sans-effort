@@ -68,6 +68,12 @@ in {
     RUSTDOCFLAGS="-D warnings" ${cargo} doc --workspace --no-deps --all-features
 
     echo ""
+    echo "===> Building each published crate's docs alone, with its default features (as docs.rs does)..."
+    for crate in sans-effort-core sans-effort-effects sans-effort-host sans-effort-tokio sans-effort; do
+      RUSTDOCFLAGS="-D warnings" ${cargo} doc -q -p "$crate" --no-deps
+    done
+
+    echo ""
     echo "===> Linting the Nix commands' Python (ruff)..."
     ${ruff} check nix/*.py
     ${ruff} format --check nix/*.py
@@ -127,6 +133,17 @@ in {
     # them as leaves means standing in for the binary here. No default
     # features: the vocabulary's `table` feature (spawning) needs std.
     ${cargo} check -p routines -p greeter_boundary --no-default-features --features sans-effort/spin --target wasm32-unknown-unknown
+
+    echo ""
+    echo "===> Without a lock: one error, the one that says which feature to enable..."
+    out=$(${cargo} check -p sans-effort-core --no-default-features --message-format=short 2>&1 || true)
+    # Short format: an error line is `error…`, or `path:line:col: error…`.
+    errors=$(printf '%s\n' "$out" | grep -cE '(^|: )error(\[|:)' || true)
+    if ! printf '%s\n' "$out" | grep -q 'needs a lock' || [ "$errors" -ne 2 ]; then
+      printf '%s\n' "$out"
+      echo "expected only the missing-lock error (and cargo's summary), got $errors errors"
+      exit 1
+    fi
 
     echo ""
     echo "Done"

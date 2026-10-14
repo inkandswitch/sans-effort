@@ -5,6 +5,10 @@
 //! until a host asks, so that a host keeping its own table of handles can
 //! forget them too.
 //!
+//! A slot keeps the waker its future was last polled with, and a delivery
+//! hands it back to be woken, so a combinator that polls only what was woken
+//! (`FuturesUnordered`, `join_all`) sees the reply.
+//!
 //! Values are stored as [`Value`] — the closed menu — not type-erased. The
 //! slot records no kind: only a [`ReplyHandle<T>`] minted for it can deliver,
 //! and that handle's `T` is the proof. The kind check a foreign host needs
@@ -16,7 +20,7 @@ use crate::{
     reply::{handle::ReplyHandle, value::Value},
 };
 use alloc::vec::Vec;
-use core::sync::atomic::Ordering;
+use core::{sync::atomic::Ordering, task::Waker};
 
 /// Every mailbox gets a number no other mailbox in the process has: the one
 /// atomic the driver touches, once, at construction.
@@ -24,9 +28,9 @@ static DRIVERS: AtomicU64 = AtomicU64::new(1);
 
 pub(super) struct Mail {
     driver: u64,
-    /// Open slots by id. A `Vec` scanned linearly: a routine has one or two
-    /// requests in flight, and a tree or a hash costs more than two compares.
-    /// Wide fan-out would want a sorted `Vec` with binary search.
+    /// Open slots, sorted by id, so a lookup is a binary search. Ids are
+    /// minted in order, so opening a slot is almost always a push. Not
+    /// indexed by id: one long-lived request would keep every later slot.
     slots: Vec<Slot>,
     closed: Vec<u64>,
     next: u64,
@@ -36,6 +40,9 @@ struct Slot {
     id: u64,
     value: Option<Value>,
     check: Check,
+    /// The waker the request's future was last polled with, if it is still
+    /// waiting.
+    waker: Option<Waker>,
 }
 
 /// Whether a value is a valid answer for a slot: fixed when the request is
@@ -44,8 +51,9 @@ pub(super) type Check = fn(&Value) -> Result<(), DecodeError>;
 
 /// What became of a reply.
 pub(super) enum Delivery<T> {
-    /// Stored for the routine to collect.
-    Delivered,
+    /// Stored for the routine to collect. The waker its future was last
+    /// polled with, to wake once the lock is released.
+    Delivered(Option<Waker>),
 
     /// The routine no longer waits for it; discarded.
     Gone,
@@ -73,15 +81,37 @@ impl Mail {
     }
 
     pub(super) fn open(&mut self, id: u64, check: Check) {
-        self.slots.push(Slot {
+        let slot = Slot {
             id,
             value: None,
             check,
-        });
+            waker: None,
+        };
+        if self.slots.last().is_none_or(|last| id > last.id) {
+            self.slots.push(slot);
+        } else {
+            let at = self.slots.partition_point(|open| open.id < id);
+            self.slots.insert(at, slot);
+        }
     }
 
+    /// Take the slot at `at` out, keeping the rest in order.
+    fn remove(&mut self, at: usize) -> Option<Slot> {
+        if at + 1 == self.slots.len() {
+            self.slots.pop()
+        } else {
+            (at < self.slots.len()).then(|| self.slots.remove(at))
+        }
+    }
+
+    /// Where request `id`'s slot is. The newest first — almost always the
+    /// one asked about — then a binary search.
     fn position(&self, id: u64) -> Option<usize> {
-        self.slots.iter().position(|slot| slot.id == id)
+        let newest = self.slots.len().checked_sub(1)?;
+        if self.slots.get(newest).is_some_and(|slot| slot.id == id) {
+            return Some(newest);
+        }
+        self.slots.binary_search_by_key(&id, |slot| slot.id).ok()
     }
 
     /// `false` if no request with that id is waiting: it was already
@@ -102,7 +132,7 @@ impl Mail {
             Some(slot) => match (slot.check)(&value) {
                 Ok(()) => {
                     slot.value = Some(value);
-                    Delivery::Delivered
+                    Delivery::Delivered(slot.waker.take())
                 }
                 Err(error) => Delivery::Refused(ReplyHandle::mint(driver, id), error),
             },
@@ -110,14 +140,23 @@ impl Mail {
         }
     }
 
-    /// `Some(value)` closes the slot; `None` leaves it waiting.
-    pub(super) fn collect(&mut self, id: u64) -> Option<Value> {
+    /// `Some(value)` closes the slot; `None` leaves it waiting, to wake
+    /// `waker`, if there is one, when the reply comes.
+    pub(super) fn collect(&mut self, id: u64, waker: Option<&Waker>) -> Option<Value> {
         let at = self.position(id)?;
-        if self.slots.get(at)?.value.is_some() {
-            self.slots.swap_remove(at).value
-        } else {
-            None
+        let slot = self.slots.get_mut(at)?;
+        if slot.value.is_some() {
+            return self.remove(at).and_then(|slot| slot.value);
         }
+        if let Some(waker) = waker
+            && !slot
+                .waker
+                .as_ref()
+                .is_some_and(|kept| kept.will_wake(waker))
+        {
+            slot.waker = Some(waker.clone());
+        }
+        None
     }
 
     /// The routine dropped a polled request. Its slot goes; if no reply had
@@ -126,11 +165,10 @@ impl Mail {
     /// collected or not — was answered, not abandoned: the host has no work
     /// left to stop, so it is not reported.
     pub(super) fn close(&mut self, id: u64) {
-        if let Some(at) = self.position(id) {
-            let answered = self.slots.swap_remove(at).value.is_some();
-            if !answered {
-                self.closed.push(id);
-            }
+        if let Some(at) = self.position(id)
+            && self.remove(at).is_some_and(|slot| slot.value.is_none())
+        {
+            self.closed.push(id);
         }
     }
 

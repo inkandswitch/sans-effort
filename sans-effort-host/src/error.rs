@@ -13,7 +13,7 @@ pub enum Error {
     #[error("a reply to an id that was never issued")]
     BadInput,
     /// A reply record that does not parse: a bug in the host's encoder.
-    #[error("malformed reply record: {0}")]
+    #[error("malformed reply record")]
     Malformed(#[from] DecodeError),
     /// A reply to an id that was issued but is no longer awaited: already
     /// answered, or abandoned by the routine. Nothing changed.
@@ -63,6 +63,49 @@ impl Error {
             Error::Panicked => contract::PANICKED,
             Error::WrongKind { .. } => contract::WRONG_KIND,
             Error::WrongThread => contract::WRONG_THREAD,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+    use core::error::Error as _;
+
+    /// No error's message repeats its cause: a report that walks `source()`
+    /// prints each cause once.
+    #[test]
+    fn no_error_repeats_its_source() {
+        let causes = [
+            DecodeError::Truncated {
+                needed: 8,
+                available: 2,
+            },
+            DecodeError::TooLong { len: 7 },
+            DecodeError::InvalidUtf8 { valid_up_to: 3 },
+            DecodeError::UnknownTag { tag: 9 },
+            DecodeError::TrailingBytes { remaining: 1 },
+        ];
+        let errors = causes.map(Error::Malformed).into_iter().chain([
+            Error::BadHandle,
+            Error::BadInput,
+            Error::Stale { id: 1 },
+            Error::WrongKind {
+                id: 1,
+                expected: Kind::Unit,
+                got: Kind::Str,
+            },
+            Error::Busy,
+            Error::WrongThread,
+            Error::Finished,
+            Error::Panicked,
+        ]);
+        for error in errors {
+            if let Some(source) = error.source() {
+                let (message, cause) = (error.to_string(), source.to_string());
+                assert!(!message.contains(&cause), "{message:?} repeats {cause:?}");
+            }
         }
     }
 }

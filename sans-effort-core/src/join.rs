@@ -13,6 +13,11 @@
 //!     … host replies 2 … poll ─▶ b = Some(n), a still Pending
 //!     … host replies 1 … poll ─▶ a = Some(g)  ─▶ Ready((g, n))
 //! ```
+//!
+//! Every poll polls both sides, so a tree of nested joins polls each of its
+//! waiting requests on every reply. For many requests at once, use a
+//! combinator that polls only what was woken, such as `futures`' `join_all`
+//! or `FuturesUnordered`: a reply wakes the request it answers.
 
 use core::{
     future::{Future, IntoFuture, poll_fn},

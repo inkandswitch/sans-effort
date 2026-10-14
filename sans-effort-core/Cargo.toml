@@ -30,6 +30,7 @@ sans-effort-core = { path = ".", features = ["testing"] }
 async-channel = { workspace = true, features = ["std"] }
 bolero = { workspace = true }
 criterion = { workspace = true }
+futures-util = { workspace = true, features = ["alloc"] }
 gungraun = { workspace = true }
 testresult = { workspace = true }
 

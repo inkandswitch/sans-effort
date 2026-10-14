@@ -396,15 +396,13 @@
 //!
 //! An effect trait wants two kinds of test. The routine's _logic_ runs
 //! against a native impl, like `Greetings` above, in an ordinary async test.
-//! The _effect_ — what the routine asks for, and what it does with each
-//! answer — runs under a reifying context with
-//! [`testing::drive`](sans_effort_core::testing::drive) (the `testing`
-//! feature): it drives the routine and every machine the routine spawns,
-//! calling a handler for each effect, which answers asks through
-//! [`Answers`](sans_effort_core::testing::Answers) and records what was told.
-//! [`drive_with`](sans_effort_core::testing::drive_with) takes a schedule —
-//! [`Choices`](sans_effort_core::testing::schedule::Choices), from a
-//! fuzzer's bytes — to try the other orders a host may choose.
+//! The _effect_ (what the routine asks for, and what it does with each
+//! answer) runs under a reifying context with `sans_effort::testing::drive`,
+//! behind the `testing` feature. It drives the routine and every machine the
+//! routine spawns, calling a handler for each effect, which answers asks
+//! through `Answers` and records what was told. `drive_with` takes a
+//! schedule, such as `Choices` from a fuzzer's bytes, to try the other orders
+//! a host may choose.
 //!
 //! ```
 //! # use core::{future::Future, ops::ControlFlow};

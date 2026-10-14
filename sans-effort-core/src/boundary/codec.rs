@@ -435,7 +435,7 @@ impl<T: Decode> Decode for Option<T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum DecodeError {
     /// The input ended early.
-    #[error("input ended early: needed {needed} bytes, {available} left")]
+    #[error("input ended early: {available} of the {needed} bytes needed")]
     Truncated {
         /// Bytes the next field needed.
         needed: usize,
@@ -465,7 +465,7 @@ pub enum DecodeError {
     },
 
     /// Bytes were left after a complete value.
-    #[error("{remaining} trailing bytes after a complete value")]
+    #[error("bytes left after a complete value: {remaining}")]
     TrailingBytes {
         /// Bytes left over.
         remaining: usize,

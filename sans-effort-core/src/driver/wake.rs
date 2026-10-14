@@ -52,6 +52,13 @@ impl Wakeup {
         self.woken.store(false, Ordering::Release);
     }
 
+    /// A poll will begin at once, and covers any wake until then: mark the
+    /// routine woken without telling the hook. Only safe directly before a
+    /// poll, which begins with [`clear`](Self::clear).
+    pub(super) fn hold(&self) {
+        self.woken.store(true, Ordering::Release);
+    }
+
     /// Record the wake; tell the hook if this is the first since the last
     /// poll began.
     fn wake_up(&self) {

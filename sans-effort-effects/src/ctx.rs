@@ -13,7 +13,9 @@ use sans_effort_core::{
 /// implemented for `Ctx<E>` exactly when `E` can carry that trait's effect —
 /// `E: From<Asked<time::SleepEffect>>` for [`Sleep`](crate::time::Sleep) —
 /// so the set of traits `Ctx<E>` implements _is_ the set of effect traits the
-/// host has agreed to provide.
+/// host has agreed to provide. When a routine does not build because
+/// "`Ctx<E>: Sleep` was not satisfied", `E` lacks that `From` impl
+/// (`From<WriteLineEffect>` for a told effect, like `WriteLine`).
 ///
 /// The impls are written over [`AsCtx`], which `Ctx<E>` implements, so a
 /// newtype wrapping a `Ctx` gets the same effect traits from one method.

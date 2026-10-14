@@ -14,6 +14,12 @@ rust-version.workspace = true
 async-channel = { workspace = true }
 sans-effort = { workspace = true }
 
+# Routines pick no lock for the binary that runs them, but build on their own
+# with this default; a `no_std` binary depends with `default-features = false`.
+[features]
+default = ["std"]
+std = ["sans-effort/std"]
+
 [dev-dependencies]
 bolero = { workspace = true }
 sans-effort = { workspace = true, features = ["std", "testing"] }

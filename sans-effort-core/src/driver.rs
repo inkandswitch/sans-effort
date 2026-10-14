@@ -397,9 +397,13 @@ mod tests {
     use alloc::string::String;
     use core::{
         ops::ControlFlow,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         task::{Context, Poll, Waker},
     };
-    use std::sync::PoisonError;
+    use std::{
+        sync::{Arc, Mutex, PoisonError},
+        task::Wake,
+    };
     use testresult::TestResult;
 
     #[derive(Debug)]
@@ -454,6 +458,169 @@ mod tests {
         Ok(handle)
     }
 
+    /// Polls `inner` on the first poll, and after that only once a waker it
+    /// handed `inner` has fired: the shape of `futures`' `FuturesUnordered`,
+    /// and of `join_all` over more than thirty futures.
+    struct WhenWoken<F> {
+        inner: Pin<Box<F>>,
+        flag: Arc<Flag>,
+    }
+
+    struct Flag {
+        set: AtomicBool,
+        parent: Mutex<Option<Waker>>,
+    }
+
+    impl Wake for Flag {
+        fn wake(self: Arc<Self>) {
+            self.set.store(true, Ordering::SeqCst);
+            let parent = self
+                .parent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some(parent) = parent {
+                parent.wake();
+            }
+        }
+    }
+
+    impl<F: Future> WhenWoken<F> {
+        fn new(inner: F) -> Self {
+            Self {
+                inner: Box::pin(inner),
+                flag: Arc::new(Flag {
+                    set: AtomicBool::new(true),
+                    parent: Mutex::new(None),
+                }),
+            }
+        }
+    }
+
+    impl<F: Future> Future for WhenWoken<F> {
+        type Output = F::Output;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+            *self
+                .flag
+                .parent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(cx.waker().clone());
+            if !self.flag.set.swap(false, Ordering::SeqCst) {
+                return Poll::Pending;
+            }
+            let waker = Waker::from(Arc::clone(&self.flag));
+            self.inner.as_mut().poll(&mut Context::from_waker(&waker))
+        }
+    }
+
+    /// A request awaited through a combinator that polls only what was woken
+    /// still sees its reply: delivering it wakes the waker it was last
+    /// polled with. The driver polls right after, so the host's wake hook is
+    /// not told: it would ask the host to resume the machine it is calling.
+    #[test]
+    fn a_reply_wakes_the_request_it_answers() -> TestResult {
+        let mut driver = Driver::new(|outbox: Outbox<Effect>| async move {
+            let answer = WhenWoken::new(outbox.ask(Effect::Ask).into_future()).await;
+            outbox.tell(Effect::Say(answer));
+        });
+        let hooked = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&hooked);
+        driver.on_wake(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        });
+        let (_, handles) = split(driver.resume());
+        let (said, _) = split(driver.reply(one(handles)?, String::from("woken")));
+        assert_eq!(said, ["woken"]);
+        assert_eq!(driver.status(), Status::Complete);
+        assert_eq!(hooked.load(Ordering::SeqCst), 0, "the hook is not told");
+        Ok(())
+    }
+
+    /// An `Answer` whose `check` accepts what its `from_wire` refuses breaks
+    /// the contract the driver relies on; the panic names the type and the
+    /// rule, rather than reading as the library's own bug.
+    #[test]
+    #[should_panic(expected = "`Answer::check` accepted a reply its `from_wire` refuses")]
+    fn an_answer_whose_check_and_decode_disagree_panics_naming_both() {
+        struct Odd(u64);
+
+        impl Answer for Odd {
+            type Wire = u64;
+
+            fn into_wire(self) -> u64 {
+                self.0
+            }
+
+            fn from_wire(wire: u64) -> Result<Self, DecodeError> {
+                if wire % 2 == 1 {
+                    Ok(Odd(wire))
+                } else {
+                    Err(DecodeError::UnknownTag { tag: 0 })
+                }
+            }
+
+            fn check(_: &u64) -> Result<(), DecodeError> {
+                Ok(())
+            }
+        }
+
+        let mut driver = Driver::new(|outbox: Outbox<ReplyHandle<Odd>>| async move {
+            let _ = outbox.ask(|reply| reply).await;
+        });
+        let Some(reply) = driver.resume().into_iter().next() else {
+            return;
+        };
+        drop(driver.reply(reply, Odd(2)));
+    }
+
+    /// A request whose effect asks again while it is built opens its slot
+    /// after the inner one's; with an older request still open, it lands
+    /// between them. Each reply still finds its request, in any order.
+    #[test]
+    fn slots_opened_out_of_order_are_found() {
+        let orders = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for order in orders {
+            let mut driver = Driver::new(|outbox: Outbox<Effect>| async move {
+                let older = outbox.ask(Effect::Ask).into_future();
+                let mut inner = None;
+                let outer = outbox
+                    .ask(|reply| {
+                        inner = Some(outbox.ask(Effect::Ask).into_future());
+                        Effect::Ask(reply)
+                    })
+                    .into_future();
+                let Some(inner) = inner else { return };
+                let (a, (b, c)) = crate::join::join(older, crate::join::join(outer, inner)).await;
+                outbox.tell(Effect::Say(format!("{a}{b}{c}")));
+            });
+            let (_, mut handles) = split(driver.resume());
+            handles.sort_by_key(ReplyHandle::id);
+            let ids: Vec<u64> = handles.iter().map(ReplyHandle::id).collect();
+            assert_eq!(ids, [1, 2, 3]);
+
+            let mut handles: Vec<Option<ReplyHandle<String>>> =
+                handles.into_iter().map(Some).collect();
+            let mut said = Vec::new();
+            for at in order {
+                let Some(handle) = handles.get_mut(at).and_then(Option::take) else {
+                    continue;
+                };
+                let answer = ["a", "b", "c"].get(at).copied().unwrap_or_default();
+                said.extend(split(driver.reply(handle, String::from(answer))).0);
+            }
+            assert_eq!(said, ["abc"], "answered in the order {order:?}");
+            assert_eq!(driver.status(), Status::Complete);
+        }
+    }
+
     /// Whatever it holds, a yield gives it back as it was: emptiness is
     /// "no effects and no closed ids", the parts come out unchanged, `map`
     /// touches only the effects, and a `Vec` is the effects alone.
@@ -491,7 +658,7 @@ mod tests {
     }
 
     /// Requests kept alive past the call that built them, so none closes.
-    type Kept = std::sync::Arc<std::sync::Mutex<Vec<awaiting::Awaiting<Effect, String>>>>;
+    type Kept = Arc<Mutex<Vec<awaiting::Awaiting<Effect, String>>>>;
 
     /// A request's effect built by code that records more of its own — two
     /// requests and a saying. Everything leaves in the order it was
@@ -951,7 +1118,7 @@ mod tests {
 
     /// A queue two routines share: the smallest in-process channel. It stores
     /// no waker; the host resumes idle machines.
-    type Queue = std::sync::Arc<std::sync::Mutex<alloc::collections::VecDeque<String>>>;
+    type Queue = Arc<Mutex<VecDeque<String>>>;
 
     fn recv(queue: &Queue) -> impl Future<Output = String> + '_ {
         core::future::poll_fn(|_| {
@@ -1061,9 +1228,7 @@ mod tests {
     /// A queue that stores the waiter's waker when empty and calls it on the
     /// next send — the part of a real channel that matters here.
     #[derive(Clone, Default)]
-    struct Signal(
-        std::sync::Arc<std::sync::Mutex<(alloc::collections::VecDeque<String>, Option<Waker>)>>,
-    );
+    struct Signal(Arc<Mutex<(VecDeque<String>, Option<Waker>)>>);
 
     impl Signal {
         fn send(&self, message: &str) {
@@ -1119,22 +1284,19 @@ mod tests {
         }
     }
 
-    fn counting() -> (
-        std::sync::Arc<core::sync::atomic::AtomicUsize>,
-        impl Fn() + Send + Sync + 'static,
-    ) {
-        let count = std::sync::Arc::new(core::sync::atomic::AtomicUsize::new(0));
+    fn counting() -> (Arc<AtomicUsize>, impl Fn() + Send + Sync + 'static) {
+        let count = Arc::new(AtomicUsize::new(0));
         let hook = {
-            let count = std::sync::Arc::clone(&count);
+            let count = Arc::clone(&count);
             move || {
-                count.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+                count.fetch_add(1, Ordering::SeqCst);
             }
         };
         (count, hook)
     }
 
-    fn woken(count: &core::sync::atomic::AtomicUsize) -> usize {
-        count.load(core::sync::atomic::Ordering::SeqCst)
+    fn woken(count: &AtomicUsize) -> usize {
+        count.load(Ordering::SeqCst)
     }
 
     #[test]

@@ -30,6 +30,7 @@ pub(super) struct Stepper<E, F: ?Sized> {
 impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
     pub(super) fn new(future: Pin<Box<F>>, outbox: Outbox<E>) -> Self {
         let (wakeup, waker) = Wakeup::new();
+        outbox.adopt(&waker);
         Self {
             future: Some(future),
             outbox,
@@ -49,7 +50,16 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
         value: A,
     ) -> Result<Yield<E>, Refused<A>> {
         match self.outbox.deliver(reply, value.into_wire().into_value()) {
-            Delivery::Delivered => Ok(self.poll()),
+            Delivery::Delivered(waker) => {
+                if let Some(waker) = waker {
+                    // The poll below covers this wake. Marked as woken first,
+                    // so the hook is not called: it would tell the host to
+                    // resume the machine it is calling now.
+                    self.wakeup.hold();
+                    waker.wake();
+                }
+                Ok(self.poll())
+            }
             Delivery::Gone => Ok(Yield::default()),
             Delivery::Refused(reply, error) => Err(Refused { reply, error }),
         }

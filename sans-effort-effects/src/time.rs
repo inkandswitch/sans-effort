@@ -16,7 +16,9 @@ use sans_effort_core::{
 /// Wait for a duration.
 ///
 /// Infallible: nothing a routine could act on makes a sleep fail. A host may
-/// answer at once, after a real delay, or on a virtual clock.
+/// answer at once, after a real delay, or on a virtual clock. A driven host
+/// sees whole milliseconds ([`SleepEffect::millis`]), so a sleep shorter than
+/// one millisecond may not wait at all there, though it does natively.
 ///
 /// # Cancellation
 ///

@@ -43,14 +43,22 @@ impl<E, T> Awaiting<E, T> {
 impl<E, A: Answer> Future for Awaiting<E, A> {
     type Output = A;
 
-    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<A> {
-        match self.outbox.collect(self.id) {
+    #[expect(
+        clippy::panic,
+        reason = "a reply that passed `Answer::check` and fails `from_wire` is a broken `Answer` impl, reported against the type"
+    )]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<A> {
+        match self.outbox.collect(self.id, cx.waker()) {
             Some(value) => {
                 let wire = A::Wire::from_value(value).unwrap_or_else(|| {
                     unreachable!("a ReplyHandle is only minted for a slot of its kind")
                 });
-                Poll::Ready(A::from_wire(wire).unwrap_or_else(|_| {
-                    unreachable!("a reply is checked against its answer when delivered")
+                Poll::Ready(A::from_wire(wire).unwrap_or_else(|error| {
+                    panic!(
+                        "`{}`'s `Answer::check` accepted a reply its `from_wire` refuses \
+                         ({error}): the two must agree",
+                        core::any::type_name::<A>()
+                    )
                 }))
             }
             None => Poll::Pending,

@@ -68,6 +68,46 @@ impl<T> Mutex<T> {
 #[cfg(all(not(feature = "std"), feature = "spin"))]
 pub(crate) type Mutex<T> = spin::Mutex<T>;
 
+/// With neither feature, a stand-in so the rest of the crate type-checks and
+/// the `compile_error!` above is the only error reported. The crate does not
+/// build in this configuration, so none of this runs: its guard cannot even
+/// be made.
+#[cfg(not(any(feature = "std", feature = "spin")))]
+pub(crate) struct Mutex<T>(core::marker::PhantomData<fn() -> T>);
+
+#[cfg(not(any(feature = "std", feature = "spin")))]
+pub(crate) struct Guard<'a, T>(
+    core::convert::Infallible,
+    core::marker::PhantomData<&'a mut T>,
+);
+
+#[cfg(not(any(feature = "std", feature = "spin")))]
+impl<T> Mutex<T> {
+    pub(crate) fn new(_value: T) -> Self {
+        Self(core::marker::PhantomData)
+    }
+
+    pub(crate) fn lock(&self) -> Guard<'_, T> {
+        unreachable!("sans-effort-core does not build without a lock feature")
+    }
+}
+
+#[cfg(not(any(feature = "std", feature = "spin")))]
+impl<T> core::ops::Deref for Guard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        match self.0 {}
+    }
+}
+
+#[cfg(not(any(feature = "std", feature = "spin")))]
+impl<T> core::ops::DerefMut for Guard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        match self.0 {}
+    }
+}
+
 #[cfg(feature = "portable-atomic")]
 pub(super) use portable_atomic::{AtomicBool, AtomicU64};
 

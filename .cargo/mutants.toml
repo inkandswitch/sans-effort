@@ -20,6 +20,20 @@ exclude_re = [
   # The loom lock is built only with `--cfg sans_effort_loom`, which the tests
   # do not set; `test:loom` runs the models that use it.
   "-> loom::sync::MutexGuard",
+  # The outbox learns the driver's waker only to skip keeping a waker that
+  # would wake the driver, which polls after every reply anyway. Without it
+  # every request keeps one, with the same result.
+  "replace Outbox<E>::adopt with \\(\\)",
+  # `Mail::open` pushes when the new id is the highest (`>`) and otherwise
+  # inserts at its sorted place (`<`); the insert is right in either case,
+  # so the push test is only a shortcut. Ids are unique, so `<` and `<=`
+  # sort alike.
+  "replace > with (>=|==) in Mail::open",
+  "replace < with <= in Mail::open",
+  # `Mail::remove` pops when the slot is the last and otherwise removes it in
+  # place, which is right in either case; `at` always names a slot.
+  "replace \\+ with \\* in Mail::remove",
+  "replace < with <= in Mail::remove",
 ]
 
 exclude_globs = [

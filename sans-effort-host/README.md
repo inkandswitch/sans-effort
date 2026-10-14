@@ -38,4 +38,4 @@ The raw path: a `cdylib` exports the functions over `table`, and any language th
 
 ## `no_std`
 
-Everything but `table` and `record` is `no_std` + `alloc`. The table needs a process-wide lock, a `HashMap`, and `catch_unwind` for panic isolation, so it is behind the default `std` feature; a binding on a target without `std` holds its `Encoded` machines in statics of its own.
+Everything but `table` and `record` is `no_std` + `alloc`. The table needs a process-wide lock, a `HashMap`, and `catch_unwind` for panic isolation, so it is behind the default `std` feature; a binding on a target without `std` holds its `Encoded` machines in statics of its own. On a target that aborts on panic, such as `wasm32-unknown-unknown`, there is no isolation: a panicking routine stops the whole instance instead of returning `PANICKED`.

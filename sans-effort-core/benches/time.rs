@@ -34,6 +34,17 @@ fn fanout(c: &mut Criterion) {
     group.finish();
 }
 
+fn wide(c: &mut Criterion) {
+    let mut group = c.benchmark_group("wide");
+    for n in [100_u64, 1_000, 10_000] {
+        group.throughput(Throughput::Elements(n));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            b.iter(|| workloads::wide(black_box(n)));
+        });
+    }
+    group.finish();
+}
+
 fn ring(c: &mut Criterion) {
     let mut group = c.benchmark_group("ring");
     for (nodes, rounds) in [(2_usize, 500_u64), (16, 250)] {
@@ -48,5 +59,5 @@ fn ring(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, asks, fanout, ring);
+criterion_group!(benches, asks, fanout, wide, ring);
 criterion_main!(benches);
