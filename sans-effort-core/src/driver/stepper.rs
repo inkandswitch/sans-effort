@@ -91,9 +91,8 @@ impl<E, F: Future<Output = ()> + ?Sized> Stepper<E, F> {
             self.future = None;
         }
 
-        let (effects, outstanding) = self.outbox.drain();
+        let (yielded, outstanding) = self.outbox.drain();
         self.status = Status::classify(poll, outstanding);
-
-        Yield::new(effects, self.outbox.take_closed())
+        yielded
     }
 }

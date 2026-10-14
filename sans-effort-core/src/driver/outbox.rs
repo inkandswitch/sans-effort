@@ -1,6 +1,7 @@
 //! Where a routine's context records what it wants the host to do.
 
 use super::{
+    Yield,
     asking::Asking,
     batch::Batch,
     mail::{Check, Delivery, Mail},
@@ -183,17 +184,15 @@ impl<E> Outbox<E> {
         self.inner.lock().mail.deliver(reply, value)
     }
 
-    /// Everything recorded since the last poll, and how many requests are
-    /// still open — read together so the two agree.
-    pub(super) fn drain(&self) -> (Batch<E>, usize) {
+    /// Everything since the last poll — the effects recorded and the ids
+    /// closed — and how many requests are still open, read under one lock so
+    /// the three agree.
+    pub(super) fn drain(&self) -> (Yield<E>, usize) {
         let mut inner = self.inner.lock();
         let effects = core::mem::take(&mut inner.effects);
+        let closed = inner.mail.take_closed();
         let outstanding = inner.mail.outstanding();
-        (effects, outstanding)
-    }
-
-    pub(super) fn take_closed(&self) -> Vec<u64> {
-        self.inner.lock().mail.take_closed()
+        (Yield::new(effects, closed), outstanding)
     }
 }
 
