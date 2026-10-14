@@ -23,6 +23,14 @@
 //! [`Error::Panicked`]; the host must not touch that handle again. Handles
 //! are never `0` and never reused, so a stale one is [`Error::BadHandle`]
 //! rather than a fault.
+//!
+//! A routine may call the table: spawning registers a child mid-poll, and a
+//! routine's destructors run with no lock of the table's held. The locks are
+//! taken in one order — a machine's own, then the table's, then the list of
+//! wakes — and a machine's own is only tried, never waited on (a collision is
+//! [`Error::Busy`], even from the routine itself), so they cannot deadlock.
+//! `design/deadlocks.md` covers the rest: what a host catches, and what a
+//! routine must avoid.
 
 use crate::{
     contract::{FRAME_WOKE, OK},
@@ -479,7 +487,13 @@ pub fn free(handle: u64) -> Result<(), Error> {
 fn free_unrecorded(handle: u64) -> Result<(), Error> {
     let mut table = table();
 
-    if table.machines.remove(&handle).is_some() || table.parked.remove(&handle).is_some() {
+    // Dropped once the lock is released: a routine's destructors may call
+    // back into the table.
+    let migrating = table.machines.remove(&handle);
+    let parked = table.parked.remove(&handle);
+    if migrating.is_some() || parked.is_some() {
+        drop(table);
+        drop((migrating, parked));
         return Ok(());
     }
 
@@ -487,7 +501,8 @@ fn free_unrecorded(handle: u64) -> Result<(), Error> {
         Some(owner) if *owner == thread::current().id() => {
             table.pinned.remove(&handle);
             drop(table);
-            LOCAL.with(|local| local.borrow_mut().remove(&handle));
+            let machine = LOCAL.with(|local| local.borrow_mut().remove(&handle));
+            drop(machine);
             Ok(())
         }
         Some(_) => Err(Error::WrongThread),
@@ -767,6 +782,75 @@ mod tests {
         })
         .join()
         .map_err(|_| "the owner's thread panicked")??;
+        Ok(())
+    }
+
+    /// Frees another machine when dropped, and says whether that worked: a
+    /// routine whose destructor calls back into the table.
+    struct FreesOnDrop {
+        other: u64,
+        freed: Arc<OnceLock<Result<(), Error>>>,
+    }
+
+    impl Drop for FreesOnDrop {
+        fn drop(&mut self) {
+            let _first = self.freed.set(free(self.other));
+        }
+    }
+
+    /// `free(h)` on another thread, failing rather than hanging if it never
+    /// returns.
+    fn free_or_hang(h: u64) -> TestResult {
+        let (done, finished) = std::sync::mpsc::channel();
+        thread::spawn(move || done.send(free(h)));
+        finished
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|_| "free never returned: the table deadlocked")??;
+        Ok(())
+    }
+
+    #[test]
+    fn a_freed_routine_s_destructor_may_call_the_table() -> TestResult {
+        let other = new(|outbox| Echo(outbox).run());
+        let freed = Arc::new(OnceLock::new());
+        let destructor = FreesOnDrop {
+            other,
+            freed: Arc::clone(&freed),
+        };
+        let h = new(move |outbox: Outbox<Effect>| async move {
+            let _destructor = destructor;
+            Echo(outbox).run().await;
+        });
+        resume(h)?;
+
+        free_or_hang(h)?;
+        assert_eq!(freed.get(), Some(&Ok(())), "the destructor freed the other");
+        assert_eq!(resume(other), Err(Error::BadHandle));
+        Ok(())
+    }
+
+    #[test]
+    fn a_freed_pinned_routine_s_destructor_may_call_the_table() -> TestResult {
+        let freed = Arc::new(OnceLock::new());
+        let seen = Arc::clone(&freed);
+        thread::spawn(move || -> TestResult {
+            let other = park_pinned(pinned_echo);
+            resume(other)?;
+            let destructor = FreesOnDrop { other, freed: seen };
+            let h = park_pinned(move |outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+                Box::pin(async move {
+                    let _destructor = destructor;
+                    Echo(outbox).run().await;
+                })
+            });
+            resume(h)?;
+            free(h)?;
+            assert_eq!(resume(other), Err(Error::BadHandle));
+            Ok(())
+        })
+        .join()
+        .map_err(|_| "the owner's thread panicked")??;
+        assert_eq!(freed.get(), Some(&Ok(())), "the destructor freed the other");
         Ok(())
     }
 

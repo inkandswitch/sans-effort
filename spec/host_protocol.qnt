@@ -8,11 +8,13 @@
 // modelled exactly is what the ABI promises about calls: a wake during a
 // call is a `woke` frame in that call's output; a wake outside any call — or
 // during one that fails — waits for `wakes`; a race's loser closes; a child
-// exists only if the call that spawned it returned.
+// exists only if the call that spawned it returned; a pinned machine stays
+// on the worker that began it.
 //
-// The host is the recommended shape: at most one call per machine, outputs
-// handled as calls return, closed frames dropping replies not yet sent, and
-// when nothing is left, `wakes` — then a verdict, "end" or "stall".
+// The host is the recommended shape: at most one call per machine, a pinned
+// machine's calls on its own worker, outputs handled as calls return, closed
+// frames dropping replies not yet sent, and when nothing is left, `wakes` —
+// then a verdict, "end" or "stall".
 //
 // Check with `nix develop --command spec:check`.
 
@@ -25,6 +27,8 @@ module types {
     | Recv(str)
     // Start a child running a program: a tell, which the host begins.
     | Spawn(str)
+    // The same, pinned: the child stays on the worker that begins it.
+    | SpawnPinned(str)
     // Ask the host and wait for the reply.
     | Ask
     // Receive on a channel and ask the host together, as
@@ -54,6 +58,9 @@ module protocol {
   // A closed frame drops the reply the host had queued. (False: the Python
   // host's mistake, fixed in the deadline work.)
   const DROPS_CLOSED: bool
+  // A pinned machine's calls go to the worker that began it. (False: a host
+  // that calls on any worker, which the table refuses as `WRONG_THREAD`.)
+  const ROUTES_PINNED: bool
 
   // Enough instructions to run any one call to its next wait.
   pure val STEPS = 8
@@ -83,6 +90,9 @@ module protocol {
     racing: int,
     next_id: int,
     holds: Set[str],
+    // Stays on the worker that begins it: `owner`, or -1 before that.
+    pinned: bool,
+    owner: int,
   }
 
   // The library while a call runs, and what the call has emitted so far.
@@ -94,8 +104,9 @@ module protocol {
     spawned: Set[int],
     asked: Set[int],
     closed: Set[int],
-    // Programs of children spawned in this call, registered when it returns.
-    children: List[str],
+    // Children spawned in this call, registered when it returns: each
+    // program, and whether it is pinned.
+    children: List[(str, bool)],
   }
 
   type Event =
@@ -109,6 +120,8 @@ module protocol {
     asked: Set[int],
     closed: Set[int],
     status: Status,
+    // The worker the call runs on.
+    worker: int,
   }
 
   // ---- The library ------------------------------------------------------
@@ -128,10 +141,12 @@ module protocol {
   var verdict: str
   // Replies the host sent to a request already closed (`STALE`).
   var stale: int
+  // Calls the table refused as on the wrong worker (`WRONG_THREAD`).
+  var wrong_thread: int
   // Host actions taken so far: bounded exactly when every run terminates.
   var steps: int
 
-  pure def fresh(prog: str): Machine = {
+  pure def fresh(prog: str, pinned: bool): Machine = {
     prog: prog,
     pc: 0,
     status: NotStarted,
@@ -141,6 +156,8 @@ module protocol {
     racing: 0,
     next_id: 1,
     holds: HOLDS.get(prog),
+    pinned: pinned,
+    owner: -1,
   }
 
   pure def update(w: World, h: int, f: Machine => Machine): World =
@@ -180,6 +197,13 @@ module protocol {
     drop_senders({ ...done, closed: done.closed.union(m.asks) }, m.holds)
   }
 
+  // The child's closure holds its senders already; the table registers it
+  // only when this call returns.
+  pure def spawn(w: World, h: int, p: str, pinned: bool): World =
+    { ...update(w, h, mm => { ...mm, pc: mm.pc + 1 }),
+      senders: HOLDS.get(p).fold(w.senders, (s, c) => s.set(c, s.get(c) + 1)),
+      children: w.children.append((p, pinned)) }
+
   // Run one instruction of a running machine.
   pure def exec(w: World, h: int): World = {
     val m = w.machines.get(h)
@@ -193,12 +217,8 @@ module protocol {
         if (w.queued.get(c) > 0) update(take(w, c), h, mm => { ...mm, pc: mm.pc + 1 })
         else if (w.senders.get(c) == 0) finish(w, h)
         else update(w, h, mm => { ...mm, status: Idle, waiting: c, woken: false })
-      | Spawn(p) =>
-        // The child's closure holds its senders already; the table registers
-        // it only when this call returns.
-        { ...update(w, h, mm => { ...mm, pc: mm.pc + 1 }),
-          senders: HOLDS.get(p).fold(w.senders, (s, c) => s.set(c, s.get(c) + 1)),
-          children: w.children.append(p) }
+      | Spawn(p) => spawn(w, h, p, false)
+      | SpawnPinned(p) => spawn(w, h, p, true)
       | Ask =>
         { ...update(w, h, mm => { ...mm, status: Awaiting, asks: mm.asks.union(Set(mm.next_id)), next_id: mm.next_id + 1 }),
           asked: w.asked.union(Set(m.next_id)) }
@@ -254,24 +274,28 @@ module protocol {
   // `wakes`, and the children it spawned never existed.
   pure def fail_call(w: World, h: int): World = {
     val m = w.machines.get(h)
-    val unspawned = w.children.foldl(Set(), (s, p) => s.union(HOLDS.get(p)))
+    val unspawned = w.children.foldl(Set(), (s, c) => s.union(HOLDS.get(c._1)))
     val gone = update(w, h, mm => { ...mm, status: Gone, asks: Set(), racing: 0, waiting: "", holds: Set() })
     drop_senders(drop_senders(gone, m.holds), unspawned)
   }
 
   // Register the children a successful call spawned, numbered in order.
   pure def register(w: World): World =
-    w.children.foldl(w, (acc, p) => {
+    w.children.foldl(w, (acc, c) => {
       val handle = acc.machines.keys().size()
-      { ...acc, machines: acc.machines.put(handle, fresh(p)), spawned: acc.spawned.union(Set(handle)) }
+      { ...acc, machines: acc.machines.put(handle, fresh(c._1, c._2)), spawned: acc.spawned.union(Set(handle)) }
     })
 
   pure def target(e: Event): int = match e { | Resume(h) => h | Reply(r) => r._1 }
 
+  // Workers with no call in flight.
+  def idle_workers: Set[int] =
+    0.to(WORKERS - 1).exclude(in_flight.keys().map(k => in_flight.get(k).worker))
+
   // ---- The host's actions ------------------------------------------------
 
   action init = all {
-    machines' = Map(0 -> fresh(ROOT)),
+    machines' = Map(0 -> fresh(ROOT, false)),
     queued' = CHANNELS.mapBy(_ => 0),
     senders' = CHANNELS.mapBy(c => if (HOLDS.get(ROOT).contains(c)) 1 else 0),
     wakes' = Set(),
@@ -279,40 +303,61 @@ module protocol {
     in_flight' = Map(),
     verdict' = "running",
     stale' = 0,
+    wrong_thread' = 0,
     steps' = 0,
   }
 
   // Make a call: on a worker that is free, for a machine with no call in
-  // flight. The call runs at once; its output reaches the host on `ret`.
+  // flight. The call runs at once; its output reaches the host on `ret`. A
+  // pinned machine is begun on the worker of its first call, and refuses any
+  // other after (`WRONG_THREAD`): nothing changes, and a host that makes such
+  // a call has lost the event.
   action call = {
     nondet e = pending.oneOf()
+    nondet worker = idle_workers.oneOf()
     val h = target(e)
+    val m = machines.get(h)
+    val wrong = m.pinned and m.owner != -1 and m.owner != worker
     val w0: World = { machines: machines, queued: queued, senders: senders,
                       woke: Set(), spawned: Set(), asked: Set(), closed: Set(), children: [] }
     val w1 = match e { | Resume(_) => resume(w0, h) | Reply(r) => deliver(w0, h, r._2) }
     val w2 = run_to_wait(w1, h)
     val failed = w2.machines.get(h).status == Panicking
     val w3 = if (failed) fail_call(w2, h) else register(w2)
-    val is_stale = match e { | Reply(r) => not(machines.get(h).asks.contains(r._2)) | _ => false }
+    val owned = if (m.pinned and m.owner == -1) update(w3, h, mm => { ...mm, owner: worker }) else w3
+    val is_stale = match e { | Reply(r) => not(m.asks.contains(r._2)) | _ => false }
     all {
       verdict == "running",
       not(in_flight.keys().contains(h)),
       in_flight.keys().size() < WORKERS,
-      machines' = w3.machines,
-      queued' = w3.queued,
-      senders' = w3.senders,
-      wakes' = if (failed) wakes.union(w3.woke) else wakes,
+      ROUTES_PINNED implies not(wrong),
       pending' = pending.exclude(Set(e)),
-      in_flight' = in_flight.put(h, {
-        woke: if (failed) Set() else w3.woke,
-        spawned: w3.spawned,
-        asked: if (failed) Set() else w3.asked,
-        closed: if (failed) Set() else w3.closed,
-        status: w3.machines.get(h).status,
-      }),
       verdict' = verdict,
-      stale' = if (is_stale) stale + 1 else stale,
       steps' = steps + 1,
+      if (wrong) all {
+        machines' = machines,
+        queued' = queued,
+        senders' = senders,
+        wakes' = wakes,
+        in_flight' = in_flight,
+        stale' = stale,
+        wrong_thread' = wrong_thread + 1,
+      } else all {
+        machines' = owned.machines,
+        queued' = owned.queued,
+        senders' = owned.senders,
+        wakes' = if (failed) wakes.union(owned.woke) else wakes,
+        in_flight' = in_flight.put(h, {
+          woke: if (failed) Set() else owned.woke,
+          spawned: owned.spawned,
+          asked: if (failed) Set() else owned.asked,
+          closed: if (failed) Set() else owned.closed,
+          status: owned.machines.get(h).status,
+          worker: worker,
+        }),
+        stale' = if (is_stale) stale + 1 else stale,
+        wrong_thread' = wrong_thread,
+      },
     }
   }
 
@@ -338,6 +383,7 @@ module protocol {
       wakes' = wakes,
       verdict' = verdict,
       stale' = stale,
+      wrong_thread' = wrong_thread,
       steps' = steps + 1,
     }
   }
@@ -359,6 +405,7 @@ module protocol {
     senders' = senders,
     in_flight' = in_flight,
     stale' = stale,
+    wrong_thread' = wrong_thread,
     steps' = steps + 1,
   }
 
@@ -373,6 +420,7 @@ module protocol {
     in_flight' = in_flight,
     verdict' = verdict,
     stale' = stale,
+    wrong_thread' = wrong_thread,
     steps' = steps,
   }
 
@@ -411,7 +459,10 @@ module protocol {
   // The host never replies to a request it was told had closed.
   val no_stale_reply = stale == 0
 
-  val safe = no_lost_wake and stall_is_sound and end_is_sound and no_stale_reply
+  // The host never calls a pinned machine on another worker than its own.
+  val no_wrong_thread = wrong_thread == 0
+
+  val safe = no_lost_wake and stall_is_sound and end_is_sound and no_stale_reply and no_wrong_thread
 
   // Liveness, as safety over the whole state graph — checkable exhaustively,
   // and needing no fairness: until its verdict the host can always act; no
@@ -433,9 +484,9 @@ module protocol {
   // through `quint verify`, where it never finishes: Apalache's folds, which
   // `run_to_wait` compiles to, are made strict first (see `strict-folds` in
   // nix/commands.nix).
-  temporal fair = weakFair(call, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, steps))
-    and weakFair(ret, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, steps))
-    and weakFair(quiet, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, steps))
+  temporal fair = weakFair(call, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps))
+    and weakFair(ret, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps))
+    and weakFair(quiet, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, wrong_thread, steps))
 
   temporal reaches_verdict = fair implies eventually(verdict == EXPECTED)
 }
@@ -458,6 +509,7 @@ module ping_pong {
     EXPECTED = "end",
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
   ).*
 }
 
@@ -475,6 +527,7 @@ module ping_pong_sequential {
     EXPECTED = "end",
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
   ).*
 }
 
@@ -494,6 +547,7 @@ module deadline {
     EXPECTED = "end",
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
   ).*
 }
 
@@ -513,6 +567,7 @@ module panic_wakes {
     EXPECTED = "end",
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
   ).*
 }
 
@@ -532,6 +587,53 @@ module deadlock {
     EXPECTED = "stall",
     HEEDS_WOKE = true,
     DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
+  ).*
+}
+
+// A ring of three, the token twice round: each node takes it from the one
+// before and passes it on. When the root ends, its sender drops, and the
+// ring closes one node at a time.
+module ring {
+  import types.*
+  import protocol(
+    PROGRAMS = Map(
+      "node0" -> [Spawn("node1"), Spawn("node2"), Send("c1"), Recv("c0"), Send("c1"), Recv("c0")],
+      "node1" -> [Recv("c1"), Send("c2"), Recv("c1"), Send("c2"), Recv("c1")],
+      "node2" -> [Recv("c2"), Send("c0"), Recv("c2"), Send("c0"), Recv("c2")],
+    ),
+    HOLDS = Map("node0" -> Set("c1"), "node1" -> Set("c2"), "node2" -> Set("c0")),
+    CHANNELS = Set("c0", "c1", "c2"),
+    ROOT = "node0",
+    WORKERS = 2,
+    EXPECTED = "end",
+    HEEDS_WOKE = true,
+    DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
+  ).*
+}
+
+// The front desk with two visitors: it reads each name (an ask), spawns a
+// pinned clerk for it, reads the end of input, then waits for each clerk's
+// greeting in order. A clerk looks its name up (an ask) and sends the
+// greeting. Each clerk stays on the worker that began it. The lines written
+// are tells, which the protocol does not see.
+module front_desk {
+  import types.*
+  import protocol(
+    PROGRAMS = Map(
+      "desk" -> [Ask, SpawnPinned("clerk_a"), Ask, SpawnPinned("clerk_b"), Ask, Recv("greet_a"), Recv("greet_b")],
+      "clerk_a" -> [Ask, Send("greet_a")],
+      "clerk_b" -> [Ask, Send("greet_b")],
+    ),
+    HOLDS = Map("desk" -> Set(), "clerk_a" -> Set("greet_a"), "clerk_b" -> Set("greet_b")),
+    CHANNELS = Set("greet_a", "greet_b"),
+    ROOT = "desk",
+    WORKERS = 2,
+    EXPECTED = "end",
+    HEEDS_WOKE = true,
+    DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
   ).*
 }
 
@@ -552,6 +654,7 @@ module mistaken_ignores_woke {
     EXPECTED = "end",
     HEEDS_WOKE = false,
     DROPS_CLOSED = true,
+    ROUTES_PINNED = true,
   ).*
 }
 
@@ -570,5 +673,27 @@ module mistaken_ignores_closed {
     EXPECTED = "end",
     HEEDS_WOKE = true,
     DROPS_CLOSED = false,
+    ROUTES_PINNED = true,
+  ).*
+}
+
+// A host that calls a pinned clerk on whichever worker is free: the table
+// refuses the call, and the host has lost the event.
+module mistaken_ignores_pinning {
+  import types.*
+  import protocol(
+    PROGRAMS = Map(
+      "desk" -> [Ask, SpawnPinned("clerk_a"), Ask, SpawnPinned("clerk_b"), Ask, Recv("greet_a"), Recv("greet_b")],
+      "clerk_a" -> [Ask, Send("greet_a")],
+      "clerk_b" -> [Ask, Send("greet_b")],
+    ),
+    HOLDS = Map("desk" -> Set(), "clerk_a" -> Set("greet_a"), "clerk_b" -> Set("greet_b")),
+    CHANNELS = Set("greet_a", "greet_b"),
+    ROOT = "desk",
+    WORKERS = 2,
+    EXPECTED = "end",
+    HEEDS_WOKE = true,
+    DROPS_CLOSED = true,
+    ROUTES_PINNED = false,
   ).*
 }

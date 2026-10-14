@@ -668,38 +668,156 @@ mod tests {
             });
     }
 
-    /// Through the host crate, as a foreign host would reply: bytes that are
-    /// not an encoded `Result<String, ReadLineError>` are `MALFORMED`, the
-    /// read stays open, and a good reply is accepted after.
+    /// Through the host crate's `Machine`, as a foreign host would reply.
     #[cfg(feature = "table")]
-    #[test]
-    fn a_malformed_read_reply_is_refused_and_can_be_retried() -> TestResult {
-        use sans_effort_core::boundary::codec::Encode;
+    mod through_the_host {
+        use super::*;
+        use routines::journal::Journal;
+        use sans_effort_core::driver::Yield;
         use sans_effort_host::{error::Error, machine::Machine};
 
-        let mut machine = Machine::<Full>::from_routine(greeter);
-        let read = machine.resume()?.into_iter().find_map(|view| {
-            if let View::ReadLine { id } = view {
-                Some(id)
-            } else {
-                None
-            }
-        });
-        let read = read.ok_or("the greeter prompts, then reads")?;
+        const SECOND: u64 = 1_000_000_000;
 
-        assert!(matches!(
-            machine.reply_bytes(read, vec![7]),
-            Err(Error::Malformed(_))
-        ));
+        /// What `write` writes.
+        fn bytes<F: FnOnce(&mut Writer)>(write: F) -> Vec<u8> {
+            let mut w = Writer::new();
+            write(&mut w);
+            w.finish()
+        }
 
-        let good = Ok::<String, ReadLineError>("bob".into()).to_bytes();
-        let next = machine.reply_bytes(read, good)?;
-        assert!(
-            next.into_iter()
-                .any(|view| matches!(view, View::Lookup { ref name, .. } if name == "bob")),
-            "the greeter looks bob up"
-        );
-        Ok(())
+        /// Each effect of a yield, encoded as the host would see it.
+        fn records(yielded: Yield<View>) -> Vec<Vec<u8>> {
+            yielded.into_iter().map(|view| view.to_bytes()).collect()
+        }
+
+        /// Bytes that are not an encoded `Result<String, ReadLineError>` are
+        /// `MALFORMED`, the read stays open, and a good reply is accepted
+        /// after.
+        #[test]
+        fn a_malformed_read_reply_is_refused_and_can_be_retried() -> TestResult {
+            let mut machine = Machine::<Full>::from_routine(greeter);
+            let read = machine.resume()?.into_iter().find_map(|view| {
+                if let View::ReadLine { id } = view {
+                    Some(id)
+                } else {
+                    None
+                }
+            });
+            let read = read.ok_or("the greeter prompts, then reads")?;
+
+            assert!(matches!(
+                machine.reply_bytes(read, vec![7]),
+                Err(Error::Malformed(_))
+            ));
+
+            let good = Ok::<String, ReadLineError>("bob".into()).to_bytes();
+            let next = machine.reply_bytes(read, good)?;
+            assert!(
+                next.into_iter()
+                    .any(|view| matches!(view, View::Lookup { ref name, .. } if name == "bob")),
+                "the greeter looks bob up"
+            );
+            Ok(())
+        }
+
+        /// The journal through the host crate, as a foreign host would answer
+        /// it: every record of tags 8–12 byte for byte against the table above
+        /// (literal tags, not [`Tag`], so the table is what is checked), and
+        /// every reply as the bytes the table gives — a variable set and unset,
+        /// a file missing and present, a write accepted and refused.
+        #[test]
+        fn the_journal_through_the_wire() -> TestResult {
+            let line = |text: &str| {
+                bytes(|w| {
+                    w.u8(5);
+                    w.str(text);
+                })
+            };
+            let var = |id| {
+                bytes(|w| {
+                    w.u8(10);
+                    w.str("JOURNAL");
+                    w.u64(id);
+                })
+            };
+            let read_file = |path: &str, id| {
+                bytes(|w| {
+                    w.u8(11);
+                    w.str(path);
+                    w.u64(id);
+                })
+            };
+            let now = |id| {
+                bytes(|w| {
+                    w.u8(8);
+                    w.u64(id);
+                })
+            };
+            let random = |id| {
+                bytes(|w| {
+                    w.u8(9);
+                    w.u32(4);
+                    w.u64(id);
+                })
+            };
+            let write_file = |path: &str, text: &str, id| {
+                bytes(|w| {
+                    w.u8(12);
+                    w.str(path);
+                    w.bytes(text.as_bytes());
+                    w.u64(id);
+                })
+            };
+            let start = 1_700_000_000 * SECOND;
+
+            let mut m =
+                Machine::<Full>::from_routine(|outbox| Journal::new(Ctx::new(outbox), 2).run());
+
+            // Set, missing, written.
+            assert_eq!(records(m.resume()?), [var(1)]);
+            let set = bytes(|w| {
+                w.u8(1);
+                w.str("notes.txt");
+            });
+            assert_eq!(records(m.reply_bytes(1, set)?), [read_file("notes.txt", 2)]);
+            assert_eq!(records(m.reply_bytes(2, vec![1, 0])?), [now(3)]);
+            assert_eq!(records(m.reply_u64(3, start)?), [random(4)]);
+            let first = "1700000000000 00010203\n";
+            assert_eq!(
+                records(m.reply_bytes(4, vec![0, 1, 2, 3])?),
+                [write_file("notes.txt", first, 5)]
+            );
+            assert_eq!(
+                records(m.reply_bytes(5, vec![0])?),
+                [line("notes.txt: entry 1, 1700000000000 00010203"), var(6)]
+            );
+
+            // Unset, present, refused.
+            assert_eq!(
+                records(m.reply_bytes(6, vec![0])?),
+                [read_file("journal.txt", 7)]
+            );
+            let present = bytes(|w| {
+                w.u8(0);
+                w.bytes(b"earlier\n");
+            });
+            assert_eq!(records(m.reply_bytes(7, present)?), [now(8)]);
+            assert_eq!(records(m.reply_u64(8, start + SECOND)?), [random(9)]);
+            assert_eq!(
+                records(m.reply_bytes(9, vec![4, 5, 6, 7])?),
+                [write_file(
+                    "journal.txt",
+                    "earlier\n1700000001000 04050607\n",
+                    10
+                )]
+            );
+            assert_eq!(
+                records(m.reply_bytes(10, vec![1, 1])?),
+                [line("cannot write journal.txt: permission denied")]
+            );
+            assert!(m.is_finished());
+            Ok(())
+        }
     }
 
     /// A `Quiet` host runs the ticker, and only ever sees tags 4 and 5.
@@ -983,6 +1101,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "table")]
     mod recorded {
         use super::*;
         use routines::{front_desk::FrontDesk, ping_pong::PingPong};

@@ -30,14 +30,14 @@
   # `quint run --mbt` writes full ITF states, which repeat the whole model at
   # every step. The replay (sans-effort-host/tests/spec_traces.rs) compares
   # only what a host can see, so each trace keeps that: the action and its
-  # picks, and after it the calls in flight with their outputs, `wakes`, and
-  # the stale-reply count. The steps after the verdict (`done`) go, and so do
+  # picks, and after it the calls in flight with their outputs (and workers),
+  # `wakes`, and the counts of stale replies and wrong-worker calls. The steps after the verdict (`done`) go, and so do
   # repeats: a small instance has few paths.
   slim-traces = pkgs.writeText "slim-traces.py" ''
     import glob, json, sys
 
     raw, instance = sys.argv[1], sys.argv[2]
-    keep = ("in_flight", "wakes", "stale")
+    keep = ("in_flight", "wakes", "stale", "wrong_thread")
 
 
     def slim(state):
@@ -488,22 +488,26 @@ in {
 
     stop_server
     echo "Safety, and liveness as safety (safe, ends_right):"
-    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock; do
+    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock ring \
+      front_desk; do
       check "$instance" ok
     done
-    for instance in mistaken_ignores_woke mistaken_ignores_closed; do
+    for instance in mistaken_ignores_woke mistaken_ignores_closed mistaken_ignores_pinning; do
       check "$instance" violation
     done
 
     echo "Liveness under weak fairness (reaches_verdict):"
     ${python} ${strict-folds} "$jar" "$tla" || exit 1
     # A host that ignores closed frames still finishes; its mistake is a
-    # safety one, caught above. One that ignores `woke` frames does not.
-    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock \
-      mistaken_ignores_closed; do
+    # safety one, caught above. One that ignores `woke` frames does not, and
+    # nor does one that loses an event to a call on the wrong worker.
+    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock ring \
+      front_desk mistaken_ignores_closed; do
       live "$instance" ok
     done
-    live mistaken_ignores_woke violation
+    for instance in mistaken_ignores_woke mistaken_ignores_pinning; do
+      live "$instance" violation
+    done
 
     rm -rf _apalache-out
     exit "$status"
@@ -521,8 +525,8 @@ in {
     trap 'rm -rf "$raw"' EXIT
     traces=50
 
-    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock \
-      mistaken_ignores_woke mistaken_ignores_closed; do
+    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock ring \
+      front_desk mistaken_ignores_woke mistaken_ignores_closed mistaken_ignores_pinning; do
       ${quint}/bin/quint run --mbt --main="$instance" --max-steps=60 --seed=1 \
         --max-samples="$traces" --n-traces="$traces" \
         --out-itf="$raw/''${instance}_{seq}.itf.json" host_protocol.qnt > /dev/null

@@ -14,6 +14,7 @@ Some documents describe what exists and some describe what is planned. Each one 
 | [`channels`](channels.md)         | current           | Plain channels between machines, spawning, and the host as the scheduler       |
 | [`capabilities`](capabilities.md) | current + planned | Object-capability discipline within a process, given an honest host            |
 | [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
+| [`deadlocks`](deadlocks.md)       | current           | The four kinds, which are caught, which are prevented, and the host's locks    |
 | [`related-work`](related-work.md) | current           | Where `sans-effort` sits among Rust effect libraries, and what it draws on     |
 
 Writing an effect trait of your own is a guide in the crate docs rather than a document here, so that its examples are compiled and its names link to the API: [`sans_effort::guide`](https://docs.rs/sans-effort/latest/sans_effort/guide/) on docs.rs, or `cargo doc --open -p sans-effort` locally (its source is [`sans-effort-effects/src/guide.rs`](../sans-effort-effects/src/guide.rs)).
