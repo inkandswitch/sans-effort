@@ -143,6 +143,6 @@ Messages never pass through the host, so the host cannot see their contents: no 
 
 - _Ping-pong_ — a parent spawns a child (`spawn`) and plays three rounds over a channel each way; only the parent writes.
 - _Front desk_ — a receptionist reads names and spawns a pinned clerk for each (`spawn_pinned`); each clerk looks a greeting up and sends it back on a one-shot channel.
-- _Ring_ — 16 routines pass a counter 250 times around; no effect reports any of the 4000 hops, only `woke` frames. Each host prints its cost per hop.
+- _Ring_ — 16 routines pass a counter 250 times around; no effect reports any of the 4000 hops, only `woke` frames. Each host prints its cost per hop — a single cold run, so for a JIT-compiled host it is mostly warm-up (`demo/README.md`).
 
 All three join the greeter in the comparison: tokio = Node = Python = Java, byte for byte.

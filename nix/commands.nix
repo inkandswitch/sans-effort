@@ -16,6 +16,7 @@
   java = "${jdk}/bin/java";
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
+  ruff = pkgs.lib.getExe pkgs.ruff;
   wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
   bench-path = pkgs.lib.makeBinPath bench-pkgs;
 
@@ -47,7 +48,7 @@ in {
     ${cargo} bench -p sans-effort-host --bench table -- "$@"
   '';
 
-  "lint" = cmd "Check formatting, Clippy (all features, and the wasm module on wasm32), and rustdoc (no warnings)" ''
+  "lint" = cmd "Check formatting, Clippy (all features, and the wasm module on wasm32), rustdoc (no warnings), and the Nix commands' Python (ruff)" ''
     set -e
 
     echo "===> Checking formatting..."
@@ -65,6 +66,11 @@ in {
     echo ""
     echo "===> Building the docs (no warnings, no broken links)..."
     RUSTDOCFLAGS="-D warnings" ${cargo} doc --workspace --no-deps --all-features
+
+    echo ""
+    echo "===> Linting the Nix commands' Python (ruff)..."
+    ${ruff} check nix/*.py
+    ${ruff} format --check nix/*.py
 
     echo ""
     echo "Done"

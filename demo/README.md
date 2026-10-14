@@ -71,7 +71,7 @@ nix develop --command demo:faults                                       # host c
 nix develop --command demo:stress                                       # host checks: seeded schedules
 ```
 
-`--fanout` on any host runs the two-waits-per-batch variant; `--journal` the journal; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
+`--fanout` on any host runs the two-waits-per-batch variant; `--journal` the journal; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr — one cold run, over the debug build the demo uses, so a JIT-compiled host such as Java's is mostly warming up: warm, over a release build, the Java host takes about 1.2 µs per hop, of which the library is about 0.4 µs); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
 
 `--deadline` races a receive against a sleep, twice. The quick worker beats a 30-second sleep, so that sleep is abandoned: tokio drops its timer, Node's dispatcher aborts the `AbortSignal` it gave the host's `sleep`, and the driven hosts get a closed frame — Python drops its pending timer (its time is virtual: timers fire only when nothing else can happen), Java cancels the virtual thread sleeping it. A host that fails to cancel waits the 30 seconds out, so `demo` and CI run this mode under a time limit. The slow worker cannot answer until told to, so its 50 ms deadline always passes first.
 

@@ -8,7 +8,8 @@ set comprehension evaluates it once. Writes `Apalache.tla` (patched) and
 Apalache's text changed and a patch no longer matches.
 """
 
-import sys, zipfile
+import sys
+import zipfile
 
 jar, out = sys.argv[1], sys.argv[2]
 modules = zipfile.ZipFile(jar)
@@ -19,18 +20,22 @@ def module(name):
 
 
 PATCHES = [
-    (r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
+    (
+        r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
     IF __seq = <<>>
     THEN __v
     ELSE ApaFoldSeqLeft(__Op, __Op(__v, Head(__seq)), Tail(__seq))""",
-     r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
+        r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
     IF __seq = <<>>
     THEN __v
     ELSE CHOOSE __r \in { ApaFoldSeqLeft(__Op, __acc, Tail(__seq)) :
-                          __acc \in { __Op(__v, Head(__seq)) } } : TRUE"""),
-    (r"""         ApaFoldSet(__Op, __Op(__v,__w), __T)""",
-     r"""         CHOOSE __r \in { ApaFoldSet(__Op, __acc, __T) :
-                       __acc \in { __Op(__v, __w) } } : TRUE"""),
+                          __acc \in { __Op(__v, Head(__seq)) } } : TRUE""",
+    ),
+    (
+        r"""         ApaFoldSet(__Op, __Op(__v,__w), __T)""",
+        r"""         CHOOSE __r \in { ApaFoldSet(__Op, __acc, __T) :
+                       __acc \in { __Op(__v, __w) } } : TRUE""",
+    ),
 ]
 
 apalache = module("Apalache.tla")
