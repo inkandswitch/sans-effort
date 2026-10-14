@@ -9,10 +9,12 @@
 use crate::error::Error;
 use sans_effort_core::driver::status::Status;
 
-/// The revision of `ABI.md` this crate implements. A binding returns it from
-/// `<prefix>_abi_version()`; a host checks it once, before `new`. One number,
-/// bumped whenever a host written against the previous text could misbehave
-/// against a binding written against the new one. Tag tables are outside it.
+/// The revision of `ABI.md` this crate implements: `0`, pre-release. A
+/// binding returns it from `<prefix>_abi_version()`;
+/// a host checks it once, before `new`. One number, bumped whenever a host
+/// written against the previous text could misbehave against a binding
+/// written against the new one; new error codes, frame kinds, and exports are
+/// not such changes (`ABI.md` §Versioning). Tag tables are outside it.
 pub const REVISION: u8 = 0;
 
 /// A frame holding an effect that awaits no reply. A host may skip one whose

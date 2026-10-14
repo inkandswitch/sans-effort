@@ -26,10 +26,15 @@ pub struct Machine<E, F: ?Sized = dyn Future<Output = ()> + Send> {
     /// more than looking at two entries. Wide fan-out would want a sorted
     /// `Vec` with binary search.
     pending: Vec<(u64, Pending)>,
-    /// The highest request id shown to the host. Ids are issued per driver,
-    /// increasing, so an unmatched id at or below this was issued and is
-    /// stale; one above it never existed.
+    /// The highest request id shown to the host. Ids reach the host in the
+    /// order they were minted, so an unmatched id at or below this was shown
+    /// and is stale — unless it is in `never_shown` — and one above it was
+    /// never issued.
     highest_shown: u64,
+    /// Ids below `highest_shown` the host never saw: a request whose effect
+    /// could not be built (its constructor panicked, and the routine caught
+    /// it) took one. Almost always empty.
+    never_shown: Vec<u64>,
     _effect: PhantomData<E>,
 }
 
@@ -63,6 +68,7 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
             driver,
             pending: Vec::new(),
             highest_shown: 0,
+            never_shown: Vec::new(),
             _effect: PhantomData,
         }
     }
@@ -197,8 +203,10 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
                 let (view, pending) = effect.split();
                 let awaits = pending.is_some();
                 if let Some(p) = pending {
-                    self.highest_shown = self.highest_shown.max(p.id());
-                    self.pending.push((p.id(), p));
+                    let id = p.id();
+                    self.never_shown.extend(self.highest_shown + 1..id);
+                    self.highest_shown = self.highest_shown.max(id);
+                    self.pending.push((id, p));
                 }
                 Shown { view, awaits }
             })
@@ -220,7 +228,9 @@ impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
 
         match self.pending.iter().position(|(i, _)| *i == id) {
             Some(at) => Ok(self.pending.swap_remove(at).1),
-            None if id != 0 && id <= self.highest_shown => Err(Error::Stale { id }),
+            None if id != 0 && id <= self.highest_shown && !self.never_shown.contains(&id) => {
+                Err(Error::Stale { id })
+            }
             None => Err(Error::BadInput),
         }
     }
@@ -266,9 +276,39 @@ fn views<V>(step: Yield<Shown<V>>) -> Yield<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{Both, Echo, Holds, Impatient, View};
+    use crate::fixtures::{Both, Echo, Effect, Holds, Impatient, View};
     use sans_effort_core::{reply::kind::Kind, step::Step};
     use testresult::TestResult;
+
+    /// A request whose effect could not be built — its constructor panicked,
+    /// and the routine caught it — took an id the host never sees. A reply
+    /// to that id was never issued: `BAD_INPUT`, not `STALE`.
+    #[test]
+    #[expect(clippy::panic, reason = "the effect's constructor panics on purpose")]
+    fn a_reply_to_an_id_never_shown_is_bad_input() -> TestResult {
+        use core::{future::IntoFuture, panic::AssertUnwindSafe};
+        use sans_effort_core::reply::handle::ReplyHandle;
+
+        let mut m = Machine::from_routine(|outbox: Outbox<Effect>| async move {
+            let failed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                outbox
+                    .ask(|_: ReplyHandle<String>| -> Effect { panic!("no effect") })
+                    .into_future()
+            }));
+            assert!(failed.is_err(), "the constructor panicked");
+            let answer = outbox.ask(Effect::Ask).await;
+            outbox.tell(Effect::Say(answer));
+        });
+
+        let shown = crate::fixtures::quietly(|| m.resume())?;
+        assert_eq!(shown.effects(), [View::Ask(2)], "id 1 was never shown");
+        assert_eq!(m.reply(1, String::from("lost")), Err(Error::BadInput));
+        assert_eq!(
+            m.reply(2, String::from("kept"))?.effects(),
+            [View::Say(String::from("kept"))]
+        );
+        Ok(())
+    }
 
     /// One ask of each wire kind, answered through the typed helpers a
     /// binding uses (`PyO3`, Rustler): each value arrives as itself.
