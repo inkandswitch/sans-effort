@@ -18,6 +18,7 @@
   node = "${pkgs.nodejs}/bin/node";
   python = "${pkgs.python3}/bin/python3";
   ruff = pkgs.lib.getExe pkgs.ruff;
+  alejandra = pkgs.lib.getExe pkgs.alejandra;
   wasm-bindgen = "${wasm-bindgen-cli}/bin/wasm-bindgen";
   bench-path = pkgs.lib.makeBinPath bench-pkgs;
 
@@ -48,11 +49,18 @@ in {
     ${cargo} bench -p sans-effort-host --bench table -- "$@"
   '';
 
-  "lint" = cmd "Check formatting, Clippy (all features, and the wasm module on wasm32), rustdoc (no warnings), and the Nix commands' Python (ruff)" ''
+  "lint" = cmd "Check formatting (Rust, Nix), Clippy (all features, and the wasm module on wasm32), rustdoc (no warnings), and the Nix commands' Python (ruff)" ''
     set -e
 
     echo "===> Checking formatting..."
     ${cargo} fmt --all --check
+    # The flake's `formatter` (`nix fmt`), run directly on every tracked Nix
+    # file: quiet when they pass, and naming the ones that do not.
+    if ! ${git} ls-files -z '*.nix' | xargs -0 ${alejandra} --check --quiet; then
+      ${git} ls-files -z '*.nix' | xargs -0 ${alejandra} --check || true
+      echo "Run \`nix fmt\` to format them."
+      exit 1
+    fi
 
     echo ""
     echo "===> Running Clippy (all features)..."
