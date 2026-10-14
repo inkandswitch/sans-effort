@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn a_recorded_handle_still_in_use_is_not_issued_again() -> TestResult {
         let pinned = || {
-            table::park_pinned(|outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+            table::new_pinned(|outbox: Outbox<Effect>| -> LocalBoxedRoutine {
                 Box::pin(Echo(outbox).run())
             })
         };

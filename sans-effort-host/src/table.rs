@@ -6,7 +6,7 @@
 //! Hosts may pool, and a machine's calls migrate between threads.
 //!
 //! A _pinned_ machine's future need not be `Send`, so it must stay on one
-//! thread. It is parked unstarted by [`park_pinned`]; the thread that first
+//! thread. It is parked unstarted by [`new_pinned`]; the thread that first
 //! calls [`resume`] for it builds it and keeps it in its own table, and every
 //! later call for it must come from that thread. From any other, a call is
 //! [`Error::WrongThread`]: nothing changes, and the host routes the call where
@@ -104,7 +104,9 @@ where
     E::View: Encode,
 {
     fn build(self: Box<Self>) -> Box<dyn Stepped> {
-        Box::new(Encoded::new(Machine::new(Driver::local_boxed(self.make))))
+        Box::new(Encoded::from_machine(Machine::from_driver(
+            Driver::local_boxed(self.make),
+        )))
     }
 }
 
@@ -353,7 +355,7 @@ pub fn new<
 where
     E::View: Encode,
 {
-    insert(Box::new(Encoded::new(Machine::from_routine(make))))
+    insert(Box::new(Encoded::from_machine(Machine::new(make))))
 }
 
 /// As [`new`], for a routine already boxed — a spawned child, say — so it is
@@ -364,13 +366,13 @@ pub fn new_boxed<E: HostEffect + Send + 'static, M: FnOnce(Outbox<E>) -> BoxedRo
 where
     E::View: Encode,
 {
-    insert(Box::new(Encoded::new(Machine::from_boxed(make))))
+    insert(Box::new(Encoded::from_machine(Machine::new_boxed(make))))
 }
 
-/// Park a pinned routine, unstarted. Its future is built by whichever thread
-/// first calls [`resume`] for the returned handle, and stays on that thread. Until
-/// then, [`free`] from any thread drops it.
-pub fn park_pinned<
+/// Register a pinned routine, parked unstarted. Its future is built by
+/// whichever thread first calls [`resume`] for the returned handle, and stays
+/// on that thread. Until then, [`free`] from any thread drops it.
+pub fn new_pinned<
     E: HostEffect + 'static,
     M: FnOnce(Outbox<E>) -> LocalBoxedRoutine + Send + 'static,
 >(
@@ -739,7 +741,7 @@ mod tests {
 
     #[test]
     fn a_pinned_machine_stays_on_the_thread_that_started_it() -> TestResult {
-        let h = park_pinned(pinned_echo);
+        let h = new_pinned(pinned_echo);
         assert_eq!(
             reply(h, &reply_str_record(1, "early")),
             Err(Error::BadInput),
@@ -764,7 +766,7 @@ mod tests {
 
     #[test]
     fn a_pinned_machine_runs_and_frees_on_its_own_thread() -> TestResult {
-        let h = park_pinned(pinned_echo);
+        let h = new_pinned(pinned_echo);
         thread::spawn(move || -> TestResult {
             assert_eq!(resume(h)?.1, Status::Awaiting);
             assert_eq!(
@@ -834,10 +836,10 @@ mod tests {
         let freed = Arc::new(OnceLock::new());
         let seen = Arc::clone(&freed);
         thread::spawn(move || -> TestResult {
-            let other = park_pinned(pinned_echo);
+            let other = new_pinned(pinned_echo);
             resume(other)?;
             let destructor = FreesOnDrop { other, freed: seen };
-            let h = park_pinned(move |outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+            let h = new_pinned(move |outbox: Outbox<Effect>| -> LocalBoxedRoutine {
                 Box::pin(async move {
                     let _destructor = destructor;
                     Echo(outbox).run().await;
@@ -856,7 +858,7 @@ mod tests {
 
     #[test]
     fn a_parked_machine_frees_from_any_thread() -> TestResult {
-        let h = park_pinned(pinned_echo);
+        let h = new_pinned(pinned_echo);
         thread::spawn(move || free(h))
             .join()
             .map_err(|_| "the freeing thread panicked")??;
@@ -866,7 +868,7 @@ mod tests {
 
     #[test]
     fn a_panicking_pinned_machine_is_removed() {
-        let h = park_pinned(|outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+        let h = new_pinned(|outbox: Outbox<Effect>| -> LocalBoxedRoutine {
             Box::pin(async move {
                 drop(outbox);
                 panic!("routine bug");
@@ -987,7 +989,7 @@ mod tests {
             })
         };
         let pinned = |tx: async_channel::Sender<String>| {
-            park_pinned(move |outbox: Outbox<Effect>| -> LocalBoxedRoutine {
+            new_pinned(move |outbox: Outbox<Effect>| -> LocalBoxedRoutine {
                 Box::pin(async move {
                     let _tx = tx;
                     drop(outbox.ask(Effect::Ask).await);
@@ -1057,7 +1059,7 @@ mod tests {
         free(migrating)?;
 
         let own = Arc::new(OnceLock::new());
-        let pinned = park_pinned({
+        let pinned = new_pinned({
             let own = Arc::clone(&own);
             move |outbox: Outbox<Effect>| -> LocalBoxedRoutine { says(own)(outbox) }
         });

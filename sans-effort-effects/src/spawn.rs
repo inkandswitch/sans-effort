@@ -195,7 +195,7 @@ impl<E> Child<E> {
     }
 
     /// Build the child's future around `outbox`, the outbox of the machine
-    /// that will run it — `Driver::from_boxed(|outbox| child.start(outbox))`.
+    /// that will run it — `Driver::new_boxed(|outbox| child.start(outbox))`.
     #[must_use]
     pub fn start(self, outbox: Outbox<E>) -> BoxedRoutine {
         (self.make)(outbox)
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(line, "spawned", "nothing ran yet: spawning only records");
         assert!(effects.next().is_none());
 
-        let mut child = Driver::from_boxed(|outbox| child.start(outbox));
+        let mut child = Driver::new_boxed(|outbox| child.start(outbox));
         assert_eq!(written(child.resume())?, ["migrating"]);
         assert!(child.is_finished());
 

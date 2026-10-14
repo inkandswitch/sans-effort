@@ -115,7 +115,7 @@ pub struct UnixTime(Duration);
 impl UnixTime {
     /// The time `since_epoch` after the Unix epoch.
     #[must_use]
-    pub const fn from_since_epoch(since_epoch: Duration) -> Self {
+    pub const fn new(since_epoch: Duration) -> Self {
         Self(since_epoch)
     }
 
@@ -151,17 +151,14 @@ mod tests {
     #[test]
     fn unix_times_round_trip_in_whole_nanoseconds() {
         bolero::check!().with_type::<u64>().for_each(|nanos| {
-            let time = UnixTime::from_since_epoch(Duration::from_nanos(*nanos));
+            let time = UnixTime::new(Duration::from_nanos(*nanos));
             assert_eq!(UnixTime::from_wire(time.into_wire()), Ok(time));
         });
     }
 
     #[test]
     fn unix_times_past_u64_nanos_saturate() {
-        assert_eq!(
-            UnixTime::from_since_epoch(Duration::MAX).into_wire(),
-            u64::MAX
-        );
+        assert_eq!(UnixTime::new(Duration::MAX).into_wire(), u64::MAX);
     }
 
     #[test]

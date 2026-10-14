@@ -36,8 +36,18 @@
 
         unstable = import unstable-nixpkgs {inherit system;};
 
-        # Keep in lockstep with `rust-version` in Cargo.toml and rust-toolchain.toml.
+        # The development toolchain: the dev shell's and CI's. It may run ahead
+        # of the MSRV; rust-toolchain.toml pins the same for rustup users (the
+        # `msrv` workflow checks the two agree).
         rustVersion = "1.91.0";
+
+        # The MSRV, read from Cargo.toml so it is stated once. `test:msrv`
+        # checks the published crates with a minimal toolchain of exactly that
+        # version, so the number cannot drift from what CI builds.
+        msrv = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.rust-version;
+        msrv-toolchain = pkgs.rust-bin.stable.${pkgs.lib.versions.pad 3 msrv}.minimal.overrideAttrs (old: {
+          meta = (old.meta or {}) // {mainProgram = "cargo";};
+        });
 
         rust-toolchain =
           (pkgs.rust-bin.stable.${rustVersion}.default.override {
@@ -145,7 +155,7 @@
         # for the dev shell, the minimal one for CI.
         projectCommands = toolchain:
           import ./nix/commands.nix {
-            inherit pkgs system cmd bench-pkgs jdk quint;
+            inherit pkgs system cmd bench-pkgs jdk quint msrv-toolchain;
             rust-toolchain = toolchain;
             wasm-bindgen-cli = unstable.wasm-bindgen-cli;
           };
@@ -173,8 +183,7 @@
         ];
 
         # Minimal CI toolchain — no docs, no llvm-tools, no rust-src, fewer
-        # targets. The same version as the dev shell's, which is the MSRV: CI
-        # builds and tests at the MSRV.
+        # targets. The same version as the dev shell's.
         ci-rust-toolchain =
           (pkgs.rust-bin.stable.${rustVersion}.minimal.override {
             extensions = [

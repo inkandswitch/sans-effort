@@ -131,7 +131,7 @@ impl Now for JsCtx {
     /// milliseconds.
     async fn now(&self) -> UnixTime {
         let millis = self.ask(Request::Now).await.unwrap_or(0);
-        UnixTime::from_since_epoch(Duration::from_millis(millis))
+        UnixTime::new(Duration::from_millis(millis))
     }
 }
 

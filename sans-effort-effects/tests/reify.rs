@@ -183,7 +183,7 @@ fn now_round_trip(nanos: u64) -> TestResult {
     let Effect::Now(Asked { reply, .. }) = effect else {
         return Err("a Now")?;
     };
-    let time = UnixTime::from_since_epoch(Duration::from_nanos(nanos));
+    let time = UnixTime::new(Duration::from_nanos(nanos));
     drop(driver.reply(reply, time));
     finished_with(&driver, &got, time)
 }

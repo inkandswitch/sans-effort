@@ -27,8 +27,9 @@ jobs:
         with:
           cargo-cache: test
 
-      # Default features, all features, and doc tests. The flake's toolchain is
-      # the MSRV (msrv.yml checks the pins agree), so this tests at the MSRV.
+      # Default features, all features, the demo vocabulary without its table,
+      # and doc tests, with the flake's development toolchain (msrv.yml checks
+      # the MSRV).
       - run: nix develop .#ci --command test:host
 
   # The driver's waker and outbox under every interleaving loom finds.

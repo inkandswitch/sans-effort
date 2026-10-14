@@ -89,7 +89,7 @@ Behind a driver, the child rides in the effect: `Spawn` records a tell whose pay
 Full::Spawn(SpawnEffect(child)) =>
     (View::Spawned { handle: table::new_boxed(move |outbox| child.start(outbox)) }, None),
 Full::SpawnPinned(SpawnPinnedEffect(child)) =>
-    (View::SpawnedPinned { handle: table::park_pinned(move |outbox| child.start(outbox)) }, None),
+    (View::SpawnedPinned { handle: table::new_pinned(move |outbox| child.start(outbox)) }, None),
 ```
 
 The host sees `Spawned { 9 }` or `SpawnedPinned { 9 }` and resumes machine 9 to begin it. None of the child crosses the FFI boundary — only its handle does. Core does not know which effect means "spawn", so a vocabulary may choose differently: its own statics, a test router's `Vec`, or no spawn variant at all, which grants no spawning.

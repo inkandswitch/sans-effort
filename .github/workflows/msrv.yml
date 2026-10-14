@@ -1,9 +1,10 @@
 name: MSRV
 
-# Every other workflow builds and tests with the flake's toolchain, so they
-# test at the MSRV exactly when the flake's toolchain is the MSRV. This checks
-# it is: Cargo.toml's rust-version, rust-toolchain.toml's channel (for rustup
-# users), and flake.nix's rustVersion must agree, modulo the patch component.
+# The MSRV is Cargo.toml's `rust-version`, and the flake reads it to build a
+# toolchain of exactly that version: `test:msrv` checks the published crates
+# with it. The development toolchain (flake.nix's `rustVersion`, and
+# rust-toolchain.toml's channel for rustup users) may run ahead; this also
+# checks those two agree.
 
 on:
   push:
@@ -12,30 +13,41 @@ on:
   pull_request:
     paths:
       - "**/Cargo.toml"
+      - "Cargo.lock"
       - "rust-toolchain.toml"
       - "flake.nix"
+      - "flake.lock"
+      - "nix/**"
+      - "sans-effort*/src/**"
       - ".github/workflows/msrv.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/nix
+        with:
+          cargo-cache: msrv
+
+      - run: nix develop .#ci --command test:msrv
+
   pins:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: The toolchain pins are the MSRV
+      - name: The development toolchain is pinned the same twice
         run: |
-          MSRV=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
           CHANNEL=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
           FLAKE=$(sed -n 's/^ *rustVersion *= *"\([^"]*\)";.*/\1/p' flake.nix)
-          echo "Cargo.toml=$MSRV rust-toolchain.toml=$CHANNEL flake.nix=$FLAKE"
-          test -n "$MSRV" || { echo "no workspace.package.rust-version in Cargo.toml"; exit 1; }
-          for v in "$CHANNEL" "$FLAKE"; do
-            case "$v" in
-              "$MSRV"|"$MSRV".*) ;;
-              *) echo "toolchain pin '$v' does not match MSRV '$MSRV'"; exit 1 ;;
-            esac
-          done
+          echo "rust-toolchain.toml=$CHANNEL flake.nix=$FLAKE"
+          test -n "$CHANNEL" -a "$CHANNEL" = "$FLAKE" || { echo "the pins disagree"; exit 1; }

@@ -144,7 +144,7 @@ impl<R, W> Now for DemoCtx<R, W> {
         async move {
             let reading = world.readings.fetch_add(1, Ordering::Relaxed);
             let millis = EPOCH_MILLIS + 1_000 * reading;
-            UnixTime::from_since_epoch(Duration::from_millis(millis))
+            UnixTime::new(Duration::from_millis(millis))
         }
     }
 }

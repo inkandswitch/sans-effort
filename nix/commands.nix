@@ -8,6 +8,7 @@
   jdk,
   quint,
   rust-toolchain,
+  msrv-toolchain,
   wasm-bindgen-cli,
   bench-pkgs,
 }: let
@@ -30,7 +31,6 @@
 
   # Slims `quint run --mbt` traces to what the replay needs: nix/slim-traces.py.
   slim-traces = ./slim-traces.py;
-
 
   # Apalache's folds made strict for TLC: nix/strict-folds.py.
   strict-folds = ./strict-folds.py;
@@ -137,6 +137,30 @@ in {
   # other, and of a tell from another thread with a drain. `--cfg
   # sans_effort_loom` swaps the driver's lock and wake flag for loom's; its
   # own target directory keeps that from rebuilding everything else.
+  # The MSRV (Cargo.toml's `rust-version`, which the flake reads to pick this
+  # toolchain): the published crates' libraries must build with it, in every
+  # configuration a user can choose. Tests and benches are not checked —
+  # their dev-dependencies set their own floors. `RUSTC` is set because Cargo
+  # runs the `rustc` on `PATH` — the development toolchain's — not the one
+  # beside it; and a target directory per version keeps another version's
+  # build from passing for this one.
+  "test:msrv" = cmd "Check the published crates build with the MSRV toolchain (Cargo.toml's rust-version)" ''
+    set -e
+    export RUSTC=${msrv-toolchain}/bin/rustc
+    version=$("$RUSTC" --version | cut -d' ' -f2)
+    export CARGO_TARGET_DIR="target/msrv/$version"
+    echo "rustc $version"
+
+    echo "===> All features..."
+    ${pkgs.lib.getExe msrv-toolchain} check -p sans-effort-core -p sans-effort-effects -p sans-effort-host \
+      -p sans-effort-tokio -p sans-effort --all-features
+
+    echo ""
+    echo "===> No std (spin lock)..."
+    ${pkgs.lib.getExe msrv-toolchain} check -p sans-effort-core -p sans-effort-effects -p sans-effort-host \
+      -p sans-effort --no-default-features --features spin
+  '';
+
   "test:loom" = cmd "Model-check the waker and outbox of the driver under every interleaving (loom)" ''
     set -e
     RUSTFLAGS="--cfg sans_effort_loom" CARGO_TARGET_DIR=target/loom \

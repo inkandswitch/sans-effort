@@ -242,7 +242,7 @@ impl HostEffect for Effect {
         match self {
             Effect::Ask(reply) => (View::Ask(reply.id()), Some(Pending::Unit(reply))),
             Effect::Spawn(make) => (View::Spawned(table::new_boxed(make)), None),
-            Effect::SpawnPinned(make) => (View::SpawnedPinned(table::park_pinned(make)), None),
+            Effect::SpawnPinned(make) => (View::SpawnedPinned(table::new_pinned(make)), None),
         }
     }
 }

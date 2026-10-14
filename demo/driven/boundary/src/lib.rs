@@ -422,7 +422,7 @@ impl HostEffect for Full {
             #[cfg(feature = "table")]
             Full::SpawnPinned(SpawnPinnedEffect(child)) => (
                 View::SpawnedPinned {
-                    handle: sans_effort_host::table::park_pinned(move |outbox| child.start(outbox)),
+                    handle: sans_effort_host::table::new_pinned(move |outbox| child.start(outbox)),
                 },
                 None,
             ),
@@ -695,7 +695,7 @@ mod tests {
         /// after.
         #[test]
         fn a_malformed_read_reply_is_refused_and_can_be_retried() -> TestResult {
-            let mut machine = Machine::<Full>::from_routine(greeter);
+            let mut machine = Machine::<Full>::new(greeter);
             let read = machine.resume()?.into_iter().find_map(|view| {
                 if let View::ReadLine { id } = view {
                     Some(id)
@@ -770,8 +770,7 @@ mod tests {
             };
             let start = 1_700_000_000 * SECOND;
 
-            let mut m =
-                Machine::<Full>::from_routine(|outbox| Journal::new(Ctx::new(outbox), 2).run());
+            let mut m = Machine::<Full>::new(|outbox| Journal::new(Ctx::new(outbox), 2).run());
 
             // Set, missing, written.
             assert_eq!(records(m.resume()?), [var(1)]);

@@ -340,7 +340,7 @@ impl<E: 'static> Answers<'_, E> {
     /// first resume is queued.
     pub fn spawn<M: FnOnce(Outbox<E>) -> BoxedRoutine>(&mut self, make: M) {
         self.world
-            .adopt(Machine::Migrating(Driver::from_boxed(make)));
+            .adopt(Machine::Migrating(Driver::new_boxed(make)));
     }
 
     /// Begin a child whose future need not be `Send`, as [`spawn`](Self::spawn)

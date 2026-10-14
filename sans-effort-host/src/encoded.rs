@@ -35,7 +35,7 @@ where
 {
     /// The byte layer over `machine`.
     #[must_use]
-    pub const fn new(machine: Machine<E, F>) -> Self {
+    pub const fn from_machine(machine: Machine<E, F>) -> Self {
         Self(machine)
     }
 
@@ -122,7 +122,7 @@ mod tests {
     fn encoded<F: core::future::Future<Output = ()> + Send + 'static>(
         make: impl FnOnce(sans_effort_core::driver::outbox::Outbox<crate::fixtures::Effect>) -> F,
     ) -> Encoded<crate::fixtures::Effect> {
-        Encoded::new(Machine::from_routine(make))
+        Encoded::from_machine(Machine::new(make))
     }
 
     /// Two requests in one batch, replied to through the byte layer in the

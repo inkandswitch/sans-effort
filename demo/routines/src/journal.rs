@@ -158,7 +158,7 @@ mod tests {
                 .unwrap_or_else(PoisonError::into_inner);
             let millis = 1_700_000_000_000 + 1_000 * *readings;
             *readings += 1;
-            ready(UnixTime::from_since_epoch(Duration::from_millis(millis)))
+            ready(UnixTime::new(Duration::from_millis(millis)))
         }
     }
 

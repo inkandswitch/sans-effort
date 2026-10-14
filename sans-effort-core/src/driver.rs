@@ -132,7 +132,7 @@ impl<E> Driver<E> {
 
     /// As [`new`](Self::new), for a routine that is already boxed — a spawned
     /// child, say — so it is not boxed twice.
-    pub fn from_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
+    pub fn new_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
         let outbox = Outbox::new();
         let future = make(outbox.clone());
 

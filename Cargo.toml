@@ -15,7 +15,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/inkandswitch/sans-effort"
 authors = ["Brooklyn Zelenka <hello@brooklynzelenka.com>"]

@@ -28,7 +28,7 @@ impl Now for TokioClock {
         let since_epoch = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default();
-        UnixTime::from_since_epoch(since_epoch)
+        UnixTime::new(since_epoch)
     }
 }
 

@@ -39,7 +39,8 @@ pub struct Machine<E, F: ?Sized = dyn Future<Output = ()> + Send> {
 }
 
 impl<E: HostEffect> Machine<E> {
-    /// Build a driver around `make` and wrap it: `Machine::new(Driver::new(make))`.
+    /// Build a driver around `make` and wrap it — the same as
+    /// `Machine::from_driver(Driver::new(make))`.
     /// Nothing runs until the first [`resume`](Self::resume).
     ///
     /// `make` receives the outbox the routine's context should write into and
@@ -48,22 +49,23 @@ impl<E: HostEffect> Machine<E> {
     /// requires the future to be `Send`, and only where the routine's type is
     /// concrete can the compiler decide that. A constructor generic over
     /// `P: Step` would have no way to state `P::run(): Send` on stable Rust.
-    pub fn from_routine<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
+    pub fn new<F: Future<Output = ()> + Send + 'static, M: FnOnce(Outbox<E>) -> F>(
         make: M,
     ) -> Self {
-        Self::new(Driver::new(make))
+        Self::from_driver(Driver::new(make))
     }
 
-    /// As [`from_routine`](Self::from_routine), for a routine already boxed.
-    pub fn from_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
-        Self::new(Driver::from_boxed(make))
+    /// As [`new`](Self::new), for a routine already boxed.
+    pub fn new_boxed<M: FnOnce(Outbox<E>) -> BoxedRoutine>(make: M) -> Self {
+        Self::from_driver(Driver::new_boxed(make))
     }
 }
 
 impl<E: HostEffect, F: Future<Output = ()> + ?Sized> Machine<E, F> {
-    /// Wrap a driver. Nothing has been polled yet.
+    /// Wrap a driver — a local one ([`Driver::local`]), say, which
+    /// [`new`](Machine::new) cannot build. Nothing has been polled yet.
     #[must_use]
-    pub const fn new(driver: Driver<E, F>) -> Self {
+    pub const fn from_driver(driver: Driver<E, F>) -> Self {
         Self {
             driver,
             pending: Vec::new(),
@@ -286,7 +288,7 @@ mod tests {
         use core::{future::IntoFuture, panic::AssertUnwindSafe};
         use sans_effort_core::reply::handle::ReplyHandle;
 
-        let mut m = Machine::from_routine(|outbox: Outbox<Effect>| async move {
+        let mut m = Machine::new(|outbox: Outbox<Effect>| async move {
             let failed = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 outbox
                     .ask(|_: ReplyHandle<String>| -> Effect { panic!("no effect") })
@@ -339,7 +341,7 @@ mod tests {
             }
         }
 
-        let mut m = Machine::from_routine(
+        let mut m = Machine::new(
             |outbox: sans_effort_core::driver::outbox::Outbox<Kinds>| async move {
                 let s = outbox.ask(Kinds::Str).await;
                 let n = outbox.ask(Kinds::U64).await;
@@ -361,7 +363,7 @@ mod tests {
 
     #[test]
     fn a_reply_is_checked_for_kind_and_refused_after_completion() -> TestResult {
-        let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
+        let mut m = Machine::new(|outbox| Echo(outbox).run());
         assert_eq!(m.resume()?.effects(), [View::Ask(1)]);
         assert!(
             m.resume()?.is_empty(),
@@ -387,7 +389,7 @@ mod tests {
 
     #[test]
     fn dropped_requests_are_forgotten() -> TestResult {
-        let mut m = Machine::from_routine(|outbox| Impatient(outbox).run());
+        let mut m = Machine::new(|outbox| Impatient(outbox).run());
         let step = m.resume()?;
         assert_eq!(
             step.effects(),
@@ -420,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_second_reply_to_an_answered_id_is_stale() -> TestResult {
-        let mut m = Machine::from_routine(|outbox| Both(outbox).run());
+        let mut m = Machine::new(|outbox| Both(outbox).run());
         drop(m.resume()?);
         drop(m.reply(1, String::from("a"))?);
         assert_eq!(m.reply(1, String::from("a")), Err(Error::Stale { id: 1 }));
@@ -429,7 +431,7 @@ mod tests {
 
     #[test]
     fn completion_closes_what_the_routine_still_held() -> TestResult {
-        let mut m = Machine::from_routine(|outbox| Holds(outbox).run());
+        let mut m = Machine::new(|outbox| Holds(outbox).run());
         let step = m.resume()?;
         assert_eq!(m.status(), Status::Complete);
         assert_eq!(step.effects(), [View::Ask(1), View::Say("done".into())]);
@@ -439,7 +441,7 @@ mod tests {
 
     #[test]
     fn resume_begins_a_machine_and_is_harmless_after() -> TestResult {
-        let mut m = Machine::from_routine(|outbox| Echo(outbox).run());
+        let mut m = Machine::new(|outbox| Echo(outbox).run());
         assert_eq!(
             m.reply(1, String::from("early")),
             Err(Error::BadInput),
