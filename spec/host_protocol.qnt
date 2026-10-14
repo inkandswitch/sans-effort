@@ -429,8 +429,10 @@ module protocol {
   val ends_right = never_stuck and terminates and right_verdict
 
   // The same, as a temporal property under weak fairness: the host always
-  // reaches the verdict it should. Not checked yet — Quint 0.32's TLC
-  // backend hangs on it (TODO.md); `ends_right` checks it without fairness.
+  // reaches the verdict it should. `spec:check` runs it on TLC directly, not
+  // through `quint verify`, where it never finishes: Apalache's folds, which
+  // `run_to_wait` compiles to, are made strict first (see `strict-folds` in
+  // nix/commands.nix).
   temporal fair = weakFair(call, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, steps))
     and weakFair(ret, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, steps))
     and weakFair(quiet, (machines, queued, senders, wakes, pending, in_flight, verdict, stale, steps))

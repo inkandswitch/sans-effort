@@ -61,11 +61,55 @@
     json.dump({"instance": instance, "traces": distinct}, sys.stdout, separators=(",", ":"))
     print(f"{instance}: {len(distinct)} traces, {sum(map(len, distinct))} steps", file=sys.stderr)
   '';
+
+  # TLC, which `spec:check` runs on the spec's liveness property, needs
+  # Apalache's two folds strict. As shipped they pass the accumulator on
+  # unevaluated, and TLC re-evaluates such an argument at every use inside
+  # ENABLED, which weak fairness needs: exponential in the spec's 8-step
+  # `run_to_wait`, so the check never finished. Binding the accumulator in a
+  # set comprehension evaluates it once. Writes `Apalache.tla` (patched) and
+  # `Variants.tla` from Apalache's jar into a directory; refuses to run if
+  # Apalache's text changed and a patch no longer matches.
+  strict-folds = pkgs.writeText "strict-folds.py" ''
+    import sys, zipfile
+
+    jar, out = sys.argv[1], sys.argv[2]
+    modules = zipfile.ZipFile(jar)
+
+
+    def module(name):
+        return modules.read("tla2sany/StandardModules/" + name).decode()
+
+
+    PATCHES = [
+        (r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
+        IF __seq = <<>>
+        THEN __v
+        ELSE ApaFoldSeqLeft(__Op, __Op(__v, Head(__seq)), Tail(__seq))""",
+         r"""ApaFoldSeqLeft(__Op(_,_), __v, __seq) ==
+        IF __seq = <<>>
+        THEN __v
+        ELSE CHOOSE __r \in { ApaFoldSeqLeft(__Op, __acc, Tail(__seq)) :
+                              __acc \in { __Op(__v, Head(__seq)) } } : TRUE"""),
+        (r"""         ApaFoldSet(__Op, __Op(__v,__w), __T)""",
+         r"""         CHOOSE __r \in { ApaFoldSet(__Op, __acc, __T) :
+                           __acc \in { __Op(__v, __w) } } : TRUE"""),
+    ]
+
+    apalache = module("Apalache.tla")
+    for lazy, strict in PATCHES:
+        if apalache.count(lazy) != 1:
+            sys.exit("Apalache.tla has changed: a fold to make strict was not found")
+        apalache = apalache.replace(lazy, strict)
+    open(out + "/Apalache.tla", "w").write(apalache)
+    open(out + "/Variants.tla", "w").write(module("Variants.tla"))
+  '';
 in {
-  "bench:instructions" = cmd "Count instructions and allocations for the core workloads (Gungraun, under Valgrind; Linux)" ''
+  "bench:instructions" = cmd "Count instructions and allocations for the core workloads and the handle table (Gungraun, under Valgrind; Linux)" ''
     set -e
     export PATH="${bench-path}:$PATH"
     ${cargo} bench -p sans-effort-core --bench instructions "$@"
+    ${cargo} bench -p sans-effort-host --bench instructions "$@"
   '';
 
   "bench:time" = cmd "Time the core workloads and the host table (criterion); pass --save-baseline NAME or --baseline NAME" ''
@@ -372,7 +416,7 @@ in {
   # Each `quint verify` starts an Apalache server on port 8822, and does not
   # always stop it; a server left behind makes the next run hang. So every run
   # has a time limit and is followed by stopping the server.
-  "spec:check" = cmd "Model-check the host-protocol spec (TLC via Quint): real instances pass, mistaken hosts are caught" ''
+  "spec:check" = cmd "Model-check the host-protocol spec (TLC via Quint): safety, and liveness under weak fairness; real instances pass, mistaken hosts are caught" ''
     set -uo pipefail
     export PATH=${utils-path}:$PATH
     cd spec || exit 1
@@ -410,13 +454,57 @@ in {
       fi
     }
 
+    # Liveness under weak fairness: `reaches_verdict`, compiled to TLA+ and
+    # run on TLC directly, beside Apalache's modules with its folds made strict
+    # (see `strict-folds`). Through `quint verify` it never finishes.
+    tla=$(mktemp -d)
+    trap 'rm -rf "$tla"' EXIT
+    jar=$(echo ${quint}/share/quint/apalache-dist-*/apalache/lib/apalache.jar)
+
+    live() {
+      local instance=$1 expect=$2
+      local log="/tmp/sans-effort-spec-$instance-live.log"
+      printf '%-26s expect %-10s ' "$instance" "$expect"
+      timeout 120 ${quint}/bin/quint compile --target=tlaplus --main="$instance" \
+        --temporal=reaches_verdict host_protocol.qnt 2> "$log" \
+        | sed -n '/^-* MODULE/,$p' > "$tla/$instance.tla"
+      stop_server
+      printf 'INIT q_init\nNEXT q_step\nPROPERTY q_temporalProps\n' > "$tla/$instance.cfg"
+      (cd "$tla" && timeout 300 ${jdk}/bin/java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
+        -workers 2 -metadir "$tla/states/$instance" -config "$instance.cfg" "$instance.tla") \
+        >> "$log" 2>&1
+      local code=$?
+      local states
+      states=$(grep -oE '[0-9]+ distinct states found' "$log" | tail -1)
+      if [ "$expect" = ok ] && [ "$code" -eq 0 ] && grep -q 'No error has been found' "$log"; then
+        echo "ok        ($states)"
+      elif [ "$expect" = violation ] && grep -q 'Temporal properties were violated' "$log"; then
+        echo "caught    ($states)"
+      else
+        echo "FAILED    (exit $code; see $log)"
+        status=1
+      fi
+    }
+
     stop_server
+    echo "Safety, and liveness as safety (safe, ends_right):"
     for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock; do
       check "$instance" ok
     done
     for instance in mistaken_ignores_woke mistaken_ignores_closed; do
       check "$instance" violation
     done
+
+    echo "Liveness under weak fairness (reaches_verdict):"
+    ${python} ${strict-folds} "$jar" "$tla" || exit 1
+    # A host that ignores closed frames still finishes; its mistake is a
+    # safety one, caught above. One that ignores `woke` frames does not.
+    for instance in ping_pong ping_pong_sequential deadline panic_wakes deadlock \
+      mistaken_ignores_closed; do
+      live "$instance" ok
+    done
+    live mistaken_ignores_woke violation
+
     rm -rf _apalache-out
     exit "$status"
   '';

@@ -156,7 +156,7 @@ A scheduler inside the library (the host is the scheduler, whichever host it is)
 
 - _Four runtimes, one transcript._ Every demo routine runs natively on tokio and on Node, and driven from Python and Java; their outputs must match byte for byte.
 - _Adversarial schedules._ In Rust, a test runner replays routines under bolero-chosen schedules — replies delayed, machines interleaved, spurious resumes, machines killed — and the output must not change. Every foreign host has a seeded adversarial mode too, checked against tokio's transcript, and every seeded Python run is recorded and replayed in Rust.
-- _The protocol, model-checked._ `spec/host_protocol.qnt` states the host protocol in Quint; TLC proves no wake is lost and every verdict — finished, or stalled — is sound, and catches the mistaken hosts that ignore `woke` or closed frames. Traces drawn from the spec are replayed against the real handle table, call by call.
+- _The protocol, model-checked._ `spec/host_protocol.qnt` states the host protocol in Quint; TLC proves no wake is lost, every verdict — finished, or stalled — is sound, and, under weak fairness, every run reaches the verdict it should; and it catches the mistaken hosts that ignore `woke` or closed frames. Traces drawn from the spec are replayed against the real handle table, call by call.
 - _Concurrency._ `loom` explores every interleaving of the driver's waker and outbox; a host of 2–4 uncoordinated threads drives the handle table, collisions and all.
 - _Mutation testing._ `cargo-mutants` over the library crates: every mutant is caught, or excluded with its reason.
 

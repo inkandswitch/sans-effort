@@ -3,6 +3,7 @@ name = "sans-effort-host"
 version = "0.1.0"
 description = "Everything a foreign host needs to step sans-effort routines, in safe Rust over owned types: a typed machine, a byte layer, a handle table, and panic isolation"
 readme = "README.md"
+autobenches = false
 
 categories = ["asynchronous", "external-ffi-bindings"]
 keywords = ["async", "coroutine", "effects", "ffi", "sans-io"]
@@ -33,11 +34,17 @@ async-channel = { workspace = true }
 sans-effort-core = { workspace = true, features = ["testing"] }
 bolero = { workspace = true }
 criterion = { workspace = true }
+gungraun = { workspace = true }
 serde_json = { workspace = true }
 testresult = { workspace = true }
 
+# `benches/through_table.rs` is a module both harnesses share, not a target.
 [[bench]]
 name = "table"
+harness = false
+
+[[bench]]
+name = "instructions"
 harness = false
 
 [lints]

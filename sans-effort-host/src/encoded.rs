@@ -87,17 +87,24 @@ impl<E, F: ?Sized> core::fmt::Debug for Encoded<E, F> {
     }
 }
 
+/// Room per frame when the output is sized up front: a frame's five bytes
+/// of kind and length, and a typical record — enough that the buffer rarely
+/// grows, and that a `woke` frame the table appends usually fits too.
+const BYTES_PER_FRAME: usize = 32;
+
 /// One frame per effect — kind, `u32` length, the view's own bytes — then one
-/// closed frame per abandoned id.
+/// closed frame per abandoned id. Each record is encoded in place, into one
+/// buffer sized up front; an empty batch allocates nothing.
 fn encode<V: Encode>(step: &Yield<Shown<V>>) -> Vec<u8> {
-    let mut w = Writer::new();
+    let frames = step.effects().len() + step.closed().len();
+    let mut w = Writer::with_capacity(frames * BYTES_PER_FRAME);
     for Shown { view, awaits } in step.effects() {
         w.u8(if *awaits { FRAME_ASK } else { FRAME_TELL });
-        w.bytes(&view.to_bytes());
+        w.nested(|w| view.encode(w));
     }
     for id in step.closed() {
         w.u8(FRAME_CLOSED);
-        w.bytes(&id.to_bytes());
+        w.nested(|w| w.u64(*id));
     }
     w.finish()
 }

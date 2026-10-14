@@ -108,6 +108,13 @@ impl Writer {
         Self(Vec::new())
     }
 
+    /// An empty buffer with room for `capacity` bytes before it must grow:
+    /// for a writer that knows roughly how much it will write.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
     /// One byte.
     pub fn u8(&mut self, v: u8) {
         self.0.push(v);
@@ -138,6 +145,30 @@ impl Writer {
     pub fn bytes(&mut self, b: &[u8]) {
         self.u32(u32::try_from(b.len()).expect("payload shorter than 4 GiB"));
         self.0.extend_from_slice(b);
+    }
+
+    /// A nested record, laid out as [`bytes`](Self::bytes) lays it out — a
+    /// `u32` length, then the bytes — but written in place: `write` encodes
+    /// straight into this buffer, and the length is filled in after. No
+    /// separate buffer is built and copied, as `w.bytes(&inner.to_bytes())`
+    /// would.
+    ///
+    /// # Panics
+    ///
+    /// As [`bytes`](Self::bytes), if `write` writes 4 GiB or more.
+    #[expect(
+        clippy::expect_used,
+        reason = "a >4 GiB record is a programming error, not a runtime case"
+    )]
+    pub fn nested<F: FnOnce(&mut Self)>(&mut self, write: F) {
+        let start = self.0.len();
+        self.u32(0);
+        write(self);
+        let len = self.0.len() - start - 4;
+        let len = u32::try_from(len).expect("payload shorter than 4 GiB");
+        if let Some(prefix) = self.0.get_mut(start..start + 4) {
+            prefix.copy_from_slice(&len.to_le_bytes());
+        }
     }
 
     /// A `u32` length, then UTF-8.
@@ -461,6 +492,37 @@ mod tests {
                 prefix.len()
             );
         }
+    }
+
+    /// A nested record written in place is exactly the record `bytes`
+    /// writes, wherever it lands in the buffer.
+    #[test]
+    fn a_nested_record_is_laid_out_as_bytes_lays_it_out() {
+        bolero::check!()
+            .with_type::<(Vec<u8>, Vec<u8>)>()
+            .for_each(|(before, payload)| {
+                let mut nested = Writer::new();
+                let mut copied = Writer::new();
+                for w in [&mut nested, &mut copied] {
+                    for byte in before {
+                        w.u8(*byte);
+                    }
+                }
+                nested.nested(|w| {
+                    for byte in payload {
+                        w.u8(*byte);
+                    }
+                });
+                copied.bytes(payload);
+                assert_eq!(nested.finish(), copied.finish());
+            });
+    }
+
+    #[test]
+    fn a_writer_with_capacity_has_room_and_nothing_in_it() {
+        let buffer = Writer::with_capacity(64).finish();
+        assert!(buffer.is_empty());
+        assert!(buffer.capacity() >= 64);
     }
 
     /// Through the `Encode` impls for borrowed forms — `str`, `[u8]`, and
