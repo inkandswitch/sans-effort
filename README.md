@@ -7,7 +7,7 @@
 `sans-effort` lets you write ordinary, "direct-style" Rust (`async fn`, `.await`, loops, `?`, etc) and run it two ways:
 
 1. Call it from Rust as normal: on `tokio` it is a plain future at native speed, with no driver.
-2. Drive it from a FFI host language through a sans-io interface: every wait becomes a typed effect that the host answers by id, so the host owns I/O, time, and scheduling — which routine resumes, in what order replies arrive, whether the clock is real or virtual — and the output is typically byte-identical to the native run.
+2. Drive it from a FFI host language through a sans-io interface: every wait becomes a typed effect that the host answers by id, so the host owns I/O, time, and scheduling (which routine resumes, in what order replies arrive, whether the clock is real or virtual), and the output is typically byte-identical to the native run.
 
 The routine asks for traits, not effects, and cannot tell which way it is running. It may spawn children and talk to them over ordinary channels; whichever host runs them is the scheduler. The compiler writes the state machine; the only `Pin` is one `Box::pin` at any FFI boundary (if and when it exists).
 
@@ -70,7 +70,7 @@ impl<C: Sleep + Lookup + ReadLine + WriteLine> Step for Greeter<C> {
 
 ## Two Contexts, One Routine
 
-Natively, on tokio — no driver, no effects, tokio polls the task:
+Natively, on tokio: no driver, no effects; tokio polls the task.
 
 ```rust
 // in sans-effort-tokio: one component per trait, composed into TokioCtx
@@ -82,7 +82,7 @@ let pool = LocalPoolHandle::new(1);  // where pinned children run: the applicati
 tokio::spawn(Greeter::new(DemoCtx::new(TokioCtx::stdio(pool))).run());  // DemoCtx adds Lookup
 ```
 
-Behind a host — each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
+Behind a host, each call records a request and suspends until the host replies by id. The context is generic over the host's vocabulary `E`, so a host can offer a routine _less_ than everything, and the type system enforces it:
 
 ```rust
 // in sans-effort-effects, written once for every application (simplified):
@@ -99,7 +99,7 @@ Driver::<Quiet>::new(|outbox| Ticker::new(Ctx::new(outbox), 3).run()); // ok: Ti
 
 ### Where This Sits
 
-This is the [tagless-final][tf] style with the representation pinned to `impl Future`: the traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one — the instance that recovers the initial, tagged encoding (`Full`) from the final one. `Quiet` is a smaller algebra. Rust readers may know the same shape as "capability traits" or MTL-style; the effects style, where the routine emits a tagged enum directly, is the initial encoding, and the two share one mechanism because initial and final encodings are interconvertible. Rust has no higher-kinded types, so the representation cannot vary; the interpreter does.
+This is the [tagless-final][tf] style with the representation pinned to `impl Future`: the traits are the algebra, a routine is a term abstract in its interpreter, `TokioCtx` is the evaluating interpreter, and `Ctx<E>` is the reifying one: the instance that recovers the initial, tagged encoding (`Full`) from the final one. `Quiet` is a smaller algebra. Rust readers may know the same shape as "capability traits" or MTL-style; the effects style, where the routine emits a tagged enum directly, is the initial encoding, and the two share one mechanism because initial and final encodings are interconvertible. Rust has no higher-kinded types, so the representation cannot vary; the interpreter does.
 
 [tf]: https://okmij.org/ftp/tagless-final/index.html
 
@@ -128,25 +128,25 @@ This is the [tagless-final][tf] style with the representation pinned to `impl Fu
     │                                         ┴
 ```
 
-- _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `resume`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame — which is why the routine is `Send` for free.
+- _Pull-only._ The routine asks for everything it needs, but by _returning_ an effect from `resume`/`reply`, never by calling the host. No callbacks, no upcalls, so no foreign value ever enters a Rust frame, which is why the routine is `Send` for free.
 - _Typed replies._ Every awaiting effect carries a `ReplyHandle<T>`: the typed, single-use capability to answer it. A Rust host replies through the handle, infallibly; a foreign host replies by id, and the host layer checks the kind.
-- _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits — or `select` the first of them — and a host may reply in any order. A request the routine abandons is reported to the host, which may stop the work.
+- _Many waits outstanding._ Requests carry ids, so a routine may `join` two waits (or `select` the first of them), and a host may reply in any order. A request the routine abandons is reported to the host, which may stop the work.
 - _Many routines._ A routine may spawn children; each is a machine of its own, which the host starts and steps like the first. They talk over ordinary channels, inside the process: a routine waiting on one is `IDLE`, and when another machine's step may have unblocked it, that call's output names it in a `woke` frame, so the host knows whom to resume. A host can tell a finished program from a deadlock.
 - _`no_std` core._ The mechanism, the routine, and its boundary crate all build for `wasm32`; the mechanism for `thumbv6m` with `critical-section`.
 
 ## Crates
 
-| Crate                                         | Purpose                                                                                                                                                                                          | Target             |
-|-----------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
-| [`sans-effort`](sans-effort/)                 | The one dependency for routine authors: re-exports `-core` and `-effects` in one flat namespace; `tokio` and `host` behind features                                                               |
-| [`sans-effort-core`](sans-effort-core/)       | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Answer`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                      | `no_std` + `alloc` |
-| [`sans-effort-effects`](sans-effort-effects/) | A standard library of effect traits — `time`, `console`, `fs`, `env`, `random`, `spawn` — the traits, their effects, and the reifying `Ctx<E>`, written once | `no_std` + `alloc` |
-| [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per effect trait — `TokioClock`, `TokioInput`, `TokioOutput`, `TokioFs`, `TokioEnv`, `TokioRandom`, `TokioSpawner` — and `TokioCtx` with all of them — real futures, no driver | `std`              |
-| [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation, and record/replay of a foreign host's run. No `unsafe`                                  | `std`              |
-| [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                                                                                                              | —                  |
-| [`design/`](design/)                          | How it works and why: assumptions, the effects stdlib, channels and spawning, capabilities, cancellation, related work                                                                         | —                  |
-| [`spec/`](spec/)                              | The host protocol as a model-checked spec (Quint): the library's rules and the recommended host loop                                                                                            | —                  |
-| [`demo/`](demo/)                              | Routines from a greeter to a ring of machines; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java | —                  |
+| Crate                                         | Purpose                                                                                                                                                                                                          | Target             |
+|-----------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------|
+| [`sans-effort`](sans-effort/)                 | The one dependency for routine authors: re-exports `-core` and `-effects` in one flat namespace; `tokio` and `host` behind features                                                                              | `no_std` + `alloc` |
+| [`sans-effort-core`](sans-effort-core/)       | The mechanism: `Step`, `Outbox`, `ReplyHandle`, `Answer`, `Driver`, `join`, `select`, the reply menu, `boundary`, `testing`                                                                                      | `no_std` + `alloc` |
+| [`sans-effort-effects`](sans-effort-effects/) | A standard library of effect traits (`time`, `console`, `fs`, `env`, `random`, `spawn`): the traits, their effects, and the reifying `Ctx<E>`, written once                                                      | `no_std` + `alloc` |
+| [`sans-effort-tokio`](sans-effort-tokio/)     | Native tokio contexts: one component per effect trait (`TokioClock`, `TokioInput`, `TokioOutput`, `TokioFs`, `TokioEnv`, `TokioRandom`, `TokioSpawner`) and `TokioCtx` with all of them: real futures, no driver | `std`              |
+| [`sans-effort-host`](sans-effort-host/)       | The host side for foreign hosts: a typed `Machine`, the `Encoded` byte layer, a handle table, panic isolation, and record/replay of a foreign host's run. No `unsafe`                                            | `std`              |
+| [`ABI.md`](ABI.md)                            | The contract a foreign host assumes                                                                                                                                                                              |                    |
+| [`design/`](design/)                          | How it works and why: assumptions, the effects stdlib, channels and spawning, capabilities, cancellation, related work                                                                                           |                    |
+| [`spec/`](spec/)                              | The host protocol as a model-checked spec (Quint): the library's rules and the recommended host loop                                                                                                             |                    |
+| [`demo/`](demo/)                              | Routines from a greeter to a ring of machines; native contexts for tokio and for JS (wasm-bindgen, no driver); a reifying context with `Full`/`Quiet` vocabularies; a C-ABI binding driven from Python and Java  |                    |
 
 ### Not Here, on Purpose
 
@@ -155,8 +155,8 @@ A scheduler inside the library (the host is the scheduler, whichever host it is)
 ## How It Is Checked
 
 - _Four runtimes, one transcript._ Every demo routine runs natively on tokio and on Node, and driven from Python and Java; their outputs must match byte for byte.
-- _Adversarial schedules._ In Rust, a test runner replays routines under bolero-chosen schedules — replies delayed, machines interleaved, spurious resumes, machines killed — and the output must not change. Every foreign host has a seeded adversarial mode too, checked against tokio's transcript, and every seeded Python run is recorded and replayed in Rust.
-- _The protocol, model-checked._ `spec/host_protocol.qnt` states the host protocol in Quint; TLC proves no wake is lost, every verdict — finished, or stalled — is sound, no pinned machine is called off its own worker, and, under weak fairness, every run reaches the verdict it should; and it catches the mistaken hosts that ignore `woke` frames, closed frames, or pinning. Traces drawn from the spec are replayed against the real handle table, call by call, each call on the thread of the spec's worker.
+- _Adversarial schedules._ In Rust, a test runner replays routines under bolero-chosen schedules (replies delayed, machines interleaved, spurious resumes, machines killed), and the output must not change. Every foreign host has a seeded adversarial mode too, checked against tokio's transcript, and every seeded Python run is recorded and replayed in Rust.
+- _The protocol, model-checked._ `spec/host_protocol.qnt` states the host protocol in Quint; TLC proves no wake is lost, every verdict (finished, or stalled) is sound, no pinned machine is called off its own worker, and, under weak fairness, every run reaches the verdict it should; and it catches the mistaken hosts that ignore `woke` frames, closed frames, or pinning. Traces drawn from the spec are replayed against the real handle table, call by call, each call on the thread of the spec's worker.
 - _Concurrency._ `loom` explores every interleaving of the driver's waker and outbox; a host of 2–4 uncoordinated threads drives the handle table, collisions and all.
 - _Mutation testing._ `cargo-mutants` over the library crates: every mutant is caught, or excluded with its reason.
 

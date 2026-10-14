@@ -2,20 +2,18 @@
 
 This directory explains how `sans-effort` works and why, less formally than a specification. [`ABI.md`](../ABI.md) at the repository root is the normative contract for foreign hosts; these documents are the reasoning around it. [`spec/host_protocol.qnt`](../spec/host_protocol.qnt) states the host protocol formally, and is model-checked.
 
-Some documents describe what exists and some describe what is planned. Each one says which at the top.
-
 ## Documents
 
-| Document                          | Status            | Purpose                                                                        |
-|-----------------------------------|-------------------|--------------------------------------------------------------------------------|
-| [`concepts`](concepts.md)         | current           | The terms, and how they connect: start here                                    |
-| [`assumptions`](assumptions.md)   | current           | What the design assumes about hosts, routines, and targets                     |
-| [`effects`](effects.md)           | current           | A standard library of effect traits: `sans-effort-effects`, `sans-effort-tokio` |
-| [`channels`](channels.md)         | current           | Plain channels between machines, spawning, and the host as the scheduler       |
-| [`capabilities`](capabilities.md) | current + planned | Object-capability discipline within a process, given an honest host            |
-| [`cancellation`](cancellation.md) | current           | `select`, abandoned requests, and telling the host                             |
-| [`deadlocks`](deadlocks.md)       | current           | The four kinds, which are caught, which are prevented, and the host's locks    |
-| [`related-work`](related-work.md) | current           | Where `sans-effort` sits among Rust effect libraries, and what it draws on     |
+| Document                          | Purpose                                                                         |
+|-----------------------------------|---------------------------------------------------------------------------------|
+| [`concepts`](concepts.md)         | The terms, and how they connect: start here                                     |
+| [`assumptions`](assumptions.md)   | What the design assumes about hosts, routines, and targets                      |
+| [`effects`](effects.md)           | A standard library of effect traits: `sans-effort-effects`, `sans-effort-tokio` |
+| [`channels`](channels.md)         | Plain channels between machines, spawning, and the host as the scheduler        |
+| [`capabilities`](capabilities.md) | Object-capability discipline within a process, given an honest host             |
+| [`cancellation`](cancellation.md) | `select`, abandoned requests, and telling the host                              |
+| [`deadlocks`](deadlocks.md)       | The four kinds, which are caught, which are prevented, and the host's locks     |
+| [`related-work`](related-work.md) | Where `sans-effort` sits among Rust effect libraries, and what it draws on      |
 
 Writing an effect trait of your own is a guide in the crate docs rather than a document here, so that its examples are compiled and its names link to the API: [`sans_effort::guide`](https://docs.rs/sans-effort/latest/sans_effort/guide/) on docs.rs, or `cargo doc --open -p sans-effort` locally (its source is [`sans-effort-effects/src/guide.rs`](../sans-effort-effects/src/guide.rs)).
 
@@ -94,7 +92,7 @@ sequenceDiagram
 - _Direct style._ A routine is an ordinary `async fn`. The compiler writes the state machine.
 - _Traits, not effects._ A routine names what it needs as effect traits. A context decides whether each call is a real future or a recorded effect.
 - _Pull-only._ The host calls in; the routine never calls out. No callbacks, no upcalls, no foreign value in a Rust frame.
-- _The host is the scheduler._ Whichever host polls — tokio, Node, a Python loop, a test — decides what runs, when, and in what order replies arrive. The library contains no scheduler.
+- _The host is the scheduler._ Whichever host polls (tokio, Node, a Python loop, a test) decides what runs, when, and in what order replies arrive. The library contains no scheduler.
 - _A small, stable mechanism._ Opinions (which effect traits exist, how they run on tokio) live in separate crates with their own versions.
 - _`no_std` core._ The mechanism, routines, and their boundary crates build for `wasm32` and `thumbv6m`.
 - _`unsafe` only in bindings._ Everything but the per-application binding is `unsafe_code = "forbid"`.

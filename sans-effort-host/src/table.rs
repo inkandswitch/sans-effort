@@ -20,9 +20,11 @@
 //! in the output of [`wakes`]. The host resumes that machine when it chooses.
 //!
 //! A panicking routine is caught, removed, and reported as
-//! [`Error::Panicked`]; the host must not touch that handle again. That needs
-//! unwinding: where panics abort, as on `wasm32-unknown-unknown`, a panic
-//! stops the whole process or instance instead. Handles
+//! [`Error::Panicked`]; the host must not touch that handle again. Its
+//! message reaches the panic hook, not the error: install a hook to log it.
+//! Catching needs unwinding: where panics abort, as on
+//! `wasm32-unknown-unknown`, a panic stops the whole process or instance
+//! instead. Handles
 //! are never `0` and never reused, so a stale one is [`Error::BadHandle`]
 //! rather than a fault.
 //!

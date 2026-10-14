@@ -1,6 +1,6 @@
 # demo
 
-The greeter — prompt, read, look up, pause, greet, count, repeat — written once against five effect traits, then run four ways that must agree byte for byte; and routines that spawn children and talk to them over plain channels (ping-pong, the front desk, a ring, two deadline races). Three of the greeter's traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`, as do the spawning routines' `Spawn` and `SpawnPinned`; two (`Count`, `Lookup`) are the demo's own. A journal routine uses the rest of the standard library — `Var`, `ReadFile`, `WriteFile`, `Now`, `Random` — and every host answers it from the same small world (one variable, files in memory, a clock that moves a second per reading, counting random bytes), so its transcripts agree too.
+The greeter (prompt, read, look up, pause, greet, count, repeat), written once against five effect traits, then run four ways that must agree byte for byte; and routines that spawn children and talk to them over plain channels (ping-pong, the front desk, a ring, two deadline races). Three of the greeter's traits (`Sleep`, `ReadLine`, `WriteLine`) and the reifying context `Ctx<E>` come from `sans-effort-effects`, as do the spawning routines' `Spawn` and `SpawnPinned`; two (`Count`, `Lookup`) are the demo's own. A journal routine uses the rest of the standard library (`Var`, `ReadFile`, `WriteFile`, `Now`, `Random`), and every host answers it from the same small world (one variable, files in memory, a clock that moves a second per reading, counting random bytes), so its transcripts agree too.
 
 ```text
   routines/        shared by both paths. The routines, one per module: greeter (the
@@ -13,20 +13,20 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    deadline (two workers, each raced against a sleep: the quick one
                    wins, the slow one answers late). no_std.
                    faults/: routines that misbehave on purpose, for testing hosts,
-                   not examples to follow — deadlock (two routines each waiting
+                   not examples to follow: deadlock (two routines each waiting
                    for the other). See Host Checks.
-                   effects/: the demo's own effect traits, one module each — count
-                   (Count, CountEffect) and lookup (Lookup, LookupEffect) — each
+                   effects/: the demo's own effect traits, one module each: count
+                   (Count, CountEffect) and lookup (Lookup, LookupEffect); each
                    with its reifying Ctx impl beside it (the orphan rule puts it
                    there). The routines themselves use only traits.
-                   Tests: a Recording mock + testing::run_now — no driver, one poll.
+                   Tests: a Recording mock + testing::run_now: no driver, one poll.
 
   native/          the routine runs as an ordinary task on an executor. No Driver.
     tokio/         DemoCtx wraps sans-effort-tokio's TokioCtx (Sleep, ReadLine,
                    WriteLine, Spawn as tokio futures and tasks), adds Count and Lookup,
                    and forwards the rest; tokio::spawn(Greeter::new(ctx).run()).
                    Tests: paused clock and multithreaded runs, output captured.
-    wasm/          JsCtx implements the traits over a JS object the caller supplies —
+    wasm/          JsCtx implements the traits over a JS object the caller supplies:
                    through a dispatcher task, so its futures are Send; the event loop
                    is the executor. Classes Greeter, Fanout, PingPong, FrontDesk, Ring,
                    Journal, Deadline, and faults::Deadlock.
@@ -57,9 +57,9 @@ The greeter — prompt, read, look up, pause, greet, count, repeat — written o
                    thread polled what.
 ```
 
-Two native runtimes and two foreign hosts, on purpose. tokio and the JS event loop are executors: the routine is spawned on them and its context makes each wait a real future — no driver. Python and Java cannot poll a Rust future, so there the routine runs behind a `Driver`, and the host replies by request id over the C ABI it decodes from `ABI.md`. The routine cannot tell which it is under.
+Two native runtimes and two foreign hosts, on purpose. tokio and the JS event loop are executors: the routine is spawned on them and its context makes each wait a real future, with no driver. Python and Java cannot poll a Rust future, so there the routine runs behind a `Driver`, and the host replies by request id over the C ABI it decodes from `ABI.md`. The routine cannot tell which it is under.
 
-A JS host _could_ take the Python role — hold a `Machine` in a wasm-bindgen class and step it — and would want to for a deterministic scheduler or a replay harness; the exploration this library came from has one. For running a routine in a page, the native form is the idiomatic one.
+A JS host _could_ take the Python role (hold a `Machine` in a wasm-bindgen class and step it), and would want to for a deterministic scheduler or a replay harness; the exploration this library came from has one. For running a routine in a page, the native form is the idiomatic one.
 
 ```sh
 printf 'alice\nbob\nquit\n' | cargo run -p greeter_tokio               # native: tokio
@@ -71,14 +71,14 @@ nix develop --command demo:faults                                       # host c
 nix develop --command demo:stress                                       # host checks: seeded schedules
 ```
 
-`--fanout` on any host runs the two-waits-per-batch variant; `--journal` the journal; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr — one cold run, over the debug build the demo uses, so a JIT-compiled host such as Java's is mostly warming up: warm, over a release build, the Java host takes about 1.2 µs per hop, of which the library is about 0.4 µs); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
+`--fanout` on any host runs the two-waits-per-batch variant; `--journal` the journal; `--ping-pong`, `--front-desk`, and `--ring` run the spawning routines (`--ring` also prints the host's cost per hop to stderr: one cold run, over the debug build the demo uses, so a JIT-compiled host such as Java's is mostly warming up: warm, over a release build, the Java host takes about 1.2 µs per hop, of which the library is about 0.4 µs); `--ticker` on the Python or Java host drives a `Quiet` machine, which can only ever emit tags 4 and 5.
 
-`--deadline` races a receive against a sleep, twice. The quick worker beats a 30-second sleep, so that sleep is abandoned: tokio drops its timer, Node's dispatcher aborts the `AbortSignal` it gave the host's `sleep`, and the driven hosts get a closed frame — Python drops its pending timer (its time is virtual: timers fire only when nothing else can happen), Java cancels the virtual thread sleeping it. A host that fails to cancel waits the 30 seconds out, so `demo` and CI run this mode under a time limit. The slow worker cannot answer until told to, so its 50 ms deadline always passes first.
+`--deadline` races a receive against a sleep, twice. The quick worker beats a 30-second sleep, so that sleep is abandoned: tokio drops its timer, Node's dispatcher aborts the `AbortSignal` it gave the host's `sleep`, and the driven hosts get a closed frame: Python drops its pending timer (its time is virtual: timers fire only when nothing else can happen), Java cancels the virtual thread sleeping it. A host that fails to cancel waits the 30 seconds out, so `demo` and CI run this mode under a time limit. The slow worker cannot answer until told to, so its 50 ms deadline always passes first.
 
 ## Host Checks
 
-`nix develop --command demo:faults` runs routines that misbehave on purpose — `routines::faults` — and checks what each host does about them. They are not part of `demo`, which shows how routines are written; these check the hosts.
+`nix develop --command demo:faults` runs routines that misbehave on purpose (`routines::faults`) and checks what each host does about them. They are not part of `demo`, which shows how routines are written; these check the hosts.
 
-- `--deadlock` is two machines each waiting for the other, holding the sender the other waits on: nothing can ever wake either. The driven hosts see it — no call to make, no request outstanding, nothing from `wakes` — print `stalled: 2 machines can never progress` to stderr, and exit 1. Node's event loop runs dry with the routine's promise unsettled, and Node exits 13. tokio has no such detector and would hang, so it is not run there. `demo:faults` and CI check the exit codes, and that the hosts agree.
+- `--deadlock` is two machines each waiting for the other, holding the sender the other waits on: nothing can ever wake either. The driven hosts see it (no call to make, no request outstanding, nothing from `wakes`), print `stalled: 2 machines can never progress` to stderr, and exit 1. Node's event loop runs dry with the routine's promise unsettled, and Node exits 13. tokio has no such detector and would hang, so it is not run there. `demo:faults` and CI check the exit codes, and that the hosts agree.
 - `--seed N`, on the Python, Node, and Java hosts, makes the host adversarial, reproducibly: Python takes the next action from a machine chosen at random (each machine's own effects stay in order), defers each reply to a random later turn, and now and then resumes a machine for no reason; Node settles every answer after a random 0–3 ms, so answers asked together settle out of order; Java's seed picks its worker count (1 to 4) and delays each ask by up to 2 ms, and resumes spuriously too. tokio's `--workers K` sets its runtime's worker threads, so its own scheduler is the adversary. `nix develop --command demo:stress [SEEDS]` (default 10) runs every mode on every host under each seed and checks each writes what tokio writes on an ordinary run; CI runs it with 3.
 - `--record FILE`, on the Python and Java hosts, saves the run's log through the binding's `greeter_record` and `greeter_record_finish`; `cargo run -p greeter_cdylib --bin replay -- FILE MODE` replays it in Rust and reports the first divergence. A sequential host's runs replay exactly, seeded or not, so `demo:stress` records and replays every seeded Python run.

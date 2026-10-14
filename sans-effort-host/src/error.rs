@@ -44,7 +44,9 @@ pub enum Error {
     /// The routine already completed.
     #[error("routine already completed")]
     Finished,
-    /// The routine panicked and has been removed.
+    /// The routine panicked and has been removed. The panic's message is not
+    /// kept here; a binding that wants it in its own logs installs a panic
+    /// hook (`std::panic::set_hook`).
     #[error("routine panicked and was removed")]
     Panicked,
 }

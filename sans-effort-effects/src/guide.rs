@@ -246,7 +246,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! Two variants given the same tag no longer compile:
+//! Two variants given the same tag do not compile:
 //!
 //! ```compile_fail,E0081
 //! #[repr(u8)]

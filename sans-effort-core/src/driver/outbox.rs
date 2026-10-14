@@ -19,20 +19,17 @@ use core::task::Waker;
 /// context the other. A reifying context serves every wait through one of
 /// these: [`tell`](Self::tell) records an effect and moves on;
 /// [`ask`](Self::ask) records one that carries a [`ReplyHandle`] and returns
-/// the future that resolves when the host replies. The names are Akka's: a
-/// `tell` expects nothing back, an `ask` expects one thing.
+/// the future that resolves when the host replies.
 ///
 /// # Laziness
 ///
-/// `ask` records nothing until the returned [`Asking`] is awaited, exactly as a
-/// native future does nothing until awaited. `let a = out.ask(..); drop(a)`
-/// sends nothing. This matters because the same routine also runs
-/// under a native context, where `tokio::time::sleep(d)` is lazy, and the
-/// two must agree.
+/// `ask` records nothing until the returned [`Asking`] is awaited:
+/// `let a = out.ask(..); drop(a)` sends nothing. A native future is lazy the
+/// same way, and a routine must behave alike under both.
 ///
 /// # One Vocabulary, or Any
 ///
-/// Whoever calls `ask` names a variant of `E` — `out.ask(Effect::Lookup)` —
+/// Whoever calls `ask` names a variant of `E` (`out.ask(Effect::Lookup)`),
 /// so a context written this way serves one vocabulary. A context generic
 /// over _any_ vocabulary describes each wait as a request value instead, and
 /// states what the host must carry as a `From` bound; that pattern, and the

@@ -53,10 +53,10 @@ module protocol {
   const WORKERS: int
   // The verdict the host must reach: "end" or "stall".
   const EXPECTED: str
-  // The host resumes what `woke` frames name. (False: stage 1's mistake.)
+  // The host resumes what `woke` frames name. (False: a host that ignores them.)
   const HEEDS_WOKE: bool
-  // A closed frame drops the reply the host had queued. (False: the Python
-  // host's mistake, fixed in the deadline work.)
+  // A closed frame drops the reply the host had queued. (False: a host that
+  // replies to a request it was told had closed.)
   const DROPS_CLOSED: bool
   // A pinned machine's calls go to the worker that began it. (False: a host
   // that calls on any worker, which the table refuses as `WRONG_THREAD`.)

@@ -1,6 +1,6 @@
 # greeter_wasm
 
-The demo's routines in Node or a browser, with no driver. JS is a runtime host like tokio: its event loop is an executor, and `wasm-bindgen-futures` bridges Rust wakers to microtasks. So each routine runs as a task on that loop, and the context — `JsCtx` — makes each effect trait a call into a JS object the caller supplies, or, for spawning, a task of its own.
+The demo's routines in Node or a browser, with no driver. JS is a runtime host like tokio: its event loop is an executor, and `wasm-bindgen-futures` bridges Rust wakers to microtasks. So each routine runs as a task on that loop, and the context, `JsCtx`, makes each effect trait a call into a JS object the caller supplies, or, for spawning, a task of its own.
 
 ```text
   host.rs        the extern block, on a JS object: readLine · writeLine · lookup · count ·
@@ -53,4 +53,4 @@ Every method may return its value or a `Promise` of it. `readLine` returning any
 
 ## Why Not a `Machine` Here?
 
-A JS host *could* take Python's role — hold a `Machine` in a class and step the routine by request id — and would want to for a deterministic scheduler or a replay harness, where JS must own the loop. For running a routine in a page or a Node script, the native form is the idiomatic one: no ids, no codec, no status mirror, and the routine cannot tell it is not on tokio.
+A JS host _could_ take Python's role (hold a `Machine` in a class and step the routine by request id), and would want to for a deterministic scheduler or a replay harness, where JS must own the loop. For running a routine in a page or a Node script, the native form is the idiomatic one: no ids, no codec, no status mirror, and the routine cannot tell it is not on tokio.

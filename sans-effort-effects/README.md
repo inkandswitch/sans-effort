@@ -2,21 +2,21 @@
 
 > A standard library of effect traits for `sans-effort` routines
 
-A routine names what it needs as traits; a context decides what each call does. Most routines want the same few things — to sleep, to read and write lines — and without this crate every application writes each of them three times: the trait, the effect and its reifying impl, and a native impl. Here the first two are written once. Routine authors get all of this through `sans-effort`, at the same paths.
+A routine names what it needs as traits; a context decides what each call does. Most routines want the same few things (to sleep, to read and write lines), and without this crate every application writes each of them three times: the trait, the effect and its reifying impl, and a native impl. Here the first two are written once. Routine authors get all of this through `sans-effort`, at the same paths.
 
-| Module    | Trait         | Answer                          | If abandoned (a `select`'s loser)                 |
-|-----------|---------------|---------------------------------|---------------------------------------------------|
-| `time`    | `Sleep`       | `()`                            | Retractable: nothing is lost                      |
-| `time`    | `Now`         | `UnixTime`                      | Retractable                                       |
-| `console` | `ReadLine`    | `Result<String, ReadLineError>` | Consuming, _not cancel-safe_: the line may be lost |
-| `console` | `WriteLine`   | none: told, not asked           | —                                                 |
-| `fs`      | `ReadFile`    | `Result<Vec<u8>, FsError>`      | Retractable                                       |
-| `fs`      | `WriteFile`   | `Result<(), FsError>`           | Committing: the write may still happen            |
-| `env`     | `Var`         | `Option<String>`                | Retractable                                       |
-| `random`  | `Random`      | `Vec<u8>`                       | Consuming, but fresh bytes serve as well          |
-| `spawn`   | `Spawn`, `SpawnPinned` | none: told, not asked  | —                                                 |
+| Module    | Trait                  | Answer                          | If abandoned (a `select`'s loser)                  |
+|-----------|------------------------|---------------------------------|----------------------------------------------------|
+| `time`    | `Sleep`                | `()`                            | Retractable: nothing is lost                       |
+| `time`    | `Now`                  | `UnixTime`                      | Retractable                                        |
+| `console` | `ReadLine`             | `Result<String, ReadLineError>` | Consuming, _not cancel-safe_: the line may be lost |
+| `console` | `WriteLine`            | none: told, not asked           | (none)                                             |
+| `fs`      | `ReadFile`             | `Result<Vec<u8>, FsError>`      | Retractable                                        |
+| `fs`      | `WriteFile`            | `Result<(), FsError>`           | Committing: the write may still happen             |
+| `env`     | `Var`                  | `Option<String>`                | Retractable                                        |
+| `random`  | `Random`               | `Vec<u8>`                       | Consuming, but fresh bytes serve as well           |
+| `spawn`   | `Spawn`, `SpawnPinned` | none: told, not asked           | (none)                                             |
 
-Each module holds the trait, its effect struct (the trait's name plus `Effect`: `SleepEffect`), and the trait's impl for `Ctx` — the reifying context, which records each call as an effect for a host to perform. `Ctx` is generic over the host's vocabulary `E`, so one impl serves every application: an application writes its vocabulary enum, with a `From` impl per effect it offers, and `Ctx<E>` implements exactly the traits that vocabulary can carry. A host can offer a routine _less_ than everything, and the compiler holds it to that. Underneath is `ask`: `Ask` and `Asked`, the pattern that makes a context generic over the enum.
+Each module holds the trait, its effect struct (the trait's name plus `Effect`: `SleepEffect`), and the trait's impl for `Ctx`: the reifying context, which records each call as an effect for a host to perform. `Ctx` is generic over the host's vocabulary `E`, so one impl serves every application: an application writes its vocabulary enum, with a `From` impl per effect it offers, and `Ctx<E>` implements exactly the traits that vocabulary can carry. A host can offer a routine _less_ than everything, and the compiler holds it to that. Underneath is `ask`: `Ask` and `Asked`, the pattern that makes a context generic over the enum.
 
 ```rust
 use core::ops::ControlFlow;

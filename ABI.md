@@ -2,52 +2,65 @@
 
 A _binding_ is the thin `unsafe` wrapper an application puts around `sans-effort-host` so a foreign host can call it. This is what a binding exports, and what a foreign host may assume. A host that assumes this and nothing else is generic over routines: it can drive any routine whose binding speaks it, given only the routine's tag table.
 
-The shape: `abi_version` once, then `new`; then `resume(handle) → effects` to begin, `reply(handle, record) → effects` for each answer, and `resume(handle)` again whenever a woke frame names the machine — until the status is `COMPLETE`; then `free`. Each call returns the effects the routine recorded before its next wait.
+The shape: `abi_version` once, then `new`; then `resume(handle) → effects` to begin, `reply(handle, record) → effects` for each answer, and `resume(handle)` again whenever a woke frame names the machine, until the status is `COMPLETE`; then `free`. Each call returns the effects the routine recorded before its next wait.
 
-| Element | Contract |
-|---------|----------|
-| Calls | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_resume(u64, out_ptr, out_len) → i32`, `<prefix>_wakes(out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. Constructors beyond `new` are the binding's — any name, any arguments; see [What Is Not in the ABI](#what-is-not-in-the-abi) — and each returns a handle that answers to the same calls. |
-| Machine handles | `u64`, never `0`, never reused; a stale handle is `BAD_HANDLE`, not a fault. |
-| Codes | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `IDLE`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`, `-7` `MALFORMED`, `-8` `STALE`, `-9` `WRONG_THREAD`). `IDLE` means suspended with no request outstanding: the routine waits on something inside the process, such as a channel another routine sends on. `BAD_INPUT` is a reply to an id never issued — including any reply before the first `resume`; `MALFORMED` a reply record that does not parse, or whose payload does not decode as the answer the routine awaits — a `bytes` reply to a fallible request that is not an encoded `Result`, say — and the request stays open for a good reply; `STALE` a reply to an id that was issued but is no longer awaited — answered already, or closed — and is harmless. `WRONG_THREAD` is a call for a pinned machine from a thread other than the one that first resumed it; nothing changed, and the call may be made again from the right thread. A host treats a negative code it does not know as a failed call that wrote nothing: a later revision may add error codes without a new number. |
-| Out-buffers | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written. |
-| `reply` | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` — typed by reply kind, not by effect. Trailing bytes are `MALFORMED`. Returns the effects recorded before the next wait. |
-| `resume` | Run the routine to its next wait without a reply: returns the effects recorded before it. The first call begins the routine; for a pinned machine it also binds the machine to the calling thread. For an `IDLE` routine, once something it waits on may have changed — a message sent by another routine. Resuming when nothing has changed is harmless: the routine suspends again and the batch is empty. A host learns when to from `woke` frames (see [Frames](#frames)); it may also simply resume its `IDLE` machines whenever it has nothing else to do. |
-| `wakes` | Returns only `woke` frames: the machines woken outside any call — a receiver whose sender was dropped by `free`, or by a panic — since the last `wakes`. Always `OK`. A host with no calls to make, no requests outstanding, and nothing from `wakes` has reached the end, or a stall. |
-| Effects | Little-endian; `str` and `bytes` are `u32 len` + payload. One frame per effect, frames concatenated: `u8 kind · u32 len · payload`, where the payload is the routine's record — one `u8` tag, its fields, and, for an ask, its `u64` request id last. See [Frames](#frames). |
-| Request ids | Per machine, from `1`, in the order effects are recorded: each id a host sees is one more than the last, with one exception — a request whose effect could not be built (its constructor panicked, and the routine caught the panic) took an id no host ever sees. An id is assigned when its effect is recorded, so a request the routine drops before recording it never gets one. Any number may be outstanding at once, and the host may reply in any order. A reply to an id the host was shown that is no longer outstanding — answered, or reported in a closed frame — is `STALE`; to any other id, `BAD_INPUT`. |
-| Upcalls | None. The host calls in; the routine never calls out. No callback is registered, no host value is held on the Rust side. |
-| Threading | Per machine. A _migrating_ machine may be driven from any thread, one at a time per handle: two threads driving one handle get `BUSY`, not a race; a host may pool, and its calls migrate between threads. A _pinned_ machine is bound to the thread that first `resume`s it: every later call for it must come from there, and from any other is `WRONG_THREAD`. Machines a binding constructs are migrating unless it documents otherwise; a spawned child's kind is named by the routine's own tag table. |
-| Spawned machines | A routine may create machines. Each reaches the host as an effect naming its new handle, per the routine's tag table. The host must `resume` or `free` every handle it is given, as it must every handle from `new`. |
-| Panics | A routine that panics is removed; the call returns `PANICKED` and every later call on that handle is `BAD_HANDLE`. The process is not aborted. Every request it had outstanding is closed, without a closed frame; so is every request of a machine that is freed. |
+| Element          | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Calls            | `<prefix>_abi_version() → u8`, `<prefix>_new() → u64`, `<prefix>_reply(u64, in_ptr, in_len, out_ptr, out_len) → i32`, `<prefix>_resume(u64, out_ptr, out_len) → i32`, `<prefix>_wakes(out_ptr, out_len) → i32`, `<prefix>_free(u64) → i32`, `<prefix>_buf_free(ptr, len)`. Constructors beyond `new` are the binding's (any name, any arguments; see [What Is Not in the ABI](#what-is-not-in-the-abi)), and each returns a handle that answers to the same calls. |
+| Machine handles  | `u64`, never `0`, never reused; a stale handle is `BAD_HANDLE`, not a fault.                                                                                                                                                                                                                                                                                                                                                                                       |
+| Codes            | `i32`; `>= 0` is a status (`0` `OK`/`AWAITING`, `1` `COMPLETE`, `2` `IDLE`), `< 0` an error (`-1` `BUSY`, `-2` `FINISHED`, `-3` `WRONG_KIND`, `-4` `PANICKED`, `-5` `BAD_HANDLE`, `-6` `BAD_INPUT`, `-7` `MALFORMED`, `-8` `STALE`, `-9` `WRONG_THREAD`). What each means: [Codes](#codes).                                                                                                                                                                        |
+| Out-buffers      | On `>= 0` the host copies the buffer and frees it with `<prefix>_buf_free(ptr, len)`; on `< 0` nothing was written.                                                                                                                                                                                                                                                                                                                                                |
+| `reply`          | `(ptr, len)` is exactly one reply record: `kind · id · payload`, where kind is `1 str`, `2 u64`, `3 unit`, `4 bytes` (typed by reply kind, not by effect). Trailing bytes are `MALFORMED`. Returns the effects recorded before the next wait.                                                                                                                                                                                                                      |
+| `resume`         | Runs the routine to its next wait without a reply, and returns the effects recorded before it. The first call begins the routine, and binds a pinned machine to the calling thread. Later, it is for an `IDLE` routine that a `woke` frame names (see [Frames](#frames)); a host may also resume its `IDLE` machines whenever it has nothing else to do. Resuming when nothing has changed is harmless: the batch is empty.                                        |
+| `wakes`          | Returns only `woke` frames, for the machines woken outside any call (a receiver whose sender was dropped by `free`, or by a panic) since the last `wakes`. Always `OK`. With no call to make, no request outstanding, and nothing from `wakes`, a host has reached the end, or a stall.                                                                                                                                                                            |
+| Effects          | Little-endian; `str` and `bytes` are `u32 len` + payload. One frame per effect, frames concatenated: `u8 kind · u32 len · payload`, where the payload is the routine's record: one `u8` tag, its fields, and, for an ask, its `u64` request id last. See [Frames](#frames).                                                                                                                                                                                        |
+| Request ids      | Per machine, from `1`, in the order effects are recorded. Any number may be outstanding at once, and the host may reply in any order. Details: [Request Ids](#request-ids).                                                                                                                                                                                                                                                                                        |
+| Upcalls          | None. The host calls in; the routine never calls out. No callback is registered, no host value is held on the Rust side.                                                                                                                                                                                                                                                                                                                                           |
+| Threading        | Per machine. A _migrating_ machine may be driven from any thread, one call at a time: two threads driving one handle get `BUSY`, not a race, so a host may pool and its calls migrate between threads. A _pinned_ machine is bound to the thread that first `resume`s it; a call from any other is `WRONG_THREAD`. Machines a binding constructs are migrating unless it documents otherwise; a spawned child's kind is named by the routine's tag table.          |
+| Spawned machines | A routine may create machines. Each reaches the host as an effect naming its new handle, per the routine's tag table. The host must `resume` or `free` every handle it is given, as it must every handle from `new`.                                                                                                                                                                                                                                               |
+| Panics           | A routine that panics is removed; the call returns `PANICKED` and every later call on that handle is `BAD_HANDLE`. The process is not aborted. Every request it had outstanding is closed, without a closed frame; so is every request of a machine that is freed.                                                                                                                                                                                                 |
+
+### Codes
+
+- `IDLE`: suspended with no request outstanding. The routine waits on something inside the process, such as a channel another routine sends on.
+- `BAD_INPUT`: a reply to an id never issued, including any reply before the first `resume`.
+- `MALFORMED`: a reply record that does not parse, or whose payload does not decode as the answer the routine awaits (a `bytes` reply to a fallible request that is not an encoded `Result`, say). The request stays open for a good reply.
+- `STALE`: a reply to an id that was issued but is no longer awaited (answered already, or closed). Harmless.
+- `WRONG_THREAD`: a call for a pinned machine from a thread other than the one that first resumed it. Nothing changed; the call may be made again from the right thread.
+- Any other negative code: a host treats one it does not know as a failed call that wrote nothing. A later revision may add error codes without a new number.
+
+### Request Ids
+
+Each id a host sees is one more than the last, with one exception: a request whose effect could not be built (its constructor panicked, and the routine caught the panic) took an id no host ever sees. An id is assigned when its effect is recorded, so a request the routine drops before recording it never gets one. A reply to an id the host was shown that is no longer outstanding (answered, or reported in a closed frame) is `STALE`; to any other id, `BAD_INPUT`.
 
 ## Frames
 
 Each effect, and each closed request, crosses as one frame: `u8 kind · u32 len · payload`. An effect's payload is the routine's own record, laid out as its tag table says; the frame around it is the ABI's, so a host can split a batch into records without knowing any tag table.
 
-| Frame kind | Holds                                                                                          | The host…                                                                              |
-|------------|------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| `1` tell   | an effect that awaits no reply                                                                 | performs it; skips it if it does not know the tag                                      |
-| `2` ask    | an effect that awaits a reply; its payload ends with the request id                            | performs it and replies; refuses to continue if it does not know the tag — nobody else will answer |
-| `3` closed | one `u64` request id the routine abandoned before its reply: a race's losing branch, or anything outstanding at completion. A request the host has replied to is never closed, even if the routine drops the reply unread | may stop that work; a reply to it is `STALE`                                           |
-| `4` woke   | one `u64` machine handle: that machine may be able to progress — something it waits on inside the process changed, such as a channel this call's routine sent on | `resume`s it when it chooses; it may be this machine, or any other, and it may have been freed since (`BAD_HANDLE`) |
-| other      | reserved for records a later revision adds                                                     | skips the frame                                                                        |
+| Frame kind | Holds                                                                                                                                                                                                                     | The host…                                                                                                           |
+|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `1` tell   | an effect that awaits no reply                                                                                                                                                                                            | performs it; skips it if it does not know the tag                                                                   |
+| `2` ask    | an effect that awaits a reply; its payload ends with the request id                                                                                                                                                       | performs it and replies; refuses to continue if it does not know the tag, since nobody else will answer             |
+| `3` closed | one `u64` request id the routine abandoned before its reply: a race's losing branch, or anything outstanding at completion. A request the host has replied to is never closed, even if the routine drops the reply unread | may stop that work; a reply to it is `STALE`                                                                        |
+| `4` woke   | one `u64` machine handle: that machine may be able to progress, because something it waits on inside the process changed (such as a channel this call's routine sent on)                                                  | `resume`s it when it chooses; it may be this machine, or any other, and it may have been freed since (`BAD_HANDLE`) |
+| other      | reserved for records a later revision adds                                                                                                                                                                                | skips the frame                                                                                                     |
 
-Closed frames follow the call's other frames, and woke frames follow those. A woke frame names a machine at most once per wait: until that machine is next polled, further wakes are not reported again. Correctness never depends on woke frames — resuming an idle machine is always harmless — so a host that ignores them and resumes idle machines some other way is merely slower. A closed id means the routine no longer needs the reply, not that the effect did not happen: the host may stop the work, but the effect may already be under way. If the host already holds the result — the work finished before it learned the id closed, which a host learns only a call later — it discards it, releasing anything the result stands for (a handle, a resource). Whether discarding loses something the routine wanted is the effect's _cancel safety_, which each effect documents; the ABI asks nothing more of a host.
+Closed frames follow the call's other frames, and woke frames follow those. A woke frame names a machine at most once per wait: until that machine is next polled, further wakes are not reported again. Correctness never depends on woke frames, since resuming an idle machine is always harmless, so a host that ignores them and resumes idle machines some other way is merely slower. A closed id means the routine no longer needs the reply, not that the effect did not happen: the host may stop the work, but the effect may already be under way. If the host already holds the result (the work finished before it learned the id closed, which it learns only a call later), it discards it, releasing anything the result stands for (a handle, a resource). Whether discarding loses something the routine wanted is the effect's _cancel safety_, which each effect documents; the ABI asks nothing more of a host.
 
 A host should check that parsing a payload used exactly `len` bytes. A mismatch means its copy of the tag table disagrees with the routine's, and it is caught at the record where it happens rather than corrupting everything after it.
 
-Every length — a frame's `len`, and the length prefix of a `str` or `bytes` field — is a `u32`, so no frame or field exceeds 2³² − 1 bytes. Data larger than that crosses as several effects, not one. A routine that tries to encode more panics, and the call returns `PANICKED`; the process is not aborted.
+Every length (a frame's `len`, and the length prefix of a `str` or `bytes` field) is a `u32`, so no frame or field exceeds 2³² − 1 bytes. Data larger than that crosses as several effects, not one. A routine that tries to encode more panics, and the call returns `PANICKED`; the process is not aborted.
 
 ## Versioning
 
 `<prefix>_abi_version()` returns the revision of this document the binding implements; this text is revision `0`: pre-release, and free to change without a new number. Once it is declared stable, revisions count from `1`, and the rules below apply. A host checks it once, before `new`, and refuses to continue on a mismatch. The number is independent of the crates' versions: the ABI is meant to outlive them.
 
-It changes when a host written against the previous revision could misbehave against a binding written against the new one: a new status, a new reply kind, a change to a record's layout or to a call's signature, or a change to what a host must do — the protocol `spec/host_protocol.qnt` states. It does not change for what older hosts already handle:
+It changes when a host written against the previous revision could misbehave against a binding written against the new one: a new status, a new reply kind, a change to a record's layout or to a call's signature, or a change to what a host must do (the protocol `spec/host_protocol.qnt` states). It does not change for what older hosts already handle:
 
-- _a new error code_ — a host treats a negative code it does not know as a failed call that wrote nothing;
-- _a new frame kind_ — older hosts skip it;
-- _a new export_ — older hosts never call it; a host that wants one looks its symbol up, and does without it if it is missing;
-- _what the table leaves to the binding_ — a new constructor, a routine's tag table.
+- _a new error code:_ a host treats a negative code it does not know as a failed call that wrote nothing;
+- _a new frame kind:_ older hosts skip it;
+- _a new export:_ older hosts never call it; a host that wants one looks its symbol up, and does without it if it is missing;
+- _what the table leaves to the binding:_ a new constructor, a routine's tag table.
 
 A binding may version its own vocabulary however it likes (`<prefix>_schema_version()` is a reasonable convention); that is not this number.
 
@@ -55,12 +68,12 @@ A binding may version its own vocabulary however it likes (`<prefix>_schema_vers
 
 Four kinds, and no more. A richer reply crosses as `bytes` and is decoded on the routine's side, where it is checked on arrival: bytes that do not decode as the awaited answer are `MALFORMED`, and never reach the routine. Two encodings are fixed here, because the core library provides them: `Result<T, E>` is `00 · T` for `Ok` and `01 · E` for `Err`; `Option<T>` is `00` for `None` and `01 · T` for `Some`. Anything else inside `bytes` is the routine's own layout, documented with its tag table.
 
-| Reply kind | Kind | Payload | Typical use |
-|-----------|------|---------|-------------|
-| `1` | `str` | `u32 len` + UTF-8 | text |
-| `2` | `u64` | 8 bytes LE | counts, ids, timestamps, lengths |
-| `3` | `unit` | — | a sleep, an ack |
-| `4` | `bytes` | `u32 len` + bytes | anything else |
+| Reply kind | Kind    | Payload           | Typical use                      |
+|------------|---------|-------------------|----------------------------------|
+| `1`        | `str`   | `u32 len` + UTF-8 | text                             |
+| `2`        | `u64`   | 8 bytes LE        | counts, ids, timestamps, lengths |
+| `3`        | `unit`  | (none)            | a sleep, an ack                  |
+| `4`        | `bytes` | `u32 len` + bytes | anything else                    |
 
 Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays outstanding, so the host may retry with the right kind. A reply to an id no longer awaited is `STALE`; to an id never issued, `BAD_INPUT`.
 
@@ -68,11 +81,11 @@ Replying with the wrong kind for an id is `WRONG_KIND`, and the request stays ou
 
 And therefore lives with each routine:
 
-- _The tag table_ — which `u8` means which effect, what fields follow it, and which reply kind answers it. The boundary crate's `Encode` impl is the source of truth; `demo/driven/boundary` documents its twelve tags on the `View` enum (two of them, spawning, behind its `table` feature).
-- _Constructors beyond `new`_ — their names, and any arguments: none, or an in-buffer encoded as the binding documents, the way it documents its tags. A root routine a host creates may want configuration there; a child a routine spawns never needs a constructor, because it is built by value, its arguments captured as Rust values. `demo/driven/cdylib` exports `greeter_new_fanout`, `_ticker`, `_ping_pong`, `_front_desk`, `_ring`, `_journal`, `_deadline`, and `_deadlock`, all without arguments.
-- _Anything else a binding chooses to export_ — `demo/driven/cdylib`'s `greeter_record(handle) → u32` and `greeter_record_finish(recording, out, out_len) → code`, say, which hand a host the log of its own run (`sans_effort_host::record`) to replay in Rust.
-- _The world_ — what performing an effect means: where `WriteLine` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
-- _The host loop_ — the host's own; [Writing a Host](#writing-a-host) recommends one. `demo/driven/python/main.py` is the smallest: it performs each effect, replies, resumes each spawned child to begin it, and resumes each machine a woke frame names; its time is virtual — a sleep is a timer, fired only when nothing else can happen — and a closed frame drops a pending timer, or an ask still queued behind the call that closed it. `demo/driven/java/Main.java` is shaped like a production host, and parallel: a pool of driver threads polls different machines at once, each machine taking one event at a time from its own inbox (so no two threads call one handle), pinned machines only on the worker that started them; each ask runs on its own virtual thread, and closed frames cancel it.
+- _The tag table:_ which `u8` means which effect, what fields follow it, and which reply kind answers it. The boundary crate's `Encode` impl is the source of truth; `demo/driven/boundary` documents its twelve tags on the `View` enum (two of them, spawning, behind its `table` feature).
+- _Constructors beyond `new`:_ their names, and any arguments: none, or an in-buffer encoded as the binding documents, the way it documents its tags. A root routine a host creates may want configuration there; a child a routine spawns never needs a constructor, because it is built by value, its arguments captured as Rust values. `demo/driven/cdylib` exports `greeter_new_fanout`, `_ticker`, `_ping_pong`, `_front_desk`, `_ring`, `_journal`, `_deadline`, and `_deadlock`, all without arguments.
+- _Anything else a binding chooses to export:_ `demo/driven/cdylib`'s `greeter_record(handle) → u32` and `greeter_record_finish(recording, out, out_len) → code`, say, which hand a host the log of its own run (`sans_effort_host::record`) to replay in Rust.
+- _The world:_ what performing an effect means: where `WriteLine` goes, what `Lookup` consults, whether `Sleep` is real or virtual.
+- _The host loop:_ the host's own; [Writing a Host](#writing-a-host) recommends one. `demo/driven/python/main.py` is the smallest: it performs each effect, replies, resumes each spawned child to begin it, and resumes each machine a woke frame names; its time is virtual (a sleep is a timer, fired only when nothing else can happen), and a closed frame drops a pending timer, or an ask still queued behind the call that closed it. `demo/driven/java/Main.java` is shaped like a production host, and parallel: a pool of driver threads polls different machines at once, each machine taking one event at a time from its own inbox (so no two threads call one handle), pinned machines only on the worker that started them; each ask runs on its own virtual thread, and closed frames cancel it.
 
 ## Writing a Host
 
@@ -82,21 +95,21 @@ None of this section is contract: a host that keeps the contract above may be sh
 
 The spec is the state machine a host implements. Its host has three actions, and a host that does the same inherits what the model checker proved: no wake is lost, no pinned machine is called off its own worker, and "finished" and "stalled" are reported only when true.
 
-- _`call`:_ take the next event for some machine not already in a call — begin it, resume it, or reply to it — and make that call.
+- _`call`:_ take the next event for some machine not already in a call (begin it, resume it, or reply to it), and make that call.
 - _`ret`:_ when the call returns, act on its output. Perform each ask, and queue its reply as the machine's next event when the answer comes. Begin each machine a spawn effect names. Queue a `resume` for each machine a woke frame names. Note each closed id: drop that id's pending work, and any reply to it still queued. Free the machine if it completed.
 - _`quiet`:_ when nothing is queued and no call or ask is in flight, call `wakes`, and queue a `resume` for each machine it names.
 
-When `quiet` finds nothing, the run is over: every machine completed, or the rest can never progress — a stall, which a host should report rather than wait on.
+When `quiet` finds nothing, the run is over: every machine completed, or the rest can never progress: a stall, which a host should report rather than wait on.
 
 ### One Event at a Time per Machine
 
-Give each machine an inbox, and let it take one event at a time. Then no two threads ever call one handle, so `BUSY` cannot happen; send a pinned machine's events only to the thread that started it, and `WRONG_THREAD` cannot happen either. A parallel host polls _different_ machines at once — that is where its parallelism is — and replies to one machine's asks in whatever order they finish.
+Give each machine an inbox, and let it take one event at a time. Then no two threads ever call one handle, so `BUSY` cannot happen; send a pinned machine's events only to the thread that started it, and `WRONG_THREAD` cannot happen either. A parallel host polls _different_ machines at once (that is where its parallelism is), and replies to one machine's asks in whatever order they finish.
 
-Two consequences of a loop's shape are worth knowing. A host that performs asks one at a time on one thread blocks every machine — and every timer — while one ask waits: an ask that can block indefinitely, such as a read from a terminal, belongs on a thread or task of its own if a routine's deadlines are to fire meanwhile. And a host may decide that a run ends when its root completes, and free what remains — a child blocked on a read, say — rather than wait for it.
+Two consequences of a loop's shape are worth knowing. A host that performs asks one at a time on one thread blocks every machine, and every timer, while one ask waits: an ask that can block indefinitely, such as a read from a terminal, belongs on a thread or task of its own if a routine's deadlines are to fire meanwhile. And a host may decide that a run ends when its root completes, and free what remains (a child blocked on a read, say) rather than wait for it.
 
 ### What `quiet` Assumes
 
-The end-or-stall verdict is sound because every wake reaches the host: a machine woken during a call is named in that call's output, and one woken by `free` or a panic is named by `wakes`. That holds as long as wakes happen only during calls into the binding. A routine that wakes machines from a thread or timer of its own — outside any call — would be reported only by `wakes`, and only once the host asks; such a routine needs a host that polls `wakes` from time to time rather than only when quiet. No routine in `demo/` does this.
+The end-or-stall verdict is sound because every wake reaches the host: a machine woken during a call is named in that call's output, and one woken by `free` or a panic is named by `wakes`. That holds as long as wakes happen only during calls into the binding. A routine that wakes machines from a thread or timer of its own, outside any call, would be reported only by `wakes`, and only once the host asks; such a routine needs a host that polls `wakes` from time to time rather than only when quiet. No routine in `demo/` does this.
 
 ### FFI Pitfalls
 
@@ -108,7 +121,7 @@ From the parallel Java host:
 
 ## A Conversation
 
-The greeter in `demo/`, driven from start to the end of its input. Each frame is written `tell[…]` or `ask[…]`, with its length left out. `ReadLine` is fallible, so its replies are `bytes` holding an encoded `Result` — `⟨00 "alice"⟩` is `Ok("alice")`, `⟨01 00⟩` is `Err(Closed)`:
+The greeter in `demo/`, driven from start to the end of its input. Each frame is written `tell[…]` or `ask[…]`, with its length left out. `ReadLine` is fallible, so its replies are `bytes` holding an encoded `Result`: `⟨00 "alice"⟩` is `Ok("alice")`, and `⟨01 00⟩` is `Err(Closed)`:
 
 ```text
 host → resume(h)
@@ -127,7 +140,7 @@ host → reply(h, [04 id=5 ⟨01 00⟩])                       bytes: Err(Closed
 host → free(h)                                       OK
 ```
 
-A `Quiet` machine (`<prefix>_new_ticker()` in the demo) is driven by the same loop and only ever produces tags 4 and 5 — the routine's trait bounds guarantee it, and the host can rely on it.
+A `Quiet` machine (`<prefix>_new_ticker()` in the demo) is driven by the same loop and only ever produces tags 4 and 5: the routine's trait bounds guarantee it, and the host can rely on it.
 
 ## Provenance
 
